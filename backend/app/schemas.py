@@ -4,12 +4,34 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, field_validator
 
 
-class Item(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: Optional[int] = None
+class ItemBase(BaseModel):
     name: str
     price: float
+    description: str
+    category: str
+    contact: str
+    photo: Optional[str] = None
+
+
+class ItemCreate(ItemBase):
+    seller_id: int
+
+
+class ItemUpdate(BaseModel):
+    name: Optional[str] = None
+    price: Optional[float] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    contact: Optional[str] = None
+    photo: Optional[str] = None
+
+
+class Item(ItemBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    seller_id: int
+    seller_username: str
 
 
 class UserCreate(BaseModel):
