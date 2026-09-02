@@ -1,21 +1,30 @@
-USP Market Place — React frontend + FastAPI backend
+# USP Market Place
 
-Quick start:
+This project is split into two isolated parts:
 
-Frontend
+- `backend/`: FastAPI Python API
+- `frontend/`: React/Vite web app
+
+Keep Python files and backend dependencies inside `backend/`. Keep React files and Node dependencies inside `frontend/`.
+
+## Backend
+
+```powershell
+cd backend
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+python -m uvicorn app.main:app --port 8000
 ```
+
+API docs: `http://127.0.0.1:8000/docs`
+
+## Frontend
+
+```powershell
 cd frontend
 npm install
 npm run dev
 ```
 
-Backend
-```
-cd backend
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
-```
-
-Next steps: add database models, authentication, and Docker setup.
+App URL: `http://localhost:5173/`

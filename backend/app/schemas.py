@@ -1,14 +1,15 @@
-from pydantic import BaseModel, validator
+import re
 from typing import Optional
+
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class Item(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: Optional[int] = None
     name: str
     price: float
-
-    class Config:
-        orm_mode = True
 
 
 class UserCreate(BaseModel):
@@ -16,40 +17,34 @@ class UserCreate(BaseModel):
     email: str
     password: str
 
-    @validator('email')
-    def validate_usp_email(cls, v):
-        """Validate that email belongs to USP domain"""
-        if not v:
+    @field_validator("email")
+    @classmethod
+    def validate_usp_email(cls, value):
+        if not value:
             raise ValueError("Email cannot be empty")
-        
-        valid_domains = ['@usp.ac.fj', '@students.usp.ac.fj', '@usp.edu.fj']
-        email_lower = v.lower().strip()
-        
-        # Check if email ends with valid USP domain
-        if not any(email_lower.endswith(domain) for domain in valid_domains):
-            raise ValueError("Email must be a valid USP student email (e.g., student@usp.ac.fj)")
-        
-        # Basic email format validation
-        if '@' not in email_lower or '.' not in email_lower:
-            raise ValueError("Invalid email format")
-        
-        return v
 
-    @validator('username')
-    def validate_username(cls, v):
-        """Validate username format"""
-        if not v or len(v) < 3:
+        email_lower = value.lower().strip()
+        pattern = r"^s\d{8}@student\.usp\.ac\.fj$"
+        if not re.match(pattern, email_lower):
+            raise ValueError("Email must be in format: SXXXXXXXX@student.usp.ac.fj, where X is a number")
+
+        return value
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, value):
+        if not value or len(value) < 3:
             raise ValueError("Username must be at least 3 characters long")
-        if not v.replace('_', '').replace('-', '').isalnum():
+        if not value.replace("_", "").replace("-", "").isalnum():
             raise ValueError("Username can only contain letters, numbers, hyphens, and underscores")
-        return v
+        return value
 
-    @validator('password')
-    def validate_password(cls, v):
-        """Validate password strength"""
-        if not v or len(v) < 6:
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value):
+        if not value or len(value) < 6:
             raise ValueError("Password must be at least 6 characters long")
-        return v
+        return value
 
 
 class UserLogin(BaseModel):
@@ -57,22 +52,14 @@ class UserLogin(BaseModel):
     password: str
 
 
-class VerifyConfirmationCode(BaseModel):
-    username: str
-    confirmation_code: str
-
-
 class UserPublic(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     username: str
     email: str
-    is_verified: bool = False
-
-    class Config:
-        orm_mode = True
 
 
 class AuthResponse(BaseModel):
     user: UserPublic
     message: str = "success"
-    confirmation_code: Optional[str] = None
