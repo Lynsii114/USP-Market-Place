@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -11,6 +12,14 @@ class ItemBase(BaseModel):
     category: str
     contact: str
     photo: Optional[str] = None
+    stock: int
+
+    @field_validator("stock")
+    @classmethod
+    def validate_stock(cls, value):
+        if value < 0:
+            raise ValueError("Stock cannot be negative")
+        return value
 
 
 class ItemCreate(ItemBase):
@@ -24,12 +33,21 @@ class ItemUpdate(BaseModel):
     category: Optional[str] = None
     contact: Optional[str] = None
     photo: Optional[str] = None
+    stock: Optional[int] = None
+
+    @field_validator("stock")
+    @classmethod
+    def validate_stock(cls, value):
+        if value is not None and value < 0:
+            raise ValueError("Stock cannot be negative")
+        return value
 
 
 class Item(ItemBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    status: str
     seller_id: int
     seller_username: str
 
@@ -85,3 +103,18 @@ class UserPublic(BaseModel):
 class AuthResponse(BaseModel):
     user: UserPublic
     message: str = "success"
+
+
+class Purchase(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    buyer_id: int
+    buyer_username: str
+    item_id: int
+    item_name: str
+    price: float
+    category: str
+    seller_id: int
+    seller_username: str
+    purchased_at: datetime

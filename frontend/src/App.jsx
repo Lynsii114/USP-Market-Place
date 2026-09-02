@@ -1,35 +1,23 @@
 import React, { useEffect, useState } from "react";
 import "./Home.css";
-import bookyImage from "../Booky.jfif";
-import clothesImage from "../Clothes.jfif";
-import electronicsImage from "../Electronics.webp";
-import homeLivingImage from "../Home and LIving.jpg";
+import AuthModal from "./components/AuthModal";
+import CartPage from "./components/CartPage";
+import CategoriesSection from "./components/CategoriesSection";
+import CategoryPage from "./components/CategoryPage";
+import Footer from "./components/Footer";
+import HeroSection from "./components/HeroSection";
+import InfoSection from "./components/InfoSection";
+import ListingsSection from "./components/ListingsSection";
+import LegalPage from "./components/LegalPage";
+import Navbar from "./components/Navbar";
+import ProductModal from "./components/ProductModal";
+import SellerPanel from "./components/SellerPanel";
+import Toast from "./components/Toast";
+import { EMPTY_AUTH_FORM, EMPTY_LISTING_FORM } from "./constants/forms";
+import { categories } from "./data/categories";
 import logo from "../logo.png";
 
 const API_URL = "http://localhost:8000/api";
-
-const EMPTY_AUTH_FORM = {
-  username: "",
-  email: "",
-  password: "",
-};
-
-const EMPTY_LISTING_FORM = {
-  name: "",
-  price: "",
-  description: "",
-  contact: "",
-  category: "Books",
-  photo: "",
-};
-
-const categories = [
-  { id: 1, name: "Books", icon: "Book", image: bookyImage },
-  { id: 2, name: "Electronics", icon: "Tech", image: electronicsImage },
-  { id: 3, name: "Clothing", icon: "Wear", image: clothesImage },
-  { id: 4, name: "Furniture", icon: "Home", image: homeLivingImage },
-  { id: 5, name: "Other", icon: "More" },
-];
 
 function Home() {
   const [authMode, setAuthMode] = useState(null);
@@ -52,10 +40,23 @@ function Home() {
   const [selectedListing, setSelectedListing] = useState(null);
   const [showSellerPanel, setShowSellerPanel] = useState(false);
   const [activeCategoryPage, setActiveCategoryPage] = useState(null);
+  const [cartItems, setCartItems] = useState([]);
+  const [showCartPanel, setShowCartPanel] = useState(false);
+  const [receipt, setReceipt] = useState(null);
+  const [purchaseHistory, setPurchaseHistory] = useState([]);
+  const [activeLegalPage, setActiveLegalPage] = useState(null);
 
   useEffect(() => {
     loadListings();
   }, []);
+
+  useEffect(() => {
+    if (currentUser) {
+      loadPurchaseHistory(currentUser.id);
+    } else {
+      setPurchaseHistory([]);
+    }
+  }, [currentUser]);
 
   useEffect(() => {
     if (!toastMessage) {
@@ -101,6 +102,16 @@ function Home() {
       showToast(error instanceof Error ? error.message : "Unable to load listings");
     } finally {
       setIsLoadingListings(false);
+    }
+  };
+
+  const loadPurchaseHistory = async (buyerId) => {
+    try {
+      const response = await fetch(`${API_URL}/users/${buyerId}/purchases`);
+      const data = await parseResponse(response, "Unable to load purchase history");
+      setPurchaseHistory(data);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to load purchase history");
     }
   };
 
@@ -174,10 +185,24 @@ function Home() {
     setEmailError("");
   };
 
+  const resetListingForm = () => {
+    setListingForm(EMPTY_LISTING_FORM);
+    setPendingPhoto(null);
+    setEditingListingId(null);
+  };
+
+  const hideActivePages = () => {
+    setShowSellerPanel(false);
+    setShowCartPanel(false);
+    setActiveCategoryPage(null);
+    setActiveLegalPage(null);
+    setOpenListingMenuId(null);
+    resetListingForm();
+  };
+
   const handleLogout = () => {
     setCurrentUser(null);
-    setShowSellerPanel(false);
-    resetListingForm();
+    hideActivePages();
     showToast("Logged out successfully.");
   };
 
@@ -230,12 +255,6 @@ function Home() {
     setListingForm((previous) => ({ ...previous, photo: "" }));
   };
 
-  const resetListingForm = () => {
-    setListingForm(EMPTY_LISTING_FORM);
-    setPendingPhoto(null);
-    setEditingListingId(null);
-  };
-
   const handleListingSubmit = async (event) => {
     event.preventDefault();
 
@@ -252,9 +271,15 @@ function Home() {
         return;
       }
 
+      if (listingForm.stock === "") {
+        showToast("Please enter the number of units in stock.");
+        return;
+      }
+
       const payload = {
         ...listingForm,
         price: Number(listingForm.price),
+        stock: Number(listingForm.stock),
         seller_id: currentUser.id,
       };
       const url = editingListingId
@@ -287,6 +312,7 @@ function Home() {
     setListingForm({
       name: listing.name,
       price: String(listing.price),
+      stock: String(listing.stock ?? 1),
       description: listing.description,
       contact: listing.contact,
       category: listing.category,
@@ -329,7 +355,7 @@ function Home() {
         listing.category.toLowerCase().includes(normalizedSearch) ||
         listing.seller_username.toLowerCase().includes(normalizedSearch);
       const matchesCategory =
-        selectedCategory === "All" || (selectedCategory !== "Other" && listing.category === selectedCategory);
+        selectedCategory === "All" || listing.category === selectedCategory;
 
       return matchesSearch && matchesCategory;
     })
@@ -357,7 +383,7 @@ function Home() {
       return second.id - first.id;
     });
   const activeCategoryListings =
-    activeCategoryPage && activeCategoryPage !== "Other"
+    activeCategoryPage
       ? listings.filter((listing) => listing.category === activeCategoryPage)
       : [];
   const searchSuggestions = normalizedSearch
@@ -369,16 +395,17 @@ function Home() {
         )
         .slice(0, 5)
     : [];
+  const cartTotal = cartItems.reduce((total, item) => total + Number(item.price), 0);
 
   const handleSearchSubmit = (event) => {
     event.preventDefault();
-    setActiveCategoryPage(null);
-    setShowSellerPanel(false);
+    hideActivePages();
     document.getElementById("listings")?.scrollIntoView({ behavior: "smooth" });
   };
 
   const chooseCategory = (categoryName) => {
     setShowSellerPanel(false);
+    setShowCartPanel(false);
     setSearchQuery("");
     setSelectedCategory(categoryName);
     if (categoryName === "All") {
@@ -391,11 +418,13 @@ function Home() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const hideSellerPanel = () => {
-    setShowSellerPanel(false);
-    setActiveCategoryPage(null);
-    setOpenListingMenuId(null);
-    resetListingForm();
+  const handleBrowse = () => {
+    hideActivePages();
+    setSearchQuery("");
+    setSelectedCategory("All");
+    window.setTimeout(() => {
+      document.getElementById("listings")?.scrollIntoView({ behavior: "smooth" });
+    }, 0);
   };
 
   const openSellerTab = (tabName) => {
@@ -409,618 +438,231 @@ function Home() {
     }
 
     setShowSellerPanel(true);
+    setShowCartPanel(false);
+    setActiveCategoryPage(null);
     setActiveSellerTab(tabName);
     window.setTimeout(() => {
       document.getElementById("seller-listings")?.scrollIntoView({ behavior: "smooth" });
     }, 0);
   };
 
-  const renderProductCard = (listing, showPrice = false) => (
-    <button
-      type="button"
-      className="product-card"
-      key={listing.id}
-      onClick={() => setSelectedListing(listing)}
-    >
-      <div className="product-image">
-        {listing.photo ? <img src={listing.photo} alt={listing.name} /> : <span>{listing.category}</span>}
-      </div>
-      <div className="product-details">
-        <h3>{listing.name}</h3>
-        {showPrice && <p className="product-card-price">${Number(listing.price).toFixed(2)}</p>}
-      </div>
-    </button>
-  );
+  const openCart = () => {
+    setShowSellerPanel(false);
+    setActiveCategoryPage(null);
+    setShowCartPanel(true);
+    window.setTimeout(() => {
+      document.getElementById("cart")?.scrollIntoView({ behavior: "smooth" });
+    }, 0);
+  };
+
+  const addToCart = (listing) => {
+    if (listing.status === "sold" || Number(listing.stock) <= 0) {
+      setSelectedListing(null);
+      showToast("This item is sold out.");
+      return;
+    }
+
+    const alreadyInCart = cartItems.some((item) => item.id === listing.id);
+
+    if (alreadyInCart) {
+      setSelectedListing(null);
+      showToast("Item is already in your cart.");
+      return;
+    }
+
+    setCartItems((currentItems) => [...currentItems, listing]);
+    setReceipt(null);
+    setSelectedListing(null);
+    showToast("Item successfully added to cart.");
+  };
+
+  const checkoutCart = async () => {
+    if (!currentUser) {
+      showToast("Please login to purchase items.");
+      openAuth("login");
+      return;
+    }
+
+    const availableItems = cartItems.filter((item) => item.status !== "sold" && Number(item.stock) > 0);
+    if (!availableItems.length) {
+      showToast("No available items to checkout.");
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const purchasedItems = [];
+
+      for (const item of availableItems) {
+        const response = await fetch(`${API_URL}/items/${item.id}/purchase?buyer_id=${currentUser.id}`, {
+          method: "POST",
+        });
+        const purchasedItem = await parseResponse(response, `Unable to purchase ${item.name}`);
+        purchasedItems.push(purchasedItem);
+      }
+
+      const purchasedIds = purchasedItems.map((item) => item.id);
+      setCartItems((currentItems) => currentItems.filter((item) => !purchasedIds.includes(item.id)));
+      setListings((currentListings) =>
+        currentListings.map((listing) => purchasedItems.find((item) => item.id === listing.id) || listing)
+      );
+      await loadPurchaseHistory(currentUser.id);
+      setReceipt({
+        id: `USP-${Date.now()}`,
+        purchasedAt: new Date().toLocaleString(),
+        items: purchasedItems,
+        total: availableItems.reduce((total, item) => total + Number(item.price), 0),
+      });
+      showToast("Checkout successful.");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to checkout");
+      await loadListings();
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const removeFromCart = (listingId) => {
+    setCartItems((currentItems) => currentItems.filter((item) => item.id !== listingId));
+    setReceipt(null);
+    showToast("Item removed from cart.");
+  };
+
+  const handleSuggestionSelect = (listing) => {
+    setSearchQuery(listing.name);
+    document.getElementById("listings")?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  const clearFilters = () => {
+    setSearchQuery("");
+    setSelectedCategory("All");
+    setSortOption("newest");
+  };
+
+  const openLegalPage = (page) => {
+    setShowSellerPanel(false);
+    setShowCartPanel(false);
+    setActiveCategoryPage(null);
+    setActiveLegalPage(page);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   return (
     <div className="home-page">
-      <header className="navbar">
-        <div className="brand">
-          <img src={logo} alt="USP logo" className="usp-logo" />
-          <span>USP Marketplace</span>
-        </div>
+      <Navbar
+        logo={logo}
+        categories={categories}
+        currentUser={currentUser}
+        cartCount={cartItems.length}
+        onHome={hideActivePages}
+        onBrowse={handleBrowse}
+        onChooseCategory={chooseCategory}
+        onOpenSellerTab={openSellerTab}
+        onOpenCart={openCart}
+        onOpenAuth={openAuth}
+        onLogout={handleLogout}
+      />
 
-        <nav className="nav-links">
-          <a href="#home" onClick={hideSellerPanel}>Home</a>
-          <a
-            href="#listings"
-            onClick={() => {
-              setActiveCategoryPage(null);
-              setShowSellerPanel(false);
-              setSearchQuery("");
-              setSelectedCategory("All");
-            }}
-          >
-            Browse
-          </a>
-          <div className="nav-dropdown">
-            <a href="#categories" className="nav-dropdown-trigger" onClick={hideSellerPanel}>
-              Categories
-            </a>
-            <div className="nav-dropdown-menu">
-              <button type="button" onClick={() => chooseCategory("All")}>
-                All Categories
-              </button>
-              {categories.map((category) => (
-                <button type="button" key={category.id} onClick={() => chooseCategory(category.name)}>
-                  {category.name}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="nav-dropdown">
-            <a href="#seller-listings" className="nav-dropdown-trigger">
-              Sell
-            </a>
-            <div className="nav-dropdown-menu">
-              <button type="button" onClick={() => openSellerTab("my-listings")}>
-                My Listings
-              </button>
-              <button type="button" onClick={() => openSellerTab("add-listing")}>
-                Add Listing
-              </button>
-            </div>
-          </div>
-          {currentUser ? (
-            <div className="user-menu">
-              <span className="current-user">{currentUser.username}</span>
-              <button type="button" className="logout-button" onClick={handleLogout}>
-                Logout
-              </button>
-            </div>
-          ) : (
-            <>
-              <button type="button" className="nav-button" onClick={() => openAuth("login")}>
-                Login
-              </button>
-              <button type="button" className="signup-link" onClick={() => openAuth("signup")}>
-                Sign Up
-              </button>
-            </>
-          )}
-        </nav>
-      </header>
+      <Toast message={toastMessage} />
 
-      {toastMessage && (
-        <div className="toast-message" role="status">
-          {toastMessage}
-        </div>
+      <AuthModal
+        authMode={authMode}
+        authForm={authForm}
+        emailError={emailError}
+        formMessage={formMessage}
+        isSubmitting={isSubmitting}
+        onClose={resetAuth}
+        onSubmit={handleAuthSubmit}
+        onFieldChange={handleAuthFieldChange}
+      />
+
+      <CategoryPage
+        categoryName={activeCategoryPage}
+        listings={activeCategoryListings}
+        onBack={() => setActiveCategoryPage(null)}
+        onSelectListing={setSelectedListing}
+      />
+
+      {showCartPanel && (
+        <CartPage
+          cartItems={cartItems}
+          cartTotal={cartTotal}
+          receipt={receipt}
+          purchaseHistory={purchaseHistory}
+          onClose={() => setShowCartPanel(false)}
+          onCheckout={checkoutCart}
+          onClearReceipt={() => setReceipt(null)}
+          onRemove={removeFromCart}
+          isSubmitting={isSubmitting}
+        />
       )}
 
-      {authMode && (
-        <div className="auth-modal-backdrop" onClick={resetAuth}>
-          <div className="auth-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="auth-header">
-              <h2>{authMode === "signup" ? "Create Account" : "Login"}</h2>
-              <button type="button" className="close-button" onClick={resetAuth} aria-label="Close">
-                x
-              </button>
-            </div>
+      <LegalPage page={activeLegalPage} onBack={hideActivePages} />
 
-            <form onSubmit={handleAuthSubmit} className="auth-form">
-              <label>
-                Username
-                <input type="text" name="username" value={authForm.username} onChange={handleAuthFieldChange} required />
-              </label>
-
-              {authMode === "signup" && (
-                <div>
-                  <label>
-                    Email
-                    <input
-                      type="email"
-                      name="email"
-                      value={authForm.email}
-                      onChange={handleAuthFieldChange}
-                      className={emailError ? "input-error" : ""}
-                      placeholder="SXXXXXXXX@student.usp.ac.fj"
-                      required
-                    />
-                  </label>
-                  {emailError && <p className="email-error-message">{emailError}</p>}
-                </div>
-              )}
-
-              <label>
-                Password
-                <input
-                  type="password"
-                  name="password"
-                  value={authForm.password}
-                  onChange={handleAuthFieldChange}
-                  required
-                />
-              </label>
-
-              {formMessage && <p className="auth-message">{formMessage}</p>}
-
-              <button type="submit" className="auth-submit" disabled={isSubmitting}>
-                {isSubmitting ? "Please wait..." : authMode === "signup" ? "Sign Up" : "Login"}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {activeCategoryPage && (
-        <section className="category-page">
-          <div className="category-page-header">
-            <button type="button" className="secondary-button" onClick={() => setActiveCategoryPage(null)}>
-              Back to Categories
-            </button>
-            <div>
-              <h1>{activeCategoryPage}</h1>
-              <p>
-                {activeCategoryPage === "Other"
-                  ? "More services coming soon."
-                  : `All products currently listed under ${activeCategoryPage}.`}
-              </p>
-            </div>
-          </div>
-
-          {activeCategoryPage === "Other" ? (
-            <p className="empty-state">More services coming soon.</p>
-          ) : activeCategoryListings.length ? (
-            <div className="product-container">
-              {activeCategoryListings.map((listing) => renderProductCard(listing, true))}
-            </div>
-          ) : (
-            <p className="empty-state">No items listed in {activeCategoryPage} yet.</p>
-          )}
-        </section>
-      )}
-
-      {!activeCategoryPage && (
+      {!activeCategoryPage && !showCartPanel && !activeLegalPage && (
         <>
-      <section className="hero" id="home">
-        <h1>Buy and Sell With USP Students</h1>
-        <p>A simple marketplace for USP students to buy and sell items within the university community.</p>
-
-        <form className="search-bar" onSubmit={handleSearchSubmit}>
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="Search for books, electronics, clothing..."
-            aria-label="Search listings"
+          <HeroSection
+            searchQuery={searchQuery}
+            suggestions={searchSuggestions}
+            onSearchChange={setSearchQuery}
+            onSearchSubmit={handleSearchSubmit}
+            onSuggestionSelect={handleSuggestionSelect}
           />
-          <button type="submit">Search</button>
-        </form>
 
-        {searchSuggestions.length > 0 && (
-          <div className="search-suggestions">
-            {searchSuggestions.map((listing) => (
-              <button
-                type="button"
-                key={listing.id}
-                onClick={() => {
-                  setSearchQuery(listing.name);
-                  document.getElementById("listings")?.scrollIntoView({ behavior: "smooth" });
-                }}
-              >
-                <span>{listing.name}</span>
-                <small>{listing.category}</small>
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
+          <CategoriesSection
+            categories={categories}
+            selectedCategory={selectedCategory}
+            onChooseCategory={chooseCategory}
+          />
 
-      <section className="categories" id="categories">
-        <div className="section-heading">
-          <h2>Categories</h2>
-          <p>Find what you're looking for</p>
-        </div>
-
-        <div className="category-container">
-          {categories.map((category) => (
-            <button
-              type="button"
-              className={selectedCategory === category.name ? "category-card active" : "category-card"}
-              key={category.id}
-              onClick={() => chooseCategory(category.name)}
-            >
-              <div className="category-image">
-                {category.image ? <img src={category.image} alt={category.name} /> : <span>{category.icon}</span>}
-              </div>
-              <h3>{category.name}</h3>
-            </button>
-          ))}
-        </div>
-      </section>
-
-      {showSellerPanel && (
-        <section className="seller-section" id="seller-listings">
-          <div className="seller-panel-header">
-            <div className="section-heading">
-              <h2>{activeSellerTab === "add-listing" ? "Add Listing" : "My Listings"}</h2>
-              <p>
-                {activeSellerTab === "add-listing"
-                  ? "Create a new item for sale."
-                  : "Manage the items you want to sell."}
-              </p>
-            </div>
-            <button
-              type="button"
-              className="close-panel-button"
-              onClick={hideSellerPanel}
-              aria-label="Close seller panel"
-            >
-              x
-            </button>
-          </div>
-
-          {currentUser ? (
-            <>
-            {activeSellerTab === "add-listing" ? (
-              <form className="listing-form" onSubmit={handleListingSubmit}>
-                <label>
-                  JPG Photo
-                  <input
-                    type="file"
-                    accept=".jpg,.jpeg,image/jpeg"
-                    onChange={handlePhotoChange}
-                  />
-                </label>
-
-                {listingForm.photo && (
-                  <div className="confirmed-photo">
-                    <div className="photo-preview">
-                      <img src={listingForm.photo} alt="Confirmed listing" />
-                    </div>
-                    <div>
-                      <strong>Photo ready</strong>
-                      <p>This photo will be saved with the listing.</p>
-                      <button type="button" className="secondary-button" onClick={removePhoto}>
-                        Remove Photo
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {pendingPhoto && (
-                  <div className="photo-review">
-                    <div className="photo-preview">
-                      <img src={pendingPhoto.dataUrl} alt="Photo selected for review" />
-                    </div>
-                    <div className="photo-review-details">
-                      <span>Review JPG Photo</span>
-                      <strong>{pendingPhoto.name}</strong>
-                      <p>Check the image before attaching it to your listing.</p>
-                      <div className="photo-review-actions">
-                        <button type="button" className="auth-submit" onClick={confirmPhoto}>
-                          Use This Photo
-                        </button>
-                        <button type="button" className="secondary-button" onClick={removePhoto}>
-                          Remove
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <label>
-                  Item Name
-                  <input
-                    type="text"
-                    name="name"
-                    value={listingForm.name}
-                    onChange={handleListingFieldChange}
-                    placeholder="Computer Science Textbook"
-                    required
-                  />
-                </label>
-
-                <label>
-                  Price
-                  <input
-                    type="number"
-                    name="price"
-                    value={listingForm.price}
-                    onChange={handleListingFieldChange}
-                    min="0"
-                    step="0.01"
-                    placeholder="30.00"
-                    required
-                  />
-                </label>
-
-                <label>
-                  Category
-                  <select name="category" value={listingForm.category} onChange={handleListingFieldChange} required>
-                    {categories.map((category) => (
-                      <option value={category.name} key={category.id}>
-                        {category.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label>
-                  Contact
-                  <input
-                    type="text"
-                    name="contact"
-                    value={listingForm.contact}
-                    onChange={handleListingFieldChange}
-                    placeholder="Phone, email, or preferred contact"
-                    required
-                  />
-                </label>
-
-                <label className="listing-description">
-                  Description
-                  <textarea
-                    name="description"
-                    value={listingForm.description}
-                    onChange={handleListingFieldChange}
-                    placeholder="Condition, pickup location, or extra details"
-                    rows="4"
-                    required
-                  />
-                </label>
-
-                <div className="listing-actions">
-                  <button type="submit" className="auth-submit" disabled={isSubmitting}>
-                    {isSubmitting ? "Saving..." : editingListingId ? "Update Listing" : "Add Listing"}
-                  </button>
-                  {editingListingId && (
-                    <button type="button" className="secondary-button" onClick={resetListingForm}>
-                      Cancel
-                    </button>
-                  )}
-                </div>
-              </form>
-            ) : (
-              <div className="my-listings">
-                <h3>My Listings</h3>
-                {myListings.length ? (
-                  <div className="seller-list">
-                    {myListings.map((listing) => (
-                      <div className="seller-list-item" key={listing.id}>
-                        <div className="seller-list-details">
-                          <strong>{listing.name}</strong>
-                          <span>${Number(listing.price).toFixed(2)} - {listing.category}</span>
-                        </div>
-                        <div className="listing-menu">
-                          <button
-                            type="button"
-                            className="listing-menu-button"
-                            aria-label={`Open actions for ${listing.name}`}
-                            aria-expanded={openListingMenuId === listing.id}
-                            onClick={() =>
-                              setOpenListingMenuId((currentId) => (currentId === listing.id ? null : listing.id))
-                            }
-                          >
-                            ...
-                          </button>
-                          {openListingMenuId === listing.id && (
-                            <div className="listing-menu-panel">
-                              <button type="button" onClick={() => handleEditListing(listing)}>
-                                Edit
-                              </button>
-                              <button
-                                type="button"
-                                className="danger-button"
-                                onClick={() => handleDeleteListing(listing.id)}
-                              >
-                                Remove
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="empty-state">You have not listed any items yet.</p>
-                )}
-              </div>
-            )}
-            </>
-          ) : (
-            <div className="signin-prompt">
-              <p>Login or sign up to create and manage your item listings.</p>
-              <button type="button" className="auth-submit" onClick={() => openAuth("login")}>
-                Login to Sell
-              </button>
-            </div>
+          {showSellerPanel && (
+            <SellerPanel
+              activeSellerTab={activeSellerTab}
+              categories={categories}
+              currentUser={currentUser}
+              editingListingId={editingListingId}
+              isSubmitting={isSubmitting}
+              listingForm={listingForm}
+              myListings={myListings}
+              openListingMenuId={openListingMenuId}
+              pendingPhoto={pendingPhoto}
+              onClose={hideActivePages}
+              onDeleteListing={handleDeleteListing}
+              onEditListing={handleEditListing}
+              onFieldChange={handleListingFieldChange}
+              onLogin={() => openAuth("login")}
+              onMenuToggle={(listingId) =>
+                setOpenListingMenuId((currentId) => (currentId === listingId ? null : listingId))
+              }
+              onPhotoChange={handlePhotoChange}
+              onPhotoConfirm={confirmPhoto}
+              onPhotoRemove={removePhoto}
+              onResetForm={resetListingForm}
+              onSubmit={handleListingSubmit}
+            />
           )}
-        </section>
-      )}
 
-      <section className="listings" id="listings">
-        <div className="section-heading">
-          <h2>Recent Listings</h2>
-          {selectedCategory !== "All" && <p>{`Showing products listed under ${selectedCategory}.`}</p>}
-        </div>
+          <ListingsSection
+            categories={categories}
+            filteredListings={filteredListings}
+            isLoadingListings={isLoadingListings}
+            searchQuery={searchQuery}
+            selectedCategory={selectedCategory}
+            sortOption={sortOption}
+            onClearFilters={clearFilters}
+            onSelectCategory={setSelectedCategory}
+            onSelectListing={setSelectedListing}
+            onSortChange={setSortOption}
+          />
 
-        <div className="listing-filters">
-          <label>
-            Category
-            <select value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)}>
-              <option value="All">All Categories</option>
-              {categories.map((category) => (
-                <option value={category.name} key={category.id}>
-                  {category.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label>
-            Sort By
-            <select value={sortOption} onChange={(event) => setSortOption(event.target.value)}>
-              <option value="newest">Newest First</option>
-              <option value="oldest">Oldest First</option>
-              <option value="name-asc">Name A to Z</option>
-              <option value="name-desc">Name Z to A</option>
-              <option value="price-asc">Lowest Price</option>
-              <option value="price-desc">Highest Price</option>
-            </select>
-          </label>
-
-          {(searchQuery || selectedCategory !== "All" || sortOption !== "newest") && (
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => {
-                setSearchQuery("");
-                setSelectedCategory("All");
-                setSortOption("newest");
-              }}
-            >
-              Clear Filters
-            </button>
-          )}
-        </div>
-
-        {isLoadingListings ? (
-          <p className="empty-state">Loading listings...</p>
-        ) : filteredListings.length ? (
-          <div className="product-container">{filteredListings.map((listing) => renderProductCard(listing))}</div>
-        ) : (
-          <p className="empty-state">No listings match your search or selected category.</p>
-        )}
-      </section>
-
-      <section className="info-section">
-        <h2>Why USP Marketplace?</h2>
-
-        <div className="info-container">
-          <div className="info-card">
-            <span>USP</span>
-            <h3>USP Community</h3>
-            <p>A marketplace designed specifically for USP students.</p>
-          </div>
-
-          <div className="info-card">
-            <span>Buy</span>
-            <h3>Easy Buying</h3>
-            <p>Browse products and find affordable items from other students.</p>
-          </div>
-
-          <div className="info-card">
-            <span>Sell</span>
-            <h3>Easy Selling</h3>
-            <p>List items you no longer need and sell them to other students.</p>
-          </div>
-        </div>
-      </section>
+          <InfoSection />
         </>
       )}
 
-      {selectedListing && (
-        <div className="auth-modal-backdrop" onClick={() => setSelectedListing(null)}>
-          <div className="product-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="auth-header">
-              <h2>{selectedListing.name}</h2>
-              <button type="button" className="close-button" onClick={() => setSelectedListing(null)} aria-label="Close">
-                x
-              </button>
-            </div>
+      <ProductModal listing={selectedListing} onClose={() => setSelectedListing(null)} onAddToCart={addToCart} />
 
-            <div className="product-modal-image">
-              {selectedListing.photo ? (
-                <img src={selectedListing.photo} alt={selectedListing.name} />
-              ) : (
-                <span>{selectedListing.category}</span>
-              )}
-            </div>
-
-            <div className="product-modal-details">
-              <p className="product-price">${Number(selectedListing.price).toFixed(2)}</p>
-              <p className="product-meta">{selectedListing.category}</p>
-              <p>{selectedListing.description}</p>
-              <div className="seller-details">
-                <strong>Seller</strong>
-                <span>{selectedListing.seller_username}</span>
-              </div>
-              <div className="seller-details">
-                <strong>Contact</strong>
-                <span>{selectedListing.contact}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <footer className="footer">
-        <div className="footer-container">
-          <div className="footer-brand">
-            <h2>USP Marketplace</h2>
-            <p>
-              Buy and sell safely within the
-              <br />
-              USP student community.
-            </p>
-          </div>
-
-          <div className="footer-column">
-            <h3>Explore</h3>
-            <a href="/about">About Us</a>
-            <a href="/help">Help &amp; FAQ</a>
-            <a href="/contact">Contact Us</a>
-          </div>
-
-          <div className="footer-column">
-            <h3>Quick Links</h3>
-            <a href="/browse">Browse Items</a>
-            <a href="/orders">My Orders</a>
-            <a href="/account">My Account</a>
-          </div>
-
-          <div className="footer-updates">
-            <h3>Stay Updated</h3>
-            <p>Get the latest marketplace updates.</p>
-
-            <form>
-              <div className="subscribe">
-                <input type="email" placeholder="Enter your email" required />
-                <button type="submit">Subscribe</button>
-              </div>
-            </form>
-          </div>
-        </div>
-
-        <div className="footer-bottom">
-          <div className="footer-safe">
-            <strong>Safe. Trusted. For Students.</strong>
-            <span>Verified USP students only.</span>
-          </div>
-
-          <div className="footer-copyright">
-            <img src={logo} alt="USP logo" className="footer-logo" />
-            <p>&copy; 2026 USP Marketplace. All rights reserved.</p>
-          </div>
-
-          <div className="footer-legal">
-            <a href="/privacy">Privacy Policy</a>
-            <span>|</span>
-            <a href="/terms">Terms of Use</a>
-          </div>
-        </div>
-      </footer>
+      <Footer logo={logo} onLegalNavigate={openLegalPage} />
     </div>
   );
 }

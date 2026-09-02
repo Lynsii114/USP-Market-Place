@@ -21,6 +21,10 @@ def serialize_user(user: models.User) -> dict:
     }
 
 
+def item_status(stock: int) -> str:
+    return "sold" if stock <= 0 else "available"
+
+
 @router.get("/health")
 async def health():
     return {"status": "ok"}
@@ -78,6 +82,8 @@ def create_item(item: schemas.ItemCreate, db: Session = Depends(get_db)):
         category=item.category,
         contact=item.contact,
         photo=item.photo,
+        stock=item.stock,
+        status=item_status(item.stock),
         seller_id=seller.id,
         seller_username=seller.username,
     )
@@ -89,7 +95,12 @@ def create_item(item: schemas.ItemCreate, db: Session = Depends(get_db)):
 
 @router.get("/items", response_model=list[schemas.Item])
 def list_items(db: Session = Depends(get_db)):
-    return db.query(models.Item).order_by(models.Item.id.desc()).all()
+    return (
+        db.query(models.Item)
+        .filter(~models.Item.name.startswith("__test_"))
+        .order_by(models.Item.id.desc())
+        .all()
+    )
 
 
 @router.get("/users/{seller_id}/items", response_model=list[schemas.Item])
@@ -122,9 +133,58 @@ def update_item(item_id: int, item: schemas.ItemUpdate, seller_id: int, db: Sess
     for field, value in updates.items():
         setattr(db_item, field, value)
 
+    db_item.status = item_status(db_item.stock)
+
     db.commit()
     db.refresh(db_item)
     return db_item
+
+
+@router.post("/items/{item_id}/purchase", response_model=schemas.Item)
+def purchase_item(item_id: int, buyer_id: int, db: Session = Depends(get_db)):
+    buyer = db.query(models.User).filter(models.User.id == buyer_id).first()
+    if not buyer:
+        raise HTTPException(status_code=401, detail="Login required to purchase items")
+
+    db_item = db.query(models.Item).filter(models.Item.id == item_id).first()
+    if not db_item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    if db_item.stock <= 0 or db_item.status == "sold":
+        db_item.stock = 0
+        db_item.status = "sold"
+        db.commit()
+        raise HTTPException(status_code=400, detail="Item is sold out")
+
+    db_item.stock -= 1
+    db_item.status = item_status(db_item.stock)
+    db_purchase = models.Purchase(
+        buyer_id=buyer.id,
+        buyer_username=buyer.username,
+        item_id=db_item.id,
+        item_name=db_item.name,
+        price=db_item.price,
+        category=db_item.category,
+        seller_id=db_item.seller_id,
+        seller_username=db_item.seller_username,
+    )
+    db.add(db_purchase)
+    db.commit()
+    db.refresh(db_item)
+    return db_item
+
+
+@router.get("/users/{buyer_id}/purchases", response_model=list[schemas.Purchase])
+def list_buyer_purchases(buyer_id: int, db: Session = Depends(get_db)):
+    buyer = db.query(models.User).filter(models.User.id == buyer_id).first()
+    if not buyer:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return (
+        db.query(models.Purchase)
+        .filter(models.Purchase.buyer_id == buyer_id)
+        .order_by(models.Purchase.id.desc())
+        .all()
+    )
 
 
 @router.delete("/items/{item_id}")

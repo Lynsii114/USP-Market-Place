@@ -23,6 +23,8 @@ def ensure_item_columns():
         "category": "VARCHAR(64) NOT NULL DEFAULT 'Other'",
         "contact": "VARCHAR(128) NOT NULL DEFAULT ''",
         "photo": "LONGTEXT NULL" if engine.dialect.name == "mysql" else "TEXT NULL",
+        "stock": "INTEGER NOT NULL DEFAULT 1",
+        "status": "VARCHAR(32) NOT NULL DEFAULT 'available'",
         "seller_id": "INTEGER NOT NULL DEFAULT 0",
         "seller_username": "VARCHAR(64) NOT NULL DEFAULT 'Unknown'",
     }

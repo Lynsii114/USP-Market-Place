@@ -112,6 +112,7 @@ def test_seller_can_create_update_and_delete_listing():
             "contact": "seller@student.usp.ac.fj",
             "photo": "https://example.com/book.jpg",
             "seller_id": seller["id"],
+            "stock": 1,
         },
     )
 
@@ -120,6 +121,8 @@ def test_seller_can_create_update_and_delete_listing():
     assert create_response.status_code == 200
     assert created["seller_id"] == seller["id"]
     assert created["seller_username"] == seller["username"]
+    assert created["stock"] == 1
+    assert created["status"] == "available"
 
     update_response = client.put(
         f"/api/items/{created['id']}?seller_id={seller['id']}",
@@ -139,3 +142,78 @@ def test_seller_can_create_update_and_delete_listing():
 
     assert delete_response.status_code == 200
     assert delete_response.json()["message"] == "Listing removed successfully."
+
+
+def test_seller_must_enter_listing_stock():
+    seller = create_test_user()
+
+    response = client.post(
+        "/api/items",
+        json={
+            "name": "Notebook",
+            "price": 5,
+            "description": "Unused notebook.",
+            "category": "Books",
+            "contact": "seller@student.usp.ac.fj",
+            "seller_id": seller["id"],
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_purchase_decreases_stock_and_marks_sold():
+    seller = create_test_user()
+    test_item_name = "__test_purchase_item__"
+
+    create_response = client.post(
+        "/api/items",
+        json={
+            "name": test_item_name,
+            "price": 20,
+            "description": "Temporary test item.",
+            "category": "Electronics",
+            "contact": "seller@student.usp.ac.fj",
+            "seller_id": seller["id"],
+            "stock": 2,
+        },
+    )
+
+    created = create_response.json()
+
+    assert create_response.status_code == 200
+    assert created["stock"] == 2
+    assert created["status"] == "available"
+
+    guest_purchase = client.post(f"/api/items/{created['id']}/purchase")
+
+    assert guest_purchase.status_code == 422
+
+    first_purchase = client.post(f"/api/items/{created['id']}/purchase?buyer_id={seller['id']}")
+    first_data = first_purchase.json()
+
+    assert first_purchase.status_code == 200
+    assert first_data["stock"] == 1
+    assert first_data["status"] == "available"
+
+    purchase_history = client.get(f"/api/users/{seller['id']}/purchases")
+    purchase_history_data = purchase_history.json()
+
+    assert purchase_history.status_code == 200
+    assert purchase_history_data[0]["item_name"] == test_item_name
+    assert purchase_history_data[0]["buyer_id"] == seller["id"]
+    assert "purchased_at" in purchase_history_data[0]
+
+    second_purchase = client.post(f"/api/items/{created['id']}/purchase?buyer_id={seller['id']}")
+    second_data = second_purchase.json()
+
+    assert second_purchase.status_code == 200
+    assert second_data["stock"] == 0
+    assert second_data["status"] == "sold"
+
+    sold_out_purchase = client.post(f"/api/items/{created['id']}/purchase?buyer_id={seller['id']}")
+
+    assert sold_out_purchase.status_code == 400
+    assert sold_out_purchase.json()["detail"] == "Item is sold out"
+
+    client.delete(f"/api/items/{created['id']}?seller_id={seller['id']}")
