@@ -2,15 +2,14 @@ import React from "react";
 
 function Navbar({
   logo,
-  categories,
   currentUser,
   cartCount,
   onHome,
   onBrowse,
-  onChooseCategory,
   onOpenSellerTab,
   onOpenPurchases,
   onOpenCart,
+  onOpenAccountPage,
   onOpenAuth,
   onLogout,
 }) {
@@ -26,62 +25,65 @@ function Navbar({
           Home
         </a>
         <a href="#listings" onClick={onBrowse}>
-          Browse
+          Shop
         </a>
-        <div className="nav-dropdown">
-          <a href="#categories" className="nav-dropdown-trigger" onClick={onHome}>
-            Categories
-          </a>
-          <div className="nav-dropdown-menu">
-            <button type="button" onClick={() => onChooseCategory("All")}>
-              All Categories
-            </button>
-            {categories.map((category) => (
-              <button type="button" key={category.id} onClick={() => onChooseCategory(category.name)}>
-                {category.name}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="nav-dropdown">
-          <a href="#seller-listings" className="nav-dropdown-trigger">
-            Sell
-          </a>
-          <div className="nav-dropdown-menu">
-            <button type="button" onClick={() => onOpenSellerTab("my-listings")}>
-              My Listings
-            </button>
-            <button type="button" onClick={() => onOpenSellerTab("add-listing")}>
-              Add Listing
-            </button>
-          </div>
-        </div>
-        <a href="#past-purchases" onClick={onOpenPurchases}>
-          Past Purchases
+        <a href="#seller-listings" onClick={() => onOpenSellerTab("add-listing")}>
+          Sell an Item
         </a>
-        <button type="button" className="cart-nav-button" onClick={onOpenCart}>
-          <span className="cart-icon" aria-hidden="true">
-            &#128722;
-          </span>
-          <span className="sr-only">Open cart</span>
-          {cartCount > 0 && <span className="cart-count">{cartCount}</span>}
-        </button>
         {currentUser ? (
-          <div className="user-menu">
-            <span className="current-user">{currentUser.username}</span>
-            <button type="button" className="logout-button" onClick={onLogout}>
-              Logout
+          <div className="nav-dropdown activity-dropdown">
+            <button type="button" className="nav-dropdown-button">
+              My Activity
             </button>
+            <div className="nav-dropdown-menu activity-menu">
+              <button type="button" onClick={onOpenPurchases}>
+                My Purchases
+              </button>
+              <button type="button" onClick={() => onOpenSellerTab("my-listings")}>
+                My Listings
+              </button>
+              <button type="button" onClick={() => onOpenAccountPage("sales")}>
+                My Sales
+              </button>
+            </div>
           </div>
-        ) : (
-          <>
-            <button type="button" className="nav-button" onClick={() => onOpenAuth("login")}>
+        ) : null}
+        <div className="nav-actions">
+          <button type="button" className="icon-nav-button cart-nav-button" onClick={onOpenCart} aria-label="Open cart">
+            <span className="cart-icon" aria-hidden="true">
+              &#128722;
+            </span>
+            {cartCount > 0 && <span className="cart-count">{cartCount}</span>}
+          </button>
+          {currentUser ? (
+            <div className="nav-dropdown account-dropdown">
+              <button type="button" className="icon-nav-button account-icon-button" aria-label="My account">
+                <span aria-hidden="true">&#128100;</span>
+              </button>
+              <div className="nav-dropdown-menu account-menu">
+                <button type="button" onClick={() => onOpenAccountPage("profile")}>
+                  My Profile
+                </button>
+                <button type="button" onClick={() => onOpenAccountPage("settings")}>
+                  Settings
+                </button>
+                <div className="account-menu-divider" />
+                <button type="button" className="danger-button" onClick={onLogout}>
+                  Logout
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button type="button" className="nav-button" onClick={() => onOpenAuth("login")} aria-label="Login">
+              <span aria-hidden="true">&#128100;</span>
               Login
             </button>
-            <button type="button" className="signup-link" onClick={() => onOpenAuth("signup")}>
+          )}
+        </div>
+        {!currentUser && (
+          <button type="button" className="signup-link" onClick={() => onOpenAuth("signup")}>
               Sign Up
-            </button>
-          </>
+          </button>
         )}
       </nav>
     </header>

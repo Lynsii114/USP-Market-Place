@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import "./Home.css";
+import AccountPage from "./components/AccountPage";
 import AuthModal from "./components/AuthModal";
 import CartPage from "./components/CartPage";
 import CategoriesSection from "./components/CategoriesSection";
@@ -47,6 +48,7 @@ function Home() {
   const [receipt, setReceipt] = useState(null);
   const [purchaseHistory, setPurchaseHistory] = useState([]);
   const [activeLegalPage, setActiveLegalPage] = useState(null);
+  const [activeAccountPage, setActiveAccountPage] = useState(null);
 
   useEffect(() => {
     loadListings();
@@ -199,6 +201,7 @@ function Home() {
     setShowPurchasesPage(false);
     setActiveCategoryPage(null);
     setActiveLegalPage(null);
+    setActiveAccountPage(null);
     setOpenListingMenuId(null);
     resetListingForm();
   };
@@ -410,6 +413,7 @@ function Home() {
     setShowSellerPanel(false);
     setShowCartPanel(false);
     setShowPurchasesPage(false);
+    setActiveAccountPage(null);
     setSearchQuery("");
     setSelectedCategory(categoryName);
     if (categoryName === "All") {
@@ -445,6 +449,8 @@ function Home() {
     setShowCartPanel(false);
     setShowPurchasesPage(false);
     setActiveCategoryPage(null);
+    setActiveLegalPage(null);
+    setActiveAccountPage(null);
     setActiveSellerTab(tabName);
     window.setTimeout(() => {
       document.getElementById("seller-listings")?.scrollIntoView({ behavior: "smooth" });
@@ -455,6 +461,8 @@ function Home() {
     setShowSellerPanel(false);
     setShowPurchasesPage(false);
     setActiveCategoryPage(null);
+    setActiveLegalPage(null);
+    setActiveAccountPage(null);
     setShowCartPanel(true);
     window.setTimeout(() => {
       document.getElementById("cart")?.scrollIntoView({ behavior: "smooth" });
@@ -465,6 +473,8 @@ function Home() {
     setShowSellerPanel(false);
     setShowCartPanel(false);
     setActiveCategoryPage(null);
+    setActiveLegalPage(null);
+    setActiveAccountPage(null);
     setShowPurchasesPage(true);
     if (!currentUser) {
       openAuth("login");
@@ -565,6 +575,17 @@ function Home() {
     setShowPurchasesPage(false);
     setActiveCategoryPage(null);
     setActiveLegalPage(page);
+    setActiveAccountPage(null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const openAccountPage = (page) => {
+    setShowSellerPanel(false);
+    setShowCartPanel(false);
+    setShowPurchasesPage(false);
+    setActiveCategoryPage(null);
+    setActiveLegalPage(null);
+    setActiveAccountPage(page);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -572,15 +593,14 @@ function Home() {
     <div className="home-page">
       <Navbar
         logo={logo}
-        categories={categories}
         currentUser={currentUser}
         cartCount={cartItems.length}
         onHome={hideActivePages}
         onBrowse={handleBrowse}
-        onChooseCategory={chooseCategory}
         onOpenSellerTab={openSellerTab}
         onOpenPurchases={openPurchasesPage}
         onOpenCart={openCart}
+        onOpenAccountPage={openAccountPage}
         onOpenAuth={openAuth}
         onLogout={handleLogout}
       />
@@ -627,9 +647,17 @@ function Home() {
         />
       )}
 
+      <AccountPage
+        page={activeAccountPage}
+        currentUser={currentUser}
+        myListings={myListings}
+        purchaseHistory={purchaseHistory}
+        onBack={hideActivePages}
+      />
+
       <LegalPage page={activeLegalPage} onBack={hideActivePages} />
 
-      {!activeCategoryPage && !showCartPanel && !showPurchasesPage && !activeLegalPage && (
+      {!activeCategoryPage && !showCartPanel && !showPurchasesPage && !activeLegalPage && !activeAccountPage && (
         <>
           <HeroSection
             searchQuery={searchQuery}

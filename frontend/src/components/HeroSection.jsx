@@ -8,6 +8,7 @@ function HeroSection({ searchQuery, suggestions, onSearchChange, onSearchSubmit,
 
       <form className="search-bar" onSubmit={onSearchSubmit}>
         <input
+          id="marketplace-search"
           type="text"
           value={searchQuery}
           onChange={(event) => onSearchChange(event.target.value)}
