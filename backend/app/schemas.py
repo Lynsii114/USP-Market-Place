@@ -117,4 +117,5 @@ class Purchase(BaseModel):
     category: str
     seller_id: int
     seller_username: str
+    seller_contact: str
     purchased_at: datetime

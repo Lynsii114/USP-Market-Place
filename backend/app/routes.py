@@ -166,6 +166,7 @@ def purchase_item(item_id: int, buyer_id: int, db: Session = Depends(get_db)):
         category=db_item.category,
         seller_id=db_item.seller_id,
         seller_username=db_item.seller_username,
+        seller_contact=db_item.contact,
     )
     db.add(db_purchase)
     db.commit()

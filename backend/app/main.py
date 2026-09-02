@@ -38,7 +38,24 @@ def ensure_item_columns():
             connection.execute(text("ALTER TABLE items MODIFY photo LONGTEXT NULL"))
 
 
+def ensure_purchase_columns():
+    inspector = inspect(engine)
+    if "purchases" not in inspector.get_table_names():
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("purchases")}
+    required_columns = {
+        "seller_contact": "VARCHAR(128) NOT NULL DEFAULT ''",
+    }
+
+    with engine.begin() as connection:
+        for column_name, column_definition in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(text(f"ALTER TABLE purchases ADD COLUMN {column_name} {column_definition}"))
+
+
 ensure_item_columns()
+ensure_purchase_columns()
 
 app = FastAPI(title="USP Market Place API")
 

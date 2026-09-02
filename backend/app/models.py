@@ -39,4 +39,5 @@ class Purchase(Base):
     category = Column(String(64), nullable=False)
     seller_id = Column(Integer, nullable=False, index=True)
     seller_username = Column(String(64), nullable=False)
+    seller_contact = Column(String(128), nullable=False, default="")
     purchased_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

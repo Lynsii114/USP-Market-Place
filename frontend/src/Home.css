@@ -882,6 +882,37 @@
   text-align: right;
 }
 
+.report-download-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 18px;
+}
+
+.report-download-button {
+  width: fit-content;
+}
+
+.report-confirm-modal {
+  display: grid;
+  gap: 14px;
+  width: min(420px, 100%);
+  padding: 22px;
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 28px 50px rgba(12, 45, 77, 0.18);
+}
+
+.report-confirm-modal h3 {
+  margin: 0;
+  color: var(--usp-navy);
+}
+
+.report-confirm-modal p {
+  margin: 0;
+  color: var(--usp-muted);
+  line-height: 1.6;
+}
+
 .purchase-total-card {
   display: grid;
   grid-template-columns: 1fr;
@@ -1777,6 +1808,14 @@
 
   .purchase-report-table-head {
     display: none;
+  }
+
+  .report-download-actions {
+    justify-content: stretch;
+  }
+
+  .report-download-button {
+    width: 100%;
   }
 
   .purchase-report-item {

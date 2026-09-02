@@ -202,6 +202,7 @@ def test_purchase_decreases_stock_and_marks_sold():
     assert purchase_history.status_code == 200
     assert purchase_history_data[0]["item_name"] == test_item_name
     assert purchase_history_data[0]["buyer_id"] == seller["id"]
+    assert purchase_history_data[0]["seller_contact"] == "seller@student.usp.ac.fj"
     assert "purchased_at" in purchase_history_data[0]
 
     second_purchase = client.post(f"/api/items/{created['id']}/purchase?buyer_id={seller['id']}")
