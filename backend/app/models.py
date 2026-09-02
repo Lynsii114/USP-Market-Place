@@ -16,6 +16,8 @@ class Item(Base):
     status = Column(String(32), nullable=False, default="available")
     seller_id = Column(Integer, nullable=False, index=True)
     seller_username = Column(String(64), nullable=False)
+    removed_reason = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class User(Base):
@@ -25,6 +27,9 @@ class User(Base):
     username = Column(String(64), unique=True, nullable=False, index=True)
     email = Column(String(128), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
+    role = Column(String(20), nullable=False, default="student")
+    status = Column(String(20), nullable=False, default="active")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class Purchase(Base):
@@ -40,4 +45,7 @@ class Purchase(Base):
     seller_id = Column(Integer, nullable=False, index=True)
     seller_username = Column(String(64), nullable=False)
     seller_contact = Column(String(128), nullable=False, default="")
+    quantity = Column(Integer, nullable=False, default=1)
+    total_amount = Column(Float, nullable=False, default=0)
+    status = Column(String(32), nullable=False, default="completed")
     purchased_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

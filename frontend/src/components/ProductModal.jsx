@@ -1,11 +1,12 @@
 import React from "react";
 
-function ProductModal({ listing, onClose, onAddToCart }) {
+function ProductModal({ listing, currentUser, onClose, onAddToCart }) {
   if (!listing) {
     return null;
   }
 
   const isSold = listing.status === "sold" || Number(listing.stock) <= 0;
+  const isOwnListing = currentUser?.id === listing.seller_id;
 
   return (
     <div className="auth-modal-backdrop" onClick={onClose}>
@@ -37,8 +38,8 @@ function ProductModal({ listing, onClose, onAddToCart }) {
             <strong>Contact</strong>
             <span>{listing.contact}</span>
           </div>
-          <button type="button" className="auth-submit" onClick={() => onAddToCart(listing)} disabled={isSold}>
-            {isSold ? "Sold Out" : "Add to Cart"}
+          <button type="button" className="auth-submit" onClick={() => onAddToCart(listing)} disabled={isSold || isOwnListing}>
+            {isSold ? "Sold Out" : isOwnListing ? "Your Listing" : "Add to Cart"}
           </button>
         </div>
       </div>

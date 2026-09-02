@@ -26,7 +26,7 @@ function AuthModal({
 
         <form onSubmit={onSubmit} className="auth-form">
           <label>
-            Username
+            {authMode === "signup" ? "Username" : "Username or Email"}
             <input type="text" name="username" value={authForm.username} onChange={onFieldChange} required />
           </label>
 

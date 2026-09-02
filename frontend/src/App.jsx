@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import "./Home.css";
 import AccountPage from "./components/AccountPage";
+import AdminDashboard from "./components/AdminDashboard";
 import AuthModal from "./components/AuthModal";
 import CartPage from "./components/CartPage";
 import CategoriesSection from "./components/CategoriesSection";
@@ -49,9 +50,21 @@ function Home() {
   const [purchaseHistory, setPurchaseHistory] = useState([]);
   const [activeLegalPage, setActiveLegalPage] = useState(null);
   const [activeAccountPage, setActiveAccountPage] = useState(null);
+  const [showAdminDashboard, setShowAdminDashboard] = useState(() =>
+    window.location.pathname.startsWith("/admin")
+  );
 
   useEffect(() => {
     loadListings();
+  }, []);
+
+  useEffect(() => {
+    const handleRouteChange = () => {
+      setShowAdminDashboard(window.location.pathname.startsWith("/admin"));
+    };
+
+    window.addEventListener("popstate", handleRouteChange);
+    return () => window.removeEventListener("popstate", handleRouteChange);
   }, []);
 
   useEffect(() => {
@@ -175,6 +188,11 @@ function Home() {
       setCurrentUser(data.user);
       setAuthForm(EMPTY_AUTH_FORM);
       setAuthMode(null);
+      if (data.user?.role === "admin") {
+        hideActivePages();
+        setShowAdminDashboard(true);
+        window.history.pushState({}, "", "/admin/dashboard");
+      }
       showToast(data.message || (authMode === "signup" ? "Account created successfully!" : "Login successful!"));
     } catch (error) {
       setFormMessage(error instanceof Error ? error.message : "Something went wrong");
@@ -196,6 +214,7 @@ function Home() {
   };
 
   const hideActivePages = () => {
+    setShowAdminDashboard(false);
     setShowSellerPanel(false);
     setShowCartPanel(false);
     setShowPurchasesPage(false);
@@ -209,7 +228,14 @@ function Home() {
   const handleLogout = () => {
     setCurrentUser(null);
     hideActivePages();
+    window.history.pushState({}, "", "/");
     showToast("Logged out successfully.");
+  };
+
+  const openMarketplace = () => {
+    hideActivePages();
+    window.history.pushState({}, "", "/");
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const handleListingFieldChange = (event) => {
@@ -410,6 +436,7 @@ function Home() {
   };
 
   const chooseCategory = (categoryName) => {
+    setShowAdminDashboard(false);
     setShowSellerPanel(false);
     setShowCartPanel(false);
     setShowPurchasesPage(false);
@@ -446,6 +473,7 @@ function Home() {
     }
 
     setShowSellerPanel(true);
+    setShowAdminDashboard(false);
     setShowCartPanel(false);
     setShowPurchasesPage(false);
     setActiveCategoryPage(null);
@@ -458,6 +486,7 @@ function Home() {
   };
 
   const openCart = () => {
+    setShowAdminDashboard(false);
     setShowSellerPanel(false);
     setShowPurchasesPage(false);
     setActiveCategoryPage(null);
@@ -470,6 +499,7 @@ function Home() {
   };
 
   const openPurchasesPage = () => {
+    setShowAdminDashboard(false);
     setShowSellerPanel(false);
     setShowCartPanel(false);
     setActiveCategoryPage(null);
@@ -485,6 +515,19 @@ function Home() {
   };
 
   const addToCart = (listing) => {
+    if (!currentUser) {
+      setSelectedListing(null);
+      showToast("Please login to add items to cart.");
+      openAuth("login");
+      return;
+    }
+
+    if (listing.seller_id === currentUser.id) {
+      setSelectedListing(null);
+      showToast("You cannot add your own listing to cart.");
+      return;
+    }
+
     if (listing.status === "sold" || Number(listing.stock) <= 0) {
       setSelectedListing(null);
       showToast("This item is sold out.");
@@ -570,6 +613,7 @@ function Home() {
   };
 
   const openLegalPage = (page) => {
+    setShowAdminDashboard(false);
     setShowSellerPanel(false);
     setShowCartPanel(false);
     setShowPurchasesPage(false);
@@ -580,6 +624,7 @@ function Home() {
   };
 
   const openAccountPage = (page) => {
+    setShowAdminDashboard(false);
     setShowSellerPanel(false);
     setShowCartPanel(false);
     setShowPurchasesPage(false);
@@ -591,6 +636,31 @@ function Home() {
 
   return (
     <div className="home-page">
+      {showAdminDashboard ? (
+        <>
+          <Toast message={toastMessage} />
+          <AuthModal
+            authMode={authMode}
+            authForm={authForm}
+            emailError={emailError}
+            formMessage={formMessage}
+            isSubmitting={isSubmitting}
+            onClose={resetAuth}
+            onSubmit={handleAuthSubmit}
+            onFieldChange={handleAuthFieldChange}
+          />
+          <AdminDashboard
+            apiUrl={API_URL}
+            currentUser={currentUser}
+            logo={logo}
+            onLogin={() => openAuth("login")}
+            onLogout={handleLogout}
+            onMarketplace={openMarketplace}
+            showToast={showToast}
+          />
+        </>
+      ) : (
+        <>
       <Navbar
         logo={logo}
         currentUser={currentUser}
@@ -717,9 +787,16 @@ function Home() {
         </>
       )}
 
-      <ProductModal listing={selectedListing} onClose={() => setSelectedListing(null)} onAddToCart={addToCart} />
+      <ProductModal
+        listing={selectedListing}
+        currentUser={currentUser}
+        onClose={() => setSelectedListing(null)}
+        onAddToCart={addToCart}
+      />
 
       <Footer logo={logo} onLegalNavigate={openLegalPage} />
+        </>
+      )}
     </div>
   );
 }

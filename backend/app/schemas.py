@@ -50,6 +50,8 @@ class Item(ItemBase):
     status: str
     seller_id: int
     seller_username: str
+    removed_reason: Optional[str] = None
+    created_at: Optional[datetime] = None
 
 
 class UserCreate(BaseModel):
@@ -98,6 +100,9 @@ class UserPublic(BaseModel):
     id: int
     username: str
     email: str
+    role: str = "student"
+    status: str = "active"
+    created_at: Optional[datetime] = None
 
 
 class AuthResponse(BaseModel):
@@ -118,4 +123,33 @@ class Purchase(BaseModel):
     seller_id: int
     seller_username: str
     seller_contact: str
+    quantity: int = 1
+    total_amount: float = 0
+    status: str = "completed"
     purchased_at: datetime
+
+
+class ListingRemoval(BaseModel):
+    reason: str
+
+
+class AdminDashboard(BaseModel):
+    total_students: int
+    total_active_listings: int
+    total_orders: int
+    todays_sales: float
+    recent_orders: list[Purchase]
+
+
+class ReportRow(BaseModel):
+    date: str
+    orders: int
+    items_sold: int
+    total_sales: float
+
+
+class AdminReport(BaseModel):
+    total_orders: int
+    total_items_sold: int
+    total_sales: float
+    rows: list[ReportRow]

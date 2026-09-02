@@ -27,6 +27,8 @@ def ensure_item_columns():
         "status": "VARCHAR(32) NOT NULL DEFAULT 'available'",
         "seller_id": "INTEGER NOT NULL DEFAULT 0",
         "seller_username": "VARCHAR(64) NOT NULL DEFAULT 'Unknown'",
+        "removed_reason": "VARCHAR(255) NULL",
+        "created_at": "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
     }
 
     with engine.begin() as connection:
@@ -38,6 +40,24 @@ def ensure_item_columns():
             connection.execute(text("ALTER TABLE items MODIFY photo LONGTEXT NULL"))
 
 
+def ensure_user_columns():
+    inspector = inspect(engine)
+    if "users" not in inspector.get_table_names():
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("users")}
+    required_columns = {
+        "role": "VARCHAR(20) NOT NULL DEFAULT 'student'",
+        "status": "VARCHAR(20) NOT NULL DEFAULT 'active'",
+        "created_at": "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
+    }
+
+    with engine.begin() as connection:
+        for column_name, column_definition in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(text(f"ALTER TABLE users ADD COLUMN {column_name} {column_definition}"))
+
+
 def ensure_purchase_columns():
     inspector = inspect(engine)
     if "purchases" not in inspector.get_table_names():
@@ -46,6 +66,9 @@ def ensure_purchase_columns():
     existing_columns = {column["name"] for column in inspector.get_columns("purchases")}
     required_columns = {
         "seller_contact": "VARCHAR(128) NOT NULL DEFAULT ''",
+        "quantity": "INTEGER NOT NULL DEFAULT 1",
+        "total_amount": "FLOAT NOT NULL DEFAULT 0",
+        "status": "VARCHAR(32) NOT NULL DEFAULT 'completed'",
     }
 
     with engine.begin() as connection:
@@ -55,6 +78,7 @@ def ensure_purchase_columns():
 
 
 ensure_item_columns()
+ensure_user_columns()
 ensure_purchase_columns()
 
 app = FastAPI(title="USP Market Place API")
