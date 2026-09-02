@@ -1,5 +1,9 @@
 import React, { useEffect, useState } from "react";
 import "./Home.css";
+import bookyImage from "../Booky.jfif";
+import clothesImage from "../Clothes.jfif";
+import electronicsImage from "../Electronics.webp";
+import homeLivingImage from "../Home and LIving.jpg";
 import logo from "../logo.png";
 
 const API_URL = "http://localhost:8000/api";
@@ -20,10 +24,10 @@ const EMPTY_LISTING_FORM = {
 };
 
 const categories = [
-  { id: 1, name: "Books", icon: "Book" },
-  { id: 2, name: "Electronics", icon: "Tech" },
-  { id: 3, name: "Clothing", icon: "Wear" },
-  { id: 4, name: "Furniture", icon: "Home" },
+  { id: 1, name: "Books", icon: "Book", image: bookyImage },
+  { id: 2, name: "Electronics", icon: "Tech", image: electronicsImage },
+  { id: 3, name: "Clothing", icon: "Wear", image: clothesImage },
+  { id: 4, name: "Furniture", icon: "Home", image: homeLivingImage },
   { id: 5, name: "Other", icon: "More" },
 ];
 
@@ -42,6 +46,12 @@ function Home() {
   const [isLoadingListings, setIsLoadingListings] = useState(false);
   const [activeSellerTab, setActiveSellerTab] = useState("my-listings");
   const [openListingMenuId, setOpenListingMenuId] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("All");
+  const [sortOption, setSortOption] = useState("newest");
+  const [selectedListing, setSelectedListing] = useState(null);
+  const [showSellerPanel, setShowSellerPanel] = useState(false);
+  const [activeCategoryPage, setActiveCategoryPage] = useState(null);
 
   useEffect(() => {
     loadListings();
@@ -166,6 +176,7 @@ function Home() {
 
   const handleLogout = () => {
     setCurrentUser(null);
+    setShowSellerPanel(false);
     resetListingForm();
     showToast("Logged out successfully.");
   };
@@ -308,6 +319,118 @@ function Home() {
   };
 
   const myListings = currentUser ? listings.filter((listing) => listing.seller_id === currentUser.id) : [];
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const filteredListings = listings
+    .filter((listing) => {
+      const matchesSearch =
+        !normalizedSearch ||
+        listing.name.toLowerCase().includes(normalizedSearch) ||
+        listing.description.toLowerCase().includes(normalizedSearch) ||
+        listing.category.toLowerCase().includes(normalizedSearch) ||
+        listing.seller_username.toLowerCase().includes(normalizedSearch);
+      const matchesCategory =
+        selectedCategory === "All" || (selectedCategory !== "Other" && listing.category === selectedCategory);
+
+      return matchesSearch && matchesCategory;
+    })
+    .sort((first, second) => {
+      if (sortOption === "oldest") {
+        return first.id - second.id;
+      }
+
+      if (sortOption === "name-asc") {
+        return first.name.localeCompare(second.name);
+      }
+
+      if (sortOption === "name-desc") {
+        return second.name.localeCompare(first.name);
+      }
+
+      if (sortOption === "price-asc") {
+        return Number(first.price) - Number(second.price);
+      }
+
+      if (sortOption === "price-desc") {
+        return Number(second.price) - Number(first.price);
+      }
+
+      return second.id - first.id;
+    });
+  const activeCategoryListings =
+    activeCategoryPage && activeCategoryPage !== "Other"
+      ? listings.filter((listing) => listing.category === activeCategoryPage)
+      : [];
+  const searchSuggestions = normalizedSearch
+    ? listings
+        .filter(
+          (listing) =>
+            listing.name.toLowerCase().includes(normalizedSearch) ||
+            listing.category.toLowerCase().includes(normalizedSearch)
+        )
+        .slice(0, 5)
+    : [];
+
+  const handleSearchSubmit = (event) => {
+    event.preventDefault();
+    setActiveCategoryPage(null);
+    setShowSellerPanel(false);
+    document.getElementById("listings")?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  const chooseCategory = (categoryName) => {
+    setShowSellerPanel(false);
+    setSearchQuery("");
+    setSelectedCategory(categoryName);
+    if (categoryName === "All") {
+      setActiveCategoryPage(null);
+      document.getElementById("categories")?.scrollIntoView({ behavior: "smooth" });
+      return;
+    }
+
+    setActiveCategoryPage(categoryName);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const hideSellerPanel = () => {
+    setShowSellerPanel(false);
+    setActiveCategoryPage(null);
+    setOpenListingMenuId(null);
+    resetListingForm();
+  };
+
+  const openSellerTab = (tabName) => {
+    if (!currentUser) {
+      openAuth("login");
+      return;
+    }
+
+    if (tabName === "add-listing") {
+      resetListingForm();
+    }
+
+    setShowSellerPanel(true);
+    setActiveSellerTab(tabName);
+    window.setTimeout(() => {
+      document.getElementById("seller-listings")?.scrollIntoView({ behavior: "smooth" });
+    }, 0);
+  };
+
+  const renderProductCard = (listing, showPrice = false) => (
+    <button
+      type="button"
+      className="product-card"
+      key={listing.id}
+      onClick={() => setSelectedListing(listing)}
+    >
+      <div className="product-image">
+        {listing.photo ? <img src={listing.photo} alt={listing.name} /> : <span>{listing.category}</span>}
+      </div>
+      <div className="product-details">
+        <h3>{listing.name}</h3>
+        {showPrice && <p className="product-card-price">${Number(listing.price).toFixed(2)}</p>}
+      </div>
+    </button>
+  );
 
   return (
     <div className="home-page">
@@ -318,10 +441,46 @@ function Home() {
         </div>
 
         <nav className="nav-links">
-          <a href="#home">Home</a>
-          <a href="#listings">Browse</a>
-          <a href="#categories">Categories</a>
-          <a href="#seller-listings">Sell</a>
+          <a href="#home" onClick={hideSellerPanel}>Home</a>
+          <a
+            href="#listings"
+            onClick={() => {
+              setActiveCategoryPage(null);
+              setShowSellerPanel(false);
+              setSearchQuery("");
+              setSelectedCategory("All");
+            }}
+          >
+            Browse
+          </a>
+          <div className="nav-dropdown">
+            <a href="#categories" className="nav-dropdown-trigger" onClick={hideSellerPanel}>
+              Categories
+            </a>
+            <div className="nav-dropdown-menu">
+              <button type="button" onClick={() => chooseCategory("All")}>
+                All Categories
+              </button>
+              {categories.map((category) => (
+                <button type="button" key={category.id} onClick={() => chooseCategory(category.name)}>
+                  {category.name}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="nav-dropdown">
+            <a href="#seller-listings" className="nav-dropdown-trigger">
+              Sell
+            </a>
+            <div className="nav-dropdown-menu">
+              <button type="button" onClick={() => openSellerTab("my-listings")}>
+                My Listings
+              </button>
+              <button type="button" onClick={() => openSellerTab("add-listing")}>
+                Add Listing
+              </button>
+            </div>
+          </div>
           {currentUser ? (
             <div className="user-menu">
               <span className="current-user">{currentUser.username}</span>
@@ -403,14 +562,68 @@ function Home() {
         </div>
       )}
 
+      {activeCategoryPage && (
+        <section className="category-page">
+          <div className="category-page-header">
+            <button type="button" className="secondary-button" onClick={() => setActiveCategoryPage(null)}>
+              Back to Categories
+            </button>
+            <div>
+              <h1>{activeCategoryPage}</h1>
+              <p>
+                {activeCategoryPage === "Other"
+                  ? "More services coming soon."
+                  : `All products currently listed under ${activeCategoryPage}.`}
+              </p>
+            </div>
+          </div>
+
+          {activeCategoryPage === "Other" ? (
+            <p className="empty-state">More services coming soon.</p>
+          ) : activeCategoryListings.length ? (
+            <div className="product-container">
+              {activeCategoryListings.map((listing) => renderProductCard(listing, true))}
+            </div>
+          ) : (
+            <p className="empty-state">No items listed in {activeCategoryPage} yet.</p>
+          )}
+        </section>
+      )}
+
+      {!activeCategoryPage && (
+        <>
       <section className="hero" id="home">
         <h1>Buy and Sell With USP Students</h1>
         <p>A simple marketplace for USP students to buy and sell items within the university community.</p>
 
-        <div className="search-bar">
-          <input type="text" placeholder="Search for books, electronics, clothing..." />
-          <button type="button">Search</button>
-        </div>
+        <form className="search-bar" onSubmit={handleSearchSubmit}>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Search for books, electronics, clothing..."
+            aria-label="Search listings"
+          />
+          <button type="submit">Search</button>
+        </form>
+
+        {searchSuggestions.length > 0 && (
+          <div className="search-suggestions">
+            {searchSuggestions.map((listing) => (
+              <button
+                type="button"
+                key={listing.id}
+                onClick={() => {
+                  setSearchQuery(listing.name);
+                  document.getElementById("listings")?.scrollIntoView({ behavior: "smooth" });
+                }}
+              >
+                <span>{listing.name}</span>
+                <small>{listing.category}</small>
+              </button>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="categories" id="categories">
@@ -421,46 +634,44 @@ function Home() {
 
         <div className="category-container">
           {categories.map((category) => (
-            <div className="category-card" key={category.id}>
-              <div className="category-icon">{category.icon}</div>
+            <button
+              type="button"
+              className={selectedCategory === category.name ? "category-card active" : "category-card"}
+              key={category.id}
+              onClick={() => chooseCategory(category.name)}
+            >
+              <div className="category-image">
+                {category.image ? <img src={category.image} alt={category.name} /> : <span>{category.icon}</span>}
+              </div>
               <h3>{category.name}</h3>
-            </div>
+            </button>
           ))}
         </div>
       </section>
 
-      <section className="seller-section" id="seller-listings">
-        <div className="section-heading">
-          <h2>My Listings</h2>
-          <p>Create and manage the items you want to sell.</p>
-        </div>
-
-        {currentUser ? (
-          <>
-            <div className="seller-tabs" role="tablist" aria-label="Seller listing sections">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeSellerTab === "my-listings"}
-                className={activeSellerTab === "my-listings" ? "seller-tab active" : "seller-tab"}
-                onClick={() => setActiveSellerTab("my-listings")}
-              >
-                My Listings
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeSellerTab === "add-listing"}
-                className={activeSellerTab === "add-listing" ? "seller-tab active" : "seller-tab"}
-                onClick={() => {
-                  resetListingForm();
-                  setActiveSellerTab("add-listing");
-                }}
-              >
-                Add Listing
-              </button>
+      {showSellerPanel && (
+        <section className="seller-section" id="seller-listings">
+          <div className="seller-panel-header">
+            <div className="section-heading">
+              <h2>{activeSellerTab === "add-listing" ? "Add Listing" : "My Listings"}</h2>
+              <p>
+                {activeSellerTab === "add-listing"
+                  ? "Create a new item for sale."
+                  : "Manage the items you want to sell."}
+              </p>
             </div>
+            <button
+              type="button"
+              className="close-panel-button"
+              onClick={hideSellerPanel}
+              aria-label="Close seller panel"
+            >
+              x
+            </button>
+          </div>
 
+          {currentUser ? (
+            <>
             {activeSellerTab === "add-listing" ? (
               <form className="listing-form" onSubmit={handleListingSubmit}>
                 <label>
@@ -626,45 +837,70 @@ function Home() {
                 )}
               </div>
             )}
-          </>
-        ) : (
-          <div className="signin-prompt">
-            <p>Login or sign up to create and manage your item listings.</p>
-            <button type="button" className="auth-submit" onClick={() => openAuth("login")}>
-              Login to Sell
-            </button>
-          </div>
-        )}
-      </section>
+            </>
+          ) : (
+            <div className="signin-prompt">
+              <p>Login or sign up to create and manage your item listings.</p>
+              <button type="button" className="auth-submit" onClick={() => openAuth("login")}>
+                Login to Sell
+              </button>
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="listings" id="listings">
         <div className="section-heading">
           <h2>Recent Listings</h2>
-          <p>This section updates automatically as sellers add items.</p>
+          {selectedCategory !== "All" && <p>{`Showing products listed under ${selectedCategory}.`}</p>}
+        </div>
+
+        <div className="listing-filters">
+          <label>
+            Category
+            <select value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)}>
+              <option value="All">All Categories</option>
+              {categories.map((category) => (
+                <option value={category.name} key={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Sort By
+            <select value={sortOption} onChange={(event) => setSortOption(event.target.value)}>
+              <option value="newest">Newest First</option>
+              <option value="oldest">Oldest First</option>
+              <option value="name-asc">Name A to Z</option>
+              <option value="name-desc">Name Z to A</option>
+              <option value="price-asc">Lowest Price</option>
+              <option value="price-desc">Highest Price</option>
+            </select>
+          </label>
+
+          {(searchQuery || selectedCategory !== "All" || sortOption !== "newest") && (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                setSearchQuery("");
+                setSelectedCategory("All");
+                setSortOption("newest");
+              }}
+            >
+              Clear Filters
+            </button>
+          )}
         </div>
 
         {isLoadingListings ? (
           <p className="empty-state">Loading listings...</p>
-        ) : listings.length ? (
-          <div className="product-container">
-            {listings.map((listing) => (
-              <div className="product-card" key={listing.id}>
-                <div className="product-image">
-                  {listing.photo ? <img src={listing.photo} alt={listing.name} /> : <span>{listing.category}</span>}
-                </div>
-                <div className="product-details">
-                  <div className="product-meta">{listing.category}</div>
-                  <h3>{listing.name}</h3>
-                  <p className="product-price">${Number(listing.price).toFixed(2)}</p>
-                  <p className="product-description">{listing.description}</p>
-                  <p className="seller-contact">Seller: {listing.seller_username}</p>
-                  <p className="seller-contact">Contact: {listing.contact}</p>
-                </div>
-              </div>
-            ))}
-          </div>
+        ) : filteredListings.length ? (
+          <div className="product-container">{filteredListings.map((listing) => renderProductCard(listing))}</div>
         ) : (
-          <p className="empty-state">No seller listings yet.</p>
+          <p className="empty-state">No listings match your search or selected category.</p>
         )}
       </section>
 
@@ -691,6 +927,43 @@ function Home() {
           </div>
         </div>
       </section>
+        </>
+      )}
+
+      {selectedListing && (
+        <div className="auth-modal-backdrop" onClick={() => setSelectedListing(null)}>
+          <div className="product-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="auth-header">
+              <h2>{selectedListing.name}</h2>
+              <button type="button" className="close-button" onClick={() => setSelectedListing(null)} aria-label="Close">
+                x
+              </button>
+            </div>
+
+            <div className="product-modal-image">
+              {selectedListing.photo ? (
+                <img src={selectedListing.photo} alt={selectedListing.name} />
+              ) : (
+                <span>{selectedListing.category}</span>
+              )}
+            </div>
+
+            <div className="product-modal-details">
+              <p className="product-price">${Number(selectedListing.price).toFixed(2)}</p>
+              <p className="product-meta">{selectedListing.category}</p>
+              <p>{selectedListing.description}</p>
+              <div className="seller-details">
+                <strong>Seller</strong>
+                <span>{selectedListing.seller_username}</span>
+              </div>
+              <div className="seller-details">
+                <strong>Contact</strong>
+                <span>{selectedListing.contact}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <footer className="footer">
         <div className="footer-container">
