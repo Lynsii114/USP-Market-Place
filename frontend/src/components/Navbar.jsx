@@ -9,6 +9,7 @@ function Navbar({
   onBrowse,
   onChooseCategory,
   onOpenSellerTab,
+  onOpenPurchases,
   onOpenCart,
   onOpenAuth,
   onLogout,
@@ -55,6 +56,9 @@ function Navbar({
             </button>
           </div>
         </div>
+        <a href="#past-purchases" onClick={onOpenPurchases}>
+          Past Purchases
+        </a>
         <button type="button" className="cart-nav-button" onClick={onOpenCart}>
           <span className="cart-icon" aria-hidden="true">
             &#128722;

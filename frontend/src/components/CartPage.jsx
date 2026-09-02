@@ -4,7 +4,6 @@ function CartPage({
   cartItems,
   cartTotal,
   receipt,
-  purchaseHistory,
   onCheckout,
   onClearReceipt,
   onClose,
@@ -16,15 +15,6 @@ function CartPage({
   const availableItems = cartItems.filter((item) => item.status !== "sold" && Number(item.stock) > 0);
   const hasAvailableItems = availableItems.length > 0;
   const confirmationTotal = availableItems.reduce((total, item) => total + Number(item.price), 0);
-  const formatPurchaseDate = (value) =>
-    new Date(value).toLocaleString([], {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-
   return (
     <section className="cart-section cart-page" id="cart">
       <div className="cart-header">
@@ -183,33 +173,6 @@ function CartPage({
         </div>
       )}
 
-      <div className="purchase-report">
-        <div className="section-heading">
-          <span className="section-kicker">Report</span>
-          <h2>Past Purchases</h2>
-          <p>Items you have checked out, including purchase date and time.</p>
-        </div>
-
-        {purchaseHistory.length ? (
-          <div className="purchase-report-list">
-            {purchaseHistory.map((purchase) => (
-              <div className="purchase-report-item" key={purchase.id}>
-                <div>
-                  <strong>{purchase.item_name}</strong>
-                  <small>{purchase.category}</small>
-                </div>
-                <div>
-                  <span>${Number(purchase.price).toFixed(2)}</span>
-                  <small>Seller: {purchase.seller_username}</small>
-                </div>
-                <time dateTime={purchase.purchased_at}>{formatPurchaseDate(purchase.purchased_at)}</time>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="empty-state">No past purchases yet.</p>
-        )}
-      </div>
     </section>
   );
 }
