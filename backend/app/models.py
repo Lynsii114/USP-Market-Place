@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Float, Integer, String
+from sqlalchemy import Column, DateTime, Float, Integer, String, Text, func
 from .db import Base
 
 
@@ -8,6 +8,16 @@ class Item(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(256), nullable=False)
     price = Column(Float, nullable=False)
+    description = Column(String(1000), nullable=False)
+    category = Column(String(64), nullable=False)
+    contact = Column(String(128), nullable=False)
+    photo = Column(Text, nullable=True)
+    stock = Column(Integer, nullable=False, default=1)
+    status = Column(String(32), nullable=False, default="available")
+    seller_id = Column(Integer, nullable=False, index=True)
+    seller_username = Column(String(64), nullable=False)
+    removed_reason = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class User(Base):
@@ -17,3 +27,25 @@ class User(Base):
     username = Column(String(64), unique=True, nullable=False, index=True)
     email = Column(String(128), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
+    role = Column(String(20), nullable=False, default="student")
+    status = Column(String(20), nullable=False, default="active")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class Purchase(Base):
+    __tablename__ = "purchases"
+
+    id = Column(Integer, primary_key=True, index=True)
+    buyer_id = Column(Integer, nullable=False, index=True)
+    buyer_username = Column(String(64), nullable=False)
+    item_id = Column(Integer, nullable=False, index=True)
+    item_name = Column(String(256), nullable=False)
+    price = Column(Float, nullable=False)
+    category = Column(String(64), nullable=False)
+    seller_id = Column(Integer, nullable=False, index=True)
+    seller_username = Column(String(64), nullable=False)
+    seller_contact = Column(String(128), nullable=False, default="")
+    quantity = Column(Integer, nullable=False, default=1)
+    total_amount = Column(Float, nullable=False, default=0)
+    status = Column(String(32), nullable=False, default="completed")
+    purchased_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
