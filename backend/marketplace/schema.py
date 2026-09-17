@@ -17,6 +17,7 @@ TABLE_COLUMNS = {
         "created_at": "DATETIME NULL",
     },
     "users": {
+        "name": "VARCHAR(128) NOT NULL DEFAULT ''",
         "role": "VARCHAR(20) NOT NULL DEFAULT 'student'",
         "status": "VARCHAR(20) NOT NULL DEFAULT 'active'",
         "created_at": "DATETIME NULL",

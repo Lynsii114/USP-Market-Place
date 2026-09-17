@@ -4,10 +4,13 @@ from .exceptions import ApiError
 
 
 def validate_signup(data):
+    name = str(data.get("name", "")).strip()
     username = str(data.get("username", "")).strip()
     email = str(data.get("email", "")).strip()
     password = str(data.get("password", ""))
 
+    if len(name) < 2:
+        raise ApiError("Name must be at least 2 characters long", 422)
     if len(username) < 3:
         raise ApiError("Username must be at least 3 characters long", 422)
     if not username.replace("_", "").replace("-", "").isalnum():
@@ -16,6 +19,15 @@ def validate_signup(data):
         raise ApiError("Email must be in format: SXXXXXXXX@student.usp.ac.fj, where X is a number", 422)
     if len(password) < 6:
         raise ApiError("Password must be at least 6 characters long", 422)
+
+
+def validate_name(data):
+    name = str(data.get("name", "")).strip()
+    if len(name) < 2:
+        raise ApiError("Name must be at least 2 characters long", 422)
+    if len(name) > 128:
+        raise ApiError("Name cannot be longer than 128 characters", 422)
+    return name
 
 
 def validate_item_payload(data, partial=False):

@@ -11,7 +11,7 @@ from .exceptions import ApiError
 from .models import Conversation, Item, Message, Purchase, User
 from .queries import find_student, find_user_by_login, item_status, public_items, visible_items, visible_purchases
 from .serializers import serialize_conversation, serialize_item, serialize_purchase, serialize_user
-from .validators import validate_item_payload, validate_signup
+from .validators import validate_item_payload, validate_name, validate_signup
 
 
 def hash_password(password):
@@ -42,6 +42,7 @@ def require_admin(admin_id):
 def get_or_create_admin_user():
     admin_user = User.objects.filter(email=ADMIN_EMAIL).first()
     if admin_user:
+        admin_user.name = "Marketplace Admin"
         admin_user.username = ADMIN_USERNAME
         admin_user.password_hash = hash_password(ADMIN_PASSWORD)
         admin_user.role = "admin"
@@ -51,6 +52,7 @@ def get_or_create_admin_user():
 
     return User.objects.create(
         username=ADMIN_USERNAME,
+        name="Marketplace Admin",
         email=ADMIN_EMAIL,
         password_hash=hash_password(ADMIN_PASSWORD),
         role="admin",
@@ -60,6 +62,7 @@ def get_or_create_admin_user():
 
 def signup_user(data):
     validate_signup(data)
+    name = data["name"].strip()
     username = data["username"].strip()
     email = data["email"].strip()
 
@@ -67,6 +70,7 @@ def signup_user(data):
         raise ApiError("Username or email already exists", 400)
 
     user = User.objects.create(
+        name=name,
         username=username,
         email=email,
         password_hash=hash_password(data["password"]),
@@ -74,6 +78,13 @@ def signup_user(data):
         status="active",
     )
     return {"user": serialize_user(user), "message": "Account created successfully."}
+
+
+def update_user_name(user_id, data):
+    user = require_active_user(user_id)
+    user.name = validate_name(data)
+    user.save()
+    return {"user": serialize_user(user), "message": "Name updated successfully."}
 
 
 def login_user(data):

@@ -60,6 +60,8 @@ function Home() {
     window.location.pathname.startsWith("/admin")
   );
   const latestMessageIdsRef = useRef({});
+  const activeConversationRef = useRef(null);
+  const showMessagesPageRef = useRef(false);
 
   useEffect(() => {
     loadListings();
@@ -98,6 +100,14 @@ function Home() {
 
     return () => window.clearInterval(intervalId);
   }, [currentUser]);
+
+  useEffect(() => {
+    activeConversationRef.current = activeConversation;
+  }, [activeConversation]);
+
+  useEffect(() => {
+    showMessagesPageRef.current = showMessagesPage;
+  }, [showMessagesPage]);
 
   useEffect(() => {
     if (!toastMessage) {
@@ -175,7 +185,7 @@ function Home() {
         });
 
         if (newIncomingMessage) {
-          showToast(`New message from ${newIncomingMessage.latest_message.sender_username}`);
+          showToast(`New message from ${newIncomingMessage.latest_message.sender_name}`);
         }
       }
 
@@ -186,6 +196,21 @@ function Home() {
         return messageIds;
       }, {});
       setConversations(data);
+
+      const activeId = activeConversationRef.current?.id;
+      if (silent && showMessagesPageRef.current && activeId) {
+        const activeSummary = data.find((conversation) => conversation.id === activeId);
+        if (activeSummary) {
+          const detailResponse = await fetch(`${API_URL}/conversations/${activeId}?user_id=${userId}`);
+          const detail = await parseResponse(detailResponse, "Unable to refresh conversation");
+          setActiveConversation(detail);
+          setConversations((currentConversations) =>
+            currentConversations.map((conversation) =>
+              conversation.id === detail.id ? detail : conversation
+            )
+          );
+        }
+      }
       return data;
     } catch (error) {
       if (!silent) {
@@ -441,6 +466,29 @@ function Home() {
       showToast(data.message || "Listing removed successfully.");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to remove listing");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleUpdateName = async (name) => {
+    if (!currentUser) {
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch(`${API_URL}/users/${currentUser.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const data = await parseResponse(response, "Unable to update name");
+      setCurrentUser(data.user);
+      showToast(data.message || "Name updated successfully.");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to update name");
     } finally {
       setIsSubmitting(false);
     }
@@ -931,7 +979,9 @@ function Home() {
         currentUser={currentUser}
         myListings={myListings}
         purchaseHistory={purchaseHistory}
+        isSubmitting={isSubmitting}
         onBack={hideActivePages}
+        onUpdateName={handleUpdateName}
       />
 
       <LegalPage page={activeLegalPage} onBack={hideActivePages} />

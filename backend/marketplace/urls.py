@@ -6,6 +6,7 @@ urlpatterns = [
     path("health", views.health),
     path("users/signup", views.signup),
     path("users/login", views.login),
+    path("users/<int:user_id>", views.user_detail),
     path("users/<int:buyer_id>/purchases", views.list_buyer_purchases),
     path("users/<int:user_id>/conversations", views.user_conversations),
     path("users/<int:seller_id>/items", views.list_seller_items),

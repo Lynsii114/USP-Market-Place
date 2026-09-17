@@ -1,6 +1,17 @@
+from .models import User
+
+
+def user_display_name(user_id, fallback):
+    user = User.objects.filter(id=user_id).first()
+    if not user:
+        return fallback
+    return user.name or user.username or fallback
+
+
 def serialize_user(user):
     return {
         "id": user.id,
+        "name": user.name,
         "username": user.username,
         "email": user.email,
         "role": user.role,
@@ -46,24 +57,37 @@ def serialize_purchase(purchase):
     }
 
 
-def serialize_message(message):
+def serialize_message(message, conversation=None, current_user_id=None):
+    is_seen_by_recipient = False
+    if conversation and current_user_id == message.sender_id:
+        if message.sender_id == conversation.buyer_id:
+            is_seen_by_recipient = conversation.seller_last_read_message_id >= message.id
+        elif message.sender_id == conversation.seller_id:
+            is_seen_by_recipient = conversation.buyer_last_read_message_id >= message.id
+
     return {
         "id": message.id,
         "conversation_id": message.conversation_id,
         "sender_id": message.sender_id,
         "sender_username": message.sender_username,
+        "sender_name": user_display_name(message.sender_id, message.sender_username),
         "body": message.body,
         "created_at": message.created_at,
+        "is_seen_by_recipient": is_seen_by_recipient,
     }
 
 
 def serialize_conversation(conversation, latest_message=None, messages=None, current_user_id=None, unread_count=0):
+    buyer_name = user_display_name(conversation.buyer_id, conversation.buyer_username)
+    seller_name = user_display_name(conversation.seller_id, conversation.seller_username)
     data = {
         "id": conversation.id,
         "buyer_id": conversation.buyer_id,
         "buyer_username": conversation.buyer_username,
+        "buyer_name": buyer_name,
         "seller_id": conversation.seller_id,
         "seller_username": conversation.seller_username,
+        "seller_name": seller_name,
         "item_id": conversation.item_id,
         "item_name": conversation.item_name,
         "created_at": conversation.created_at,
@@ -74,11 +98,14 @@ def serialize_conversation(conversation, latest_message=None, messages=None, cur
         "seller_last_read_message_id": conversation.seller_last_read_message_id,
         "unread_count": unread_count,
         "has_unread": unread_count > 0,
-        "latest_message": serialize_message(latest_message) if latest_message else None,
+        "latest_message": serialize_message(latest_message, conversation, current_user_id) if latest_message else None,
     }
     if current_user_id is not None:
         data["current_user_id"] = current_user_id
     if messages is not None:
-        data["messages"] = [serialize_message(message) for message in messages]
+        data["messages"] = [
+            serialize_message(message, conversation, current_user_id)
+            for message in messages
+        ]
     return data
 

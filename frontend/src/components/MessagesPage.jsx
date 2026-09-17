@@ -36,6 +36,11 @@ function MessagesPage({
     });
   };
 
+  const otherUserNameFor = (conversation) =>
+    currentUser?.id === conversation.buyer_id
+      ? conversation.seller_name || conversation.seller_username
+      : conversation.buyer_name || conversation.buyer_username;
+
   const handleComposeKeyDown = (event) => {
     if (event.key !== "Enter" || event.shiftKey) {
       return;
@@ -60,10 +65,7 @@ function MessagesPage({
     }
 
     return conversations.filter((conversation) => {
-      const otherUser =
-        currentUser?.id === conversation.buyer_id
-          ? conversation.seller_username
-          : conversation.buyer_username;
+      const otherUser = otherUserNameFor(conversation);
       return (
         otherUser.toLowerCase().includes(query) ||
         (conversation.item_name || "General chat").toLowerCase().includes(query)
@@ -88,8 +90,8 @@ function MessagesPage({
 
   const activeOtherUser =
     activeConversation && currentUser.id === activeConversation.buyer_id
-      ? activeConversation.seller_username
-      : activeConversation?.buyer_username;
+      ? activeConversation.seller_name || activeConversation.seller_username
+      : activeConversation?.buyer_name || activeConversation?.buyer_username;
 
   return (
     <section className="messages-page" id="messages">
@@ -125,10 +127,7 @@ function MessagesPage({
             <p className="empty-state">Loading messages...</p>
           ) : filteredConversations.length ? (
             filteredConversations.map((conversation) => {
-              const otherUser =
-                currentUser.id === conversation.buyer_id
-                  ? conversation.seller_username
-                  : conversation.buyer_username;
+              const otherUser = otherUserNameFor(conversation);
               const isActive = activeConversation?.id === conversation.id;
               return (
                 <button
@@ -186,10 +185,19 @@ function MessagesPage({
                       key={message.id}
                     >
                       <span className="message-meta">
-                        <strong>{message.sender_username}</strong>
+                        <strong>{message.sender_name || message.sender_username}</strong>
                         <time>{formatMessageTime(message.created_at)}</time>
                       </span>
                       <p>{message.body}</p>
+                      {message.sender_id === currentUser.id && (
+                        <span
+                          className={message.is_seen_by_recipient ? "message-status seen" : "message-status"}
+                          aria-label={message.is_seen_by_recipient ? "Seen" : "Sent"}
+                          title={message.is_seen_by_recipient ? "Seen" : "Sent"}
+                        >
+                          &#10003;&#10003;
+                        </span>
+                      )}
                     </div>
                   ))
                 ) : (

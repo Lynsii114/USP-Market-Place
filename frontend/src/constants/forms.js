@@ -1,4 +1,5 @@
 export const EMPTY_AUTH_FORM = {
+  name: "",
   username: "",
   email: "",
   password: "",

@@ -1,6 +1,12 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 
-function AccountPage({ page, currentUser, myListings, purchaseHistory, onBack }) {
+function AccountPage({ page, currentUser, myListings, purchaseHistory, isSubmitting, onBack, onUpdateName }) {
+  const [name, setName] = useState("");
+
+  useEffect(() => {
+    setName(currentUser?.name || "");
+  }, [currentUser]);
+
   if (!page || !currentUser) {
     return null;
   }
@@ -12,6 +18,7 @@ function AccountPage({ page, currentUser, myListings, purchaseHistory, onBack })
       kicker: "Profile",
       title: "My Profile",
       rows: [
+        ["Name", currentUser.name || "Not set"],
         ["Username", currentUser.username],
         ["USP Email", currentUser.email],
       ],
@@ -60,6 +67,30 @@ function AccountPage({ page, currentUser, myListings, purchaseHistory, onBack })
           </div>
         ))}
       </div>
+
+      {page === "settings" && (
+        <form
+          className="account-settings-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onUpdateName(name);
+          }}
+        >
+          <label>
+            Name
+            <input
+              type="text"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Enter your name"
+              required
+            />
+          </label>
+          <button type="submit" className="auth-submit" disabled={isSubmitting || name.trim() === currentUser.name}>
+            {isSubmitting ? "Saving..." : "Save Name"}
+          </button>
+        </form>
+      )}
     </section>
   );
 }

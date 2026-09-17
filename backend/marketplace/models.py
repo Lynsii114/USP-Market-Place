@@ -2,6 +2,7 @@ from django.db import models
 
 
 class User(models.Model):
+    name = models.CharField(max_length=128, default="")
     username = models.CharField(max_length=64, unique=True, db_index=True)
     email = models.CharField(max_length=128, unique=True, db_index=True)
     password_hash = models.CharField(max_length=255)

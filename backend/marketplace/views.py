@@ -38,6 +38,13 @@ def login(request):
 
 
 @csrf_exempt
+def user_detail(request, user_id):
+    if request.method != "PUT":
+        return method_not_allowed()
+    return run(lambda: (services.update_user_name(user_id, json_body(request)), True))
+
+
+@csrf_exempt
 def items_collection(request):
     if request.method == "GET":
         return run(lambda: (services.list_items(), False))
