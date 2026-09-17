@@ -3,13 +3,14 @@ from collections import defaultdict
 from datetime import date
 
 from django.db.models import Q
+from django.utils import timezone
 from django.utils.dateparse import parse_date
 
 from .constants import ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_USERNAME, HIDDEN_ITEM_NAMES
 from .exceptions import ApiError
-from .models import Item, Purchase, User
+from .models import Conversation, Item, Message, Purchase, User
 from .queries import find_student, find_user_by_login, item_status, public_items, visible_items, visible_purchases
-from .serializers import serialize_item, serialize_purchase, serialize_user
+from .serializers import serialize_conversation, serialize_item, serialize_purchase, serialize_user
 from .validators import validate_item_payload, validate_signup
 
 
@@ -201,6 +202,154 @@ def list_buyer_purchases(buyer_id):
         raise ApiError("User not found", 404)
     purchases = visible_purchases(include_test_records=True).filter(buyer_id=buyer_id).order_by("-id")
     return [serialize_purchase(purchase) for purchase in purchases]
+
+
+def _conversation_for_user(conversation_id, user_id):
+    user = require_active_user(user_id)
+    conversation = Conversation.objects.filter(id=conversation_id).first()
+    if not conversation:
+        raise ApiError("Conversation not found", 404)
+    if user.id not in [conversation.buyer_id, conversation.seller_id]:
+        raise ApiError("You can only view your own conversations", 403)
+    return conversation, user
+
+
+def _latest_message(conversation):
+    return Message.objects.filter(conversation_id=conversation.id).order_by("-id").first()
+
+
+def _unread_count(conversation, user_id):
+    last_read_id = (
+        conversation.buyer_last_read_message_id
+        if user_id == conversation.buyer_id
+        else conversation.seller_last_read_message_id
+    )
+    messages = Message.objects.filter(conversation_id=conversation.id).exclude(sender_id=user_id)
+    return messages.filter(id__gt=last_read_id).count()
+
+
+def _mark_conversation_read(conversation, user_id):
+    now = timezone.now()
+    latest_message = _latest_message(conversation)
+    latest_message_id = latest_message.id if latest_message else 0
+    if user_id == conversation.buyer_id:
+        Conversation.objects.filter(id=conversation.id).update(
+            buyer_read_at=now,
+            buyer_last_read_message_id=latest_message_id,
+        )
+        conversation.buyer_read_at = now
+        conversation.buyer_last_read_message_id = latest_message_id
+    else:
+        Conversation.objects.filter(id=conversation.id).update(
+            seller_read_at=now,
+            seller_last_read_message_id=latest_message_id,
+        )
+        conversation.seller_read_at = now
+        conversation.seller_last_read_message_id = latest_message_id
+
+
+def list_conversations(user_id):
+    user = require_active_user(user_id)
+    conversations = Conversation.objects.filter(Q(buyer_id=user.id) | Q(seller_id=user.id)).order_by("-updated_at", "-id")
+    return [
+        serialize_conversation(
+            conversation,
+            latest_message=_latest_message(conversation),
+            current_user_id=user.id,
+            unread_count=_unread_count(conversation, user.id),
+        )
+        for conversation in conversations
+    ]
+
+
+def start_conversation(user_id, data):
+    buyer = require_active_user(user_id)
+    item_id = data.get("item_id")
+    seller_id = data.get("seller_id")
+    item = None
+
+    if item_id:
+        item = Item.objects.filter(id=item_id).first()
+        if not item or item.status == "removed":
+            raise ApiError("Item not found", 404)
+        seller_id = item.seller_id
+
+    seller = require_active_user(seller_id)
+    if seller.id == buyer.id:
+        raise ApiError("You cannot message yourself", 400)
+
+    conversation = Conversation.objects.filter(
+        buyer_id=buyer.id,
+        seller_id=seller.id,
+        item_id=item.id if item else None,
+    ).first()
+    if not conversation:
+        conversation = Conversation.objects.create(
+            buyer_id=buyer.id,
+            buyer_username=buyer.username,
+            seller_id=seller.id,
+            seller_username=seller.username,
+            item_id=item.id if item else None,
+            item_name=item.name if item else data.get("item_name"),
+        )
+
+    initial_message = str(data.get("message", "")).strip()
+    if initial_message:
+        Message.objects.create(
+            conversation_id=conversation.id,
+            sender_id=buyer.id,
+            sender_username=buyer.username,
+            body=initial_message[:1000],
+        )
+        conversation.updated_at = timezone.now()
+        conversation.save()
+
+    messages = Message.objects.filter(conversation_id=conversation.id).order_by("id")
+    _mark_conversation_read(conversation, buyer.id)
+    return serialize_conversation(
+        conversation,
+        latest_message=_latest_message(conversation),
+        messages=messages,
+        current_user_id=buyer.id,
+        unread_count=0,
+    )
+
+
+def get_conversation(conversation_id, user_id):
+    conversation, user = _conversation_for_user(conversation_id, user_id)
+    _mark_conversation_read(conversation, user.id)
+    messages = Message.objects.filter(conversation_id=conversation.id).order_by("id")
+    return serialize_conversation(
+        conversation,
+        latest_message=_latest_message(conversation),
+        messages=messages,
+        current_user_id=user.id,
+        unread_count=0,
+    )
+
+
+def send_message(conversation_id, user_id, data):
+    conversation, user = _conversation_for_user(conversation_id, user_id)
+    body = str(data.get("body", "")).strip()
+    if not body:
+        raise ApiError("Message cannot be empty", 400)
+
+    message = Message.objects.create(
+        conversation_id=conversation.id,
+        sender_id=user.id,
+        sender_username=user.username,
+        body=body[:1000],
+    )
+    conversation.updated_at = timezone.now()
+    conversation.save()
+    _mark_conversation_read(conversation, user.id)
+    return serialize_conversation(
+        conversation,
+        latest_message=message,
+        messages=Message.objects.filter(conversation_id=conversation.id).order_by("id"),
+        current_user_id=user.id,
+        unread_count=0,
+    )
 
 
 def dashboard(admin_id):

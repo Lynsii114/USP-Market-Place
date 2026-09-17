@@ -1,6 +1,6 @@
 from django.db import OperationalError, connection
 
-from .models import Item, Purchase, User
+from .models import Conversation, Item, Message, Purchase, User
 
 
 TABLE_COLUMNS = {
@@ -28,12 +28,33 @@ TABLE_COLUMNS = {
         "status": "VARCHAR(32) NOT NULL DEFAULT 'completed'",
         "purchased_at": "DATETIME NULL",
     },
+    "conversations": {
+        "buyer_id": "INTEGER NOT NULL DEFAULT 0",
+        "buyer_username": "VARCHAR(64) NOT NULL DEFAULT ''",
+        "seller_id": "INTEGER NOT NULL DEFAULT 0",
+        "seller_username": "VARCHAR(64) NOT NULL DEFAULT ''",
+        "item_id": "INTEGER NULL",
+        "item_name": "VARCHAR(256) NULL",
+        "created_at": "DATETIME NULL",
+        "updated_at": "DATETIME NULL",
+        "buyer_read_at": "DATETIME NULL",
+        "seller_read_at": "DATETIME NULL",
+        "buyer_last_read_message_id": "INTEGER NOT NULL DEFAULT 0",
+        "seller_last_read_message_id": "INTEGER NOT NULL DEFAULT 0",
+    },
+    "messages": {
+        "conversation_id": "INTEGER NOT NULL DEFAULT 0",
+        "sender_id": "INTEGER NOT NULL DEFAULT 0",
+        "sender_username": "VARCHAR(64) NOT NULL DEFAULT ''",
+        "body": "VARCHAR(1000) NOT NULL DEFAULT ''",
+        "created_at": "DATETIME NULL",
+    },
 }
 
 
 def ensure_schema():
     existing_tables = connection.introspection.table_names()
-    models = [User, Item, Purchase]
+    models = [User, Item, Purchase, Conversation, Message]
 
     with connection.schema_editor() as schema_editor:
         for model in models:

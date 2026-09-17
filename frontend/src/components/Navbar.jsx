@@ -4,10 +4,12 @@ function Navbar({
   logo,
   currentUser,
   cartCount,
+  unreadMessageCount,
   onHome,
   onBrowse,
   onOpenSellerTab,
   onOpenPurchases,
+  onOpenMessages,
   onOpenCart,
   onOpenAccountPage,
   onOpenAuth,
@@ -39,6 +41,9 @@ function Navbar({
               <button type="button" onClick={onOpenPurchases}>
                 My Purchases
               </button>
+              <button type="button" onClick={onOpenMessages}>
+                Messages
+              </button>
               <button type="button" onClick={() => onOpenSellerTab("my-listings")}>
                 My Listings
               </button>
@@ -49,6 +54,19 @@ function Navbar({
           </div>
         ) : null}
         <div className="nav-actions">
+          {currentUser ? (
+            <button
+              type="button"
+              className="icon-nav-button message-nav-button"
+              onClick={onOpenMessages}
+              aria-label="Open messages"
+            >
+              <span className="message-icon" aria-hidden="true">
+                &#9993;
+              </span>
+              {unreadMessageCount > 0 && <span className="message-count">{unreadMessageCount}</span>}
+            </button>
+          ) : null}
           <button type="button" className="icon-nav-button cart-nav-button" onClick={onOpenCart} aria-label="Open cart">
             <span className="cart-icon" aria-hidden="true">
               &#128722;

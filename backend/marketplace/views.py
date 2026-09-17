@@ -76,6 +76,28 @@ def list_buyer_purchases(request, buyer_id):
     return run(lambda: (services.list_buyer_purchases(buyer_id), False))
 
 
+@csrf_exempt
+def user_conversations(request, user_id):
+    if request.method == "GET":
+        return run(lambda: (services.list_conversations(user_id), False))
+    if request.method == "POST":
+        return run(lambda: (services.start_conversation(user_id, json_body(request)), True))
+    return method_not_allowed()
+
+
+def conversation_detail(request, conversation_id):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.get_conversation(conversation_id, request.GET.get("user_id")), True))
+
+
+@csrf_exempt
+def conversation_messages(request, conversation_id):
+    if request.method != "POST":
+        return method_not_allowed()
+    return run(lambda: (services.send_message(conversation_id, request.GET.get("user_id"), json_body(request)), True))
+
+
 def admin_dashboard(request):
     if request.method != "GET":
         return method_not_allowed()

@@ -1,6 +1,6 @@
 import React from "react";
 
-function ProductModal({ listing, currentUser, onClose, onAddToCart }) {
+function ProductModal({ listing, currentUser, onClose, onAddToCart, onMessageSeller }) {
   if (!listing) {
     return null;
   }
@@ -38,9 +38,14 @@ function ProductModal({ listing, currentUser, onClose, onAddToCart }) {
             <strong>Contact</strong>
             <span>{listing.contact}</span>
           </div>
-          <button type="button" className="auth-submit" onClick={() => onAddToCart(listing)} disabled={isSold || isOwnListing}>
-            {isSold ? "Sold Out" : isOwnListing ? "Your Listing" : "Add to Cart"}
-          </button>
+          <div className="product-modal-actions">
+            <button type="button" className="auth-submit" onClick={() => onAddToCart(listing)} disabled={isSold || isOwnListing}>
+              {isSold ? "Sold Out" : isOwnListing ? "Your Listing" : "Add to Cart"}
+            </button>
+            <button type="button" className="secondary-button" onClick={() => onMessageSeller(listing)} disabled={isOwnListing}>
+              Message Seller
+            </button>
+          </div>
         </div>
       </div>
     </div>

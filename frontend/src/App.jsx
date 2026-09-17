@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import "./Home.css";
 import AccountPage from "./components/AccountPage";
 import AdminDashboard from "./components/AdminDashboard";
@@ -11,6 +11,7 @@ import HeroSection from "./components/HeroSection";
 import InfoSection from "./components/InfoSection";
 import ListingsSection from "./components/ListingsSection";
 import LegalPage from "./components/LegalPage";
+import MessagesPage from "./components/MessagesPage";
 import Navbar from "./components/Navbar";
 import PastPurchasesPage from "./components/PastPurchasesPage";
 import ProductModal from "./components/ProductModal";
@@ -46,13 +47,19 @@ function Home() {
   const [cartItems, setCartItems] = useState([]);
   const [showCartPanel, setShowCartPanel] = useState(false);
   const [showPurchasesPage, setShowPurchasesPage] = useState(false);
+  const [showMessagesPage, setShowMessagesPage] = useState(false);
   const [receipt, setReceipt] = useState(null);
   const [purchaseHistory, setPurchaseHistory] = useState([]);
+  const [conversations, setConversations] = useState([]);
+  const [activeConversation, setActiveConversation] = useState(null);
+  const [draftMessage, setDraftMessage] = useState("");
+  const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [activeLegalPage, setActiveLegalPage] = useState(null);
   const [activeAccountPage, setActiveAccountPage] = useState(null);
   const [showAdminDashboard, setShowAdminDashboard] = useState(() =>
     window.location.pathname.startsWith("/admin")
   );
+  const latestMessageIdsRef = useRef({});
 
   useEffect(() => {
     loadListings();
@@ -70,9 +77,26 @@ function Home() {
   useEffect(() => {
     if (currentUser) {
       loadPurchaseHistory(currentUser.id);
+      loadConversations(currentUser.id);
     } else {
       setPurchaseHistory([]);
+      setConversations([]);
+      setActiveConversation(null);
+      setDraftMessage("");
+      latestMessageIdsRef.current = {};
     }
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      loadConversations(currentUser.id, { notify: true, silent: true });
+    }, 10000);
+
+    return () => window.clearInterval(intervalId);
   }, [currentUser]);
 
   useEffect(() => {
@@ -129,6 +153,49 @@ function Home() {
       setPurchaseHistory(data);
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to load purchase history");
+    }
+  };
+
+  const loadConversations = async (userId, options = {}) => {
+    const { notify = false, silent = false } = options;
+    if (!silent) {
+      setIsLoadingConversations(true);
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/users/${userId}/conversations`);
+      const data = await parseResponse(response, "Unable to load messages");
+      if (notify) {
+        const newIncomingMessage = data.find((conversation) => {
+          const latestMessage = conversation.latest_message;
+          if (!latestMessage || latestMessage.sender_id === userId) {
+            return false;
+          }
+          return latestMessageIdsRef.current[conversation.id] !== latestMessage.id;
+        });
+
+        if (newIncomingMessage) {
+          showToast(`New message from ${newIncomingMessage.latest_message.sender_username}`);
+        }
+      }
+
+      latestMessageIdsRef.current = data.reduce((messageIds, conversation) => {
+        if (conversation.latest_message) {
+          messageIds[conversation.id] = conversation.latest_message.id;
+        }
+        return messageIds;
+      }, {});
+      setConversations(data);
+      return data;
+    } catch (error) {
+      if (!silent) {
+        showToast(error instanceof Error ? error.message : "Unable to load messages");
+      }
+      return [];
+    } finally {
+      if (!silent) {
+        setIsLoadingConversations(false);
+      }
     }
   };
 
@@ -218,10 +285,13 @@ function Home() {
     setShowSellerPanel(false);
     setShowCartPanel(false);
     setShowPurchasesPage(false);
+    setShowMessagesPage(false);
     setActiveCategoryPage(null);
     setActiveLegalPage(null);
     setActiveAccountPage(null);
     setOpenListingMenuId(null);
+    setActiveConversation(null);
+    setDraftMessage("");
     resetListingForm();
   };
 
@@ -428,6 +498,10 @@ function Home() {
         .slice(0, 5)
     : [];
   const cartTotal = cartItems.reduce((total, item) => total + Number(item.price), 0);
+  const unreadMessageCount = conversations.reduce(
+    (total, conversation) => total + Number(conversation.unread_count || 0),
+    0
+  );
 
   const handleSearchSubmit = (event) => {
     event.preventDefault();
@@ -440,6 +514,7 @@ function Home() {
     setShowSellerPanel(false);
     setShowCartPanel(false);
     setShowPurchasesPage(false);
+    setShowMessagesPage(false);
     setActiveAccountPage(null);
     setSearchQuery("");
     setSelectedCategory(categoryName);
@@ -476,6 +551,7 @@ function Home() {
     setShowAdminDashboard(false);
     setShowCartPanel(false);
     setShowPurchasesPage(false);
+    setShowMessagesPage(false);
     setActiveCategoryPage(null);
     setActiveLegalPage(null);
     setActiveAccountPage(null);
@@ -489,6 +565,7 @@ function Home() {
     setShowAdminDashboard(false);
     setShowSellerPanel(false);
     setShowPurchasesPage(false);
+    setShowMessagesPage(false);
     setActiveCategoryPage(null);
     setActiveLegalPage(null);
     setActiveAccountPage(null);
@@ -502,6 +579,7 @@ function Home() {
     setShowAdminDashboard(false);
     setShowSellerPanel(false);
     setShowCartPanel(false);
+    setShowMessagesPage(false);
     setActiveCategoryPage(null);
     setActiveLegalPage(null);
     setActiveAccountPage(null);
@@ -512,6 +590,117 @@ function Home() {
     window.setTimeout(() => {
       document.getElementById("past-purchases")?.scrollIntoView({ behavior: "smooth" });
     }, 0);
+  };
+
+  const openMessagesPage = async () => {
+    if (!currentUser) {
+      openAuth("login");
+      return;
+    }
+
+    setShowAdminDashboard(false);
+    setShowSellerPanel(false);
+    setShowCartPanel(false);
+    setShowPurchasesPage(false);
+    setShowMessagesPage(true);
+    setActiveCategoryPage(null);
+    setActiveLegalPage(null);
+    setActiveAccountPage(null);
+    await loadConversations(currentUser.id);
+    window.setTimeout(() => {
+      document.getElementById("messages")?.scrollIntoView({ behavior: "smooth" });
+    }, 0);
+  };
+
+  const openConversation = async (conversationId) => {
+    if (!currentUser) {
+      openAuth("login");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/conversations/${conversationId}?user_id=${currentUser.id}`);
+      const data = await parseResponse(response, "Unable to open conversation");
+      setActiveConversation(data);
+      setConversations((currentConversations) =>
+        currentConversations.map((conversation) => (conversation.id === data.id ? data : conversation))
+      );
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to open conversation");
+    }
+  };
+
+  const startChatFromListing = async (listing) => {
+    if (!currentUser) {
+      setSelectedListing(null);
+      showToast("Please login to message sellers.");
+      openAuth("login");
+      return;
+    }
+
+    if (listing.seller_id === currentUser.id) {
+      showToast("This is your own listing.");
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch(`${API_URL}/users/${currentUser.id}/conversations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ item_id: listing.id }),
+      });
+      const data = await parseResponse(response, "Unable to start chat");
+      setSelectedListing(null);
+      setConversations((currentConversations) => {
+        const exists = currentConversations.some((conversation) => conversation.id === data.id);
+        return exists
+          ? currentConversations.map((conversation) => (conversation.id === data.id ? data : conversation))
+          : [data, ...currentConversations];
+      });
+      setActiveConversation(data);
+      setShowMessagesPage(true);
+      setShowSellerPanel(false);
+      setShowCartPanel(false);
+      setShowPurchasesPage(false);
+      setActiveCategoryPage(null);
+      setActiveLegalPage(null);
+      setActiveAccountPage(null);
+      showToast("Chat opened.");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to start chat");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const sendMessage = async (event) => {
+    event.preventDefault();
+    if (!currentUser || !activeConversation || !draftMessage.trim()) {
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch(`${API_URL}/conversations/${activeConversation.id}/messages?user_id=${currentUser.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: draftMessage }),
+      });
+      const data = await parseResponse(response, "Unable to send message");
+      setActiveConversation(data);
+      setDraftMessage("");
+      setConversations((currentConversations) => {
+        const nextConversations = currentConversations.filter((conversation) => conversation.id !== data.id);
+        return [data, ...nextConversations];
+      });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to send message");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const addToCart = (listing) => {
@@ -617,6 +806,7 @@ function Home() {
     setShowSellerPanel(false);
     setShowCartPanel(false);
     setShowPurchasesPage(false);
+    setShowMessagesPage(false);
     setActiveCategoryPage(null);
     setActiveLegalPage(page);
     setActiveAccountPage(null);
@@ -628,6 +818,7 @@ function Home() {
     setShowSellerPanel(false);
     setShowCartPanel(false);
     setShowPurchasesPage(false);
+    setShowMessagesPage(false);
     setActiveCategoryPage(null);
     setActiveLegalPage(null);
     setActiveAccountPage(page);
@@ -665,10 +856,12 @@ function Home() {
         logo={logo}
         currentUser={currentUser}
         cartCount={cartItems.length}
+        unreadMessageCount={unreadMessageCount}
         onHome={hideActivePages}
         onBrowse={handleBrowse}
         onOpenSellerTab={openSellerTab}
         onOpenPurchases={openPurchasesPage}
+        onOpenMessages={openMessagesPage}
         onOpenCart={openCart}
         onOpenAccountPage={openAccountPage}
         onOpenAuth={openAuth}
@@ -717,6 +910,22 @@ function Home() {
         />
       )}
 
+      {showMessagesPage && (
+        <MessagesPage
+          conversations={conversations}
+          currentUser={currentUser}
+          activeConversation={activeConversation}
+          draftMessage={draftMessage}
+          isLoading={isLoadingConversations}
+          isSubmitting={isSubmitting}
+          onBack={hideActivePages}
+          onLogin={() => openAuth("login")}
+          onOpenConversation={openConversation}
+          onDraftChange={setDraftMessage}
+          onSendMessage={sendMessage}
+        />
+      )}
+
       <AccountPage
         page={activeAccountPage}
         currentUser={currentUser}
@@ -727,7 +936,7 @@ function Home() {
 
       <LegalPage page={activeLegalPage} onBack={hideActivePages} />
 
-      {!activeCategoryPage && !showCartPanel && !showPurchasesPage && !activeLegalPage && !activeAccountPage && (
+      {!activeCategoryPage && !showCartPanel && !showPurchasesPage && !showMessagesPage && !activeLegalPage && !activeAccountPage && (
         <>
           <HeroSection
             searchQuery={searchQuery}
@@ -792,6 +1001,7 @@ function Home() {
         currentUser={currentUser}
         onClose={() => setSelectedListing(null)}
         onAddToCart={addToCart}
+        onMessageSeller={startChatFromListing}
       />
 
       <Footer logo={logo} onLegalNavigate={openLegalPage} />

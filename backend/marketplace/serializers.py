@@ -45,3 +45,40 @@ def serialize_purchase(purchase):
         "purchased_at": purchase.purchased_at,
     }
 
+
+def serialize_message(message):
+    return {
+        "id": message.id,
+        "conversation_id": message.conversation_id,
+        "sender_id": message.sender_id,
+        "sender_username": message.sender_username,
+        "body": message.body,
+        "created_at": message.created_at,
+    }
+
+
+def serialize_conversation(conversation, latest_message=None, messages=None, current_user_id=None, unread_count=0):
+    data = {
+        "id": conversation.id,
+        "buyer_id": conversation.buyer_id,
+        "buyer_username": conversation.buyer_username,
+        "seller_id": conversation.seller_id,
+        "seller_username": conversation.seller_username,
+        "item_id": conversation.item_id,
+        "item_name": conversation.item_name,
+        "created_at": conversation.created_at,
+        "updated_at": conversation.updated_at,
+        "buyer_read_at": conversation.buyer_read_at,
+        "seller_read_at": conversation.seller_read_at,
+        "buyer_last_read_message_id": conversation.buyer_last_read_message_id,
+        "seller_last_read_message_id": conversation.seller_last_read_message_id,
+        "unread_count": unread_count,
+        "has_unread": unread_count > 0,
+        "latest_message": serialize_message(latest_message) if latest_message else None,
+    }
+    if current_user_id is not None:
+        data["current_user_id"] = current_user_id
+    if messages is not None:
+        data["messages"] = [serialize_message(message) for message in messages]
+    return data
+

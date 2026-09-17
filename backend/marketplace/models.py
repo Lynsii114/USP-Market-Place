@@ -48,3 +48,32 @@ class Purchase(models.Model):
 
     class Meta:
         db_table = "purchases"
+
+
+class Conversation(models.Model):
+    buyer_id = models.IntegerField(db_index=True)
+    buyer_username = models.CharField(max_length=64)
+    seller_id = models.IntegerField(db_index=True)
+    seller_username = models.CharField(max_length=64)
+    item_id = models.IntegerField(null=True, blank=True, db_index=True)
+    item_name = models.CharField(max_length=256, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    buyer_read_at = models.DateTimeField(null=True, blank=True)
+    seller_read_at = models.DateTimeField(null=True, blank=True)
+    buyer_last_read_message_id = models.IntegerField(default=0)
+    seller_last_read_message_id = models.IntegerField(default=0)
+
+    class Meta:
+        db_table = "conversations"
+
+
+class Message(models.Model):
+    conversation_id = models.IntegerField(db_index=True)
+    sender_id = models.IntegerField(db_index=True)
+    sender_username = models.CharField(max_length=64)
+    body = models.CharField(max_length=1000)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "messages"
