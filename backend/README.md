@@ -1,19 +1,21 @@
-Run the backend (FastAPI):
+Run the backend (Django):
 
 ```bash
 cd backend
 python -m venv venv
 venv\Scripts\activate    # Windows
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+python manage.py runserver 127.0.0.1:8000
 ```
 
-Open http://127.0.0.1:8000/docs for API docs.
+Open http://127.0.0.1:8000/api/health to check the API.
 
-Using MySQL:
+Database:
 
-1. Create a MySQL database (example name: `usp_marketplace`).
-2. Set `DATABASE_URL` in a `.env` file in the `backend` folder. Example:
+This backend uses MySQL/phpMyAdmin only. SQLite is disabled.
+
+1. Create a MySQL database, for example `usp_marketplace`.
+2. Set `DATABASE_URL` in a `.env` file in the `backend` folder:
 
 ```
 DATABASE_URL=mysql+pymysql://user:password@localhost:3306/usp_marketplace

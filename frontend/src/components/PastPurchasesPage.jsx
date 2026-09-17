@@ -31,9 +31,9 @@ function PastPurchasesPage({ currentUser, purchases, onBack, onLogin }) {
 
     commands.push("0.05 0.18 0.30 rg 40 710 532 52 re f");
     addText("USP", 58, 730, 18, "F2", "1 1 1");
-    addText("USP MARKETPLACE", 112, 736, 16, "F2", "1 1 1");
+    addText("USP BUY & SELL", 112, 736, 16, "F2", "1 1 1");
     addText("Past Purchases Report", 112, 720, 10, "F1", "1 1 1");
-    addText("Generated from the USP student marketplace system", 365, 720, 8, "F1", "1 1 1");
+    addText("Generated from the USP Buy & Sell system", 365, 720, 8, "F1", "1 1 1");
 
     addText("Customer Details", 44, 680, 12, "F2");
     addText(`Name: ${truncatePdfText(currentUser.username, 45)}`, 44, 662);
@@ -41,7 +41,7 @@ function PastPurchasesPage({ currentUser, purchases, onBack, onLogin }) {
     addText(`Generated: ${generatedAt}`, 44, 630);
     addText("Report Contact", 350, 680, 12, "F2");
     addText("Use seller contact details for each item.", 350, 662);
-    addText("Marketplace: USP student community", 350, 646);
+    addText("USP Buy & Sell: USP student community", 350, 646);
 
     addLine(40, 610, 572, 610);
     addText("Items Paid", 44, 588, 12, "F2");
@@ -99,7 +99,7 @@ function PastPurchasesPage({ currentUser, purchases, onBack, onLogin }) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `usp-marketplace-purchases-${Date.now()}.pdf`;
+    link.download = `usp-buy-sell-purchases-${Date.now()}.pdf`;
     document.body.appendChild(link);
     link.click();
     link.remove();

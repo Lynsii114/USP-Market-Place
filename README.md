@@ -1,8 +1,8 @@
-# USP Market Place
+# USP Buy & Sell
 
 This project is split into two isolated parts:
 
-- `backend/`: FastAPI Python API
+- `backend/`: Django Python API
 - `frontend/`: React/Vite web app
 
 Keep Python files and backend dependencies inside `backend/`. Keep React files and Node dependencies inside `frontend/`.
@@ -14,10 +14,10 @@ cd backend
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
-python -m uvicorn app.main:app --port 8000
+python manage.py runserver 127.0.0.1:8000
 ```
 
-API docs: `http://127.0.0.1:8000/docs`
+API health check: `http://127.0.0.1:8000/api/health`
 
 ## Frontend
 

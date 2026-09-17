@@ -3,7 +3,7 @@ import React from "react";
 function InfoSection() {
   return (
     <section className="info-section">
-      <h2>Why USP Marketplace?</h2>
+      <h2>Why USP Buy & Sell?</h2>
 
       <div className="info-container">
         <div className="info-card">

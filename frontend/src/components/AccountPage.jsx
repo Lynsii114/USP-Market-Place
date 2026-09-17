@@ -45,7 +45,7 @@ function AccountPage({ page, currentUser, myListings, purchaseHistory, onBack })
         <div className="section-heading">
           <span className="section-kicker">{pageContent.kicker}</span>
           <h2>{pageContent.title}</h2>
-          <p>Account information for your USP Marketplace activity.</p>
+          <p>Account information for your USP Buy & Sell activity.</p>
         </div>
         <button type="button" className="close-panel-button" onClick={onBack} aria-label="Close account page">
           x

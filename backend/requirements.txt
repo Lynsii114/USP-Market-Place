@@ -1,8 +1,4 @@
-fastapi
-uvicorn[standard]
-pydantic
-sqlalchemy
+Django
 pymysql
 python-dotenv
 pytest
-httpx2

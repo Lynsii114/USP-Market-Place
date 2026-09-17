@@ -183,7 +183,7 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
 
     commands.push("0.05 0.18 0.30 rg 40 710 532 52 re f");
     addText("USP", 58, 730, 18, "F2", "1 1 1");
-    addText("USP MARKETPLACE ADMIN REPORT", 112, 736, 14, "F2", "1 1 1");
+    addText("USP BUY & SELL ADMIN REPORT", 112, 736, 14, "F2", "1 1 1");
     addText(`Period: ${reportPeriod}`, 112, 720, 10, "F1", "1 1 1");
     addText(`Generated: ${new Date().toLocaleString()}`, 350, 720, 8, "F1", "1 1 1");
     addText(`Total Orders: ${report?.total_orders ?? 0}`, 44, 676, 11, "F2");
@@ -206,7 +206,7 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
       y -= 24;
     });
 
-    addText("USP Marketplace | Admin Office | Laucala Campus", 44, 44, 8);
+    addText("USP Buy & Sell | Admin Office | Laucala Campus", 44, 44, 8);
     const textCommands = commands.join("\n");
     const objects = [
       "<< /Type /Catalog /Pages 2 0 R >>",
@@ -233,7 +233,7 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `usp-marketplace-admin-report-${Date.now()}.pdf`;
+    link.download = `usp-buy-sell-admin-report-${Date.now()}.pdf`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -247,13 +247,13 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
         <section className="admin-access-panel">
           <img src={logo} alt="USP logo" />
           <h1>Admin Access Required</h1>
-          <p>Only active USP Marketplace administrators can open this dashboard.</p>
+          <p>Only active USP Buy & Sell administrators can open this dashboard.</p>
           <div className="admin-access-actions">
             <button type="button" className="auth-submit" onClick={onLogin}>
               Admin Login
             </button>
             <button type="button" className="secondary-button" onClick={onMarketplace}>
-              Back to Marketplace
+              Back to USP Buy & Sell
             </button>
           </div>
         </section>
@@ -267,7 +267,7 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
         <div className="admin-brand">
           <img src={logo} alt="USP logo" />
           <div>
-            <strong>USP Marketplace</strong>
+            <strong>USP Buy & Sell</strong>
             <span>Administrator</span>
           </div>
         </div>
@@ -295,7 +295,7 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
             <h1>{activeTab}</h1>
           </div>
           <button type="button" className="secondary-button" onClick={onMarketplace}>
-            Marketplace
+            USP Buy & Sell
           </button>
         </div>
 

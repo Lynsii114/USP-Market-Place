@@ -17,7 +17,7 @@ function Navbar({
     <header className="navbar">
       <div className="brand">
         <img src={logo} alt="USP logo" className="usp-logo" />
-        <span>USP Marketplace</span>
+        <span>USP Buy & Sell</span>
       </div>
 
       <nav className="nav-links">

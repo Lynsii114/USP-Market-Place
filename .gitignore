@@ -2,12 +2,16 @@ backend/.env
 backend/*.db
 backend/**/__pycache__/
 backend/.pytest_cache/
+pytest-cache-files-*/
 backend/venv/
 backend/.venv/
 
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+
+node_modules/
+dist/
 
 *.pyc
 *.log
