@@ -523,9 +523,32 @@ def delete_item(item_id, seller_id):
     return {"message": "Listing removed successfully."}
 
 
-def purchase_item(item_id, buyer_id):
+PAYMENT_METHODS = {
+    "mycash": "MyCash",
+    "mpaisa": "M-PAiSA",
+    "cash": "Cash",
+    "visa": "Visa Card",
+}
+
+ORDER_STAGES = [
+    "order_placed",
+    "payment_confirmed",
+    "preparing_item",
+    "ready_for_collection",
+    "item_received",
+    "completed",
+]
+
+SELLER_ORDER_STAGES = {"preparing_item", "ready_for_collection"}
+
+
+def purchase_item(item_id, buyer_id, payment_method="cash"):
     if not buyer_id:
         raise ApiError("User not found", 404)
+
+    payment_method_key = str(payment_method or "").strip().lower()
+    if payment_method_key not in PAYMENT_METHODS:
+        raise ApiError("Select a valid payment method", 422)
 
     buyer = require_active_user(buyer_id)
     item = Item.objects.filter(id=item_id).first()
@@ -554,11 +577,13 @@ def purchase_item(item_id, buyer_id):
         seller_contact=item.contact,
         quantity=1,
         total_amount=item.price,
-        status="completed",
+        payment_method=payment_method_key,
+        status="in_progress",
+        order_stage="payment_confirmed",
     )
     notify_admin(
         "Checkout payment completed",
-        f"{buyer.username} purchased {item.name} from {item.seller_username} for ${item.price:.2f}.",
+        f"{buyer.username} purchased {item.name} from {item.seller_username} for ${item.price:.2f} using {PAYMENT_METHODS[payment_method_key]}.",
         "checkout",
         buyer,
     )
@@ -569,7 +594,72 @@ def list_buyer_purchases(buyer_id):
     if not User.objects.filter(id=buyer_id).exists():
         raise ApiError("User not found", 404)
     purchases = visible_purchases(include_test_records=True).filter(buyer_id=buyer_id).order_by("-id")
-    return [serialize_purchase(purchase) for purchase in purchases]
+    return [enrich_purchase_order(purchase) for purchase in purchases]
+
+
+def enrich_purchase_order(purchase):
+    data = serialize_purchase(purchase)
+    review = RatingReview.objects.filter(purchase_id=purchase.id, reviewer_id=purchase.buyer_id).first()
+    data["has_review"] = bool(review)
+    if review:
+        data["review"] = serialize_rating_review(review)
+    return data
+
+
+def list_seller_orders(seller_id):
+    seller = require_active_user(seller_id)
+    purchases = visible_purchases(include_test_records=True).filter(seller_id=seller.id).order_by("-id")
+    return [enrich_purchase_order(purchase) for purchase in purchases]
+
+
+def update_seller_order_stage(purchase_id, seller_id, stage):
+    seller = require_active_user(seller_id)
+    stage = str(stage or "").strip().lower()
+    if stage not in SELLER_ORDER_STAGES:
+        raise ApiError("Seller can only set Preparing Item or Ready for Collection", 422)
+
+    purchase = Purchase.objects.filter(id=purchase_id).first()
+    if not purchase:
+        raise ApiError("Order not found", 404)
+    if purchase.seller_id != seller.id:
+        raise ApiError("You can only update your own orders", 403)
+    if purchase.order_stage in {"item_received", "completed"}:
+        raise ApiError("This order has already been received by the buyer", 400)
+    if stage == "ready_for_collection" and purchase.order_stage not in {"preparing_item", "ready_for_collection"}:
+        raise ApiError("Mark the order as preparing before setting it ready for collection", 400)
+
+    purchase.order_stage = stage
+    purchase.status = "in_progress"
+    purchase.save(update_fields=["order_stage", "status", "updated_at"])
+    notify_admin(
+        "Order progress updated",
+        f"{seller.username} marked order #{purchase.id} for {purchase.item_name} as {stage.replace('_', ' ')}.",
+        "checkout",
+        seller,
+    )
+    return enrich_purchase_order(purchase)
+
+
+def confirm_order_received(purchase_id, buyer_id):
+    buyer = require_active_user(buyer_id)
+    purchase = Purchase.objects.filter(id=purchase_id).first()
+    if not purchase:
+        raise ApiError("Order not found", 404)
+    if purchase.buyer_id != buyer.id:
+        raise ApiError("You can only confirm your own orders", 403)
+    if purchase.order_stage not in {"ready_for_collection", "item_received", "completed"}:
+        raise ApiError("This order is not ready for collection yet", 400)
+
+    purchase.order_stage = "completed"
+    purchase.status = "completed"
+    purchase.save(update_fields=["order_stage", "status", "updated_at"])
+    notify_admin(
+        "Order completed",
+        f"{buyer.username} confirmed receiving {purchase.item_name}. Order #{purchase.id} is completed.",
+        "checkout",
+        buyer,
+    )
+    return enrich_purchase_order(purchase)
 
 
 def dashboard(admin_id):
@@ -727,10 +817,31 @@ def submit_user_report(data):
 
 def submit_rating_review(data):
     reviewer = require_active_user(data.get("reviewer_id"))
-    item = Item.objects.filter(id=data.get("item_id")).first()
-    if not item:
-        raise ApiError("Listing not found", 404)
-    if item.seller_id == reviewer.id:
+    purchase = None
+    if data.get("purchase_id"):
+        purchase = Purchase.objects.filter(id=data.get("purchase_id")).first()
+        if not purchase:
+            raise ApiError("Order not found", 404)
+        if purchase.buyer_id != reviewer.id:
+            raise ApiError("Only the buyer who purchased this item can review this order", 403)
+        if purchase.order_stage != "completed" or purchase.status != "completed":
+            raise ApiError("You can review this order after it is completed", 400)
+        if RatingReview.objects.filter(purchase_id=purchase.id, reviewer_id=reviewer.id).exists():
+            raise ApiError("You have already reviewed this order", 400)
+        item_id = purchase.item_id
+        item_name = purchase.item_name
+        seller_id = purchase.seller_id
+        seller_username = purchase.seller_username
+    else:
+        item = Item.objects.filter(id=data.get("item_id")).first()
+        if not item:
+            raise ApiError("Listing not found", 404)
+        item_id = item.id
+        item_name = item.name
+        seller_id = item.seller_id
+        seller_username = item.seller_username
+
+    if seller_id == reviewer.id:
         raise ApiError("You cannot review your own listing", 400)
 
     try:
@@ -745,18 +856,19 @@ def submit_rating_review(data):
         raise ApiError("Review must be at least 5 characters long", 422)
 
     review_record = RatingReview.objects.create(
+        purchase_id=purchase.id if purchase else None,
         reviewer_id=reviewer.id,
         reviewer_username=reviewer.username,
-        item_id=item.id,
-        item_name=item.name,
-        seller_id=item.seller_id,
-        seller_username=item.seller_username,
+        item_id=item_id,
+        item_name=item_name,
+        seller_id=seller_id,
+        seller_username=seller_username,
         rating=rating,
         review=review_text,
     )
     notify_admin(
         "New rating and review",
-        f"{reviewer.username} rated {item.name} {rating}/5.",
+        f"{reviewer.username} rated {item_name} {rating}/5.",
         "review",
         reviewer,
     )

@@ -11,6 +11,7 @@ function ListingsSection({
   onClearFilters,
   onSelectCategory,
   onSelectListing,
+  onViewSeller,
   onSortChange,
 }) {
   return (
@@ -57,7 +58,7 @@ function ListingsSection({
       ) : filteredListings.length ? (
         <div className="product-container">
           {filteredListings.map((listing) => (
-            <ProductCard listing={listing} showPrice onSelect={onSelectListing} key={listing.id} />
+            <ProductCard listing={listing} showPrice onSelect={onSelectListing} onViewSeller={onViewSeller} key={listing.id} />
           ))}
         </div>
       ) : (

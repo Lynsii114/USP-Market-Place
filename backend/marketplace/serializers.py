@@ -45,8 +45,11 @@ def serialize_purchase(purchase):
         "seller_contact": purchase.seller_contact,
         "quantity": purchase.quantity,
         "total_amount": purchase.total_amount,
+        "payment_method": purchase.payment_method,
         "status": purchase.status,
+        "order_stage": purchase.order_stage,
         "purchased_at": purchase.purchased_at,
+        "updated_at": purchase.updated_at,
     }
 
 
@@ -80,6 +83,7 @@ def serialize_user_report(report):
 def serialize_rating_review(review):
     return {
         "id": review.id,
+        "purchase_id": review.purchase_id,
         "reviewer_id": review.reviewer_id,
         "reviewer_username": review.reviewer_username,
         "item_id": review.item_id,

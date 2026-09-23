@@ -88,8 +88,11 @@ class Purchase(models.Model):
     seller_contact = models.CharField(max_length=128, default="")
     quantity = models.IntegerField(default=1)
     total_amount = models.FloatField(default=0)
+    payment_method = models.CharField(max_length=32, default="cash")
     status = models.CharField(max_length=32, default="completed")
+    order_stage = models.CharField(max_length=32, default="payment_confirmed")
     purchased_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "purchases"
@@ -123,6 +126,7 @@ class UserReport(models.Model):
 
 
 class RatingReview(models.Model):
+    purchase_id = models.IntegerField(null=True, blank=True, db_index=True)
     reviewer_id = models.IntegerField(db_index=True)
     reviewer_username = models.CharField(max_length=64)
     item_id = models.IntegerField(db_index=True)

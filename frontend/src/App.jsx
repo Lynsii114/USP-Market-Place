@@ -13,6 +13,7 @@ import ListingsSection from "./components/ListingsSection";
 import LegalPage from "./components/LegalPage";
 import Navbar from "./components/Navbar";
 import PastPurchasesPage from "./components/PastPurchasesPage";
+import ProductCard from "./components/ProductCard";
 import ProductModal from "./components/ProductModal";
 import SellerPanel from "./components/SellerPanel";
 import Toast from "./components/Toast";
@@ -51,6 +52,7 @@ function Home() {
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [sortOption, setSortOption] = useState("newest");
   const [selectedListing, setSelectedListing] = useState(null);
+  const [selectedSeller, setSelectedSeller] = useState(null);
   const [showSellerPanel, setShowSellerPanel] = useState(false);
   const [activeCategoryPage, setActiveCategoryPage] = useState(null);
   const [cartItems, setCartItems] = useState([]);
@@ -60,6 +62,8 @@ function Home() {
   const [pendingReviewItems, setPendingReviewItems] = useState([]);
   const [checkoutReviewForm, setCheckoutReviewForm] = useState({ rating: "5", review: "" });
   const [purchaseHistory, setPurchaseHistory] = useState([]);
+  const [sellerOrders, setSellerOrders] = useState([]);
+  const [ordersInitialTab, setOrdersInitialTab] = useState("track");
   const [activeLegalPage, setActiveLegalPage] = useState(null);
   const [activeAccountPage, setActiveAccountPage] = useState(null);
   const [showAdminDashboard, setShowAdminDashboard] = useState(() =>
@@ -82,8 +86,10 @@ function Home() {
   useEffect(() => {
     if (currentUser) {
       loadPurchaseHistory(currentUser.id);
+      loadSellerOrders(currentUser.id);
     } else {
       setPurchaseHistory([]);
+      setSellerOrders([]);
     }
   }, [currentUser]);
 
@@ -555,6 +561,24 @@ function Home() {
     setSelectedListing(listing);
   };
 
+  const loadSellerOrders = async (sellerId) => {
+    try {
+      const response = await fetch(`${API_URL}/users/${sellerId}/sales`);
+      const data = await parseResponse(response, "Unable to load seller orders");
+      setSellerOrders(data);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to load seller orders", "error");
+    }
+  };
+
+  const handleViewSellerListings = (listing) => {
+    setSelectedSeller({
+      id: listing.seller_id,
+      username: listing.seller_username,
+    });
+    setSelectedListing(null);
+  };
+
   const handleDeleteListing = async (listingId) => {
     if (!currentUser) {
       return;
@@ -620,6 +644,9 @@ function Home() {
     activeCategoryPage
       ? listings.filter((listing) => listing.category === activeCategoryPage)
       : [];
+  const selectedSellerListings = selectedSeller
+    ? listings.filter((listing) => listing.seller_id === selectedSeller.id)
+    : [];
   const searchSuggestions = normalizedSearch
     ? listings
         .filter(
@@ -700,13 +727,14 @@ function Home() {
     }, 0);
   };
 
-  const openPurchasesPage = () => {
+  const openPurchasesPage = (tabName = "track") => {
     setShowAdminDashboard(false);
     setShowSellerPanel(false);
     setShowCartPanel(false);
     setActiveCategoryPage(null);
     setActiveLegalPage(null);
     setActiveAccountPage(null);
+    setOrdersInitialTab(tabName);
     setShowPurchasesPage(true);
     if (!currentUser) {
       openAuth("login");
@@ -750,10 +778,22 @@ function Home() {
     showToast("Item successfully added to cart.");
   };
 
-  const checkoutCart = async () => {
+  const paymentMethodLabels = {
+    mycash: "MyCash",
+    mpaisa: "M-PAiSA",
+    cash: "Cash",
+    visa: "Visa Card",
+  };
+
+  const checkoutCart = async (paymentMethod) => {
     if (!currentUser) {
       showToast("Please login to purchase items.", "error");
       openAuth("login");
+      return;
+    }
+
+    if (!paymentMethodLabels[paymentMethod]) {
+      showToast("Please select a payment method.", "error");
       return;
     }
 
@@ -771,6 +811,8 @@ function Home() {
       for (const item of availableItems) {
         const response = await fetch(`${API_URL}/items/${item.id}/purchase?buyer_id=${currentUser.id}`, {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ payment_method: paymentMethod }),
         });
         const purchasedItem = await parseResponse(response, `Unable to purchase ${item.name}`);
         purchasedItems.push(purchasedItem);
@@ -787,9 +829,9 @@ function Home() {
         purchasedAt: new Date().toLocaleString(),
         items: purchasedItems,
         total: availableItems.reduce((total, item) => total + Number(item.price), 0),
+        paymentMethod: paymentMethodLabels[paymentMethod],
       });
-      setPendingReviewItems(purchasedItems);
-      setCheckoutReviewForm({ rating: "5", review: "" });
+      await loadSellerOrders(currentUser.id);
       showToast("Checkout successful.");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to checkout", "error");
@@ -830,7 +872,7 @@ function Home() {
     }
   };
 
-  const submitRatingReview = async (listing, rating, review) => {
+  const submitRatingReview = async (purchase, rating, review) => {
     if (!currentUser) {
       showToast("Please login to submit a review.", "error");
       openAuth("login");
@@ -848,17 +890,63 @@ function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           reviewer_id: currentUser.id,
-          item_id: listing.id,
+          purchase_id: purchase.id,
+          item_id: purchase.item_id || purchase.id,
           rating,
           review,
         }),
       });
       const data = await parseResponse(response, "Unable to submit review");
       showToast(data.message || "Rating and review submitted.");
+      await loadPurchaseHistory(currentUser.id);
       return true;
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to submit review", "error");
       return false;
+    }
+  };
+
+  const confirmOrderReceived = async (purchase) => {
+    if (!currentUser) {
+      openAuth("login");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await fetch(`${API_URL}/orders/${purchase.id}/received`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ buyer_id: currentUser.id }),
+      }).then((response) => parseResponse(response, "Unable to confirm item received"));
+      await loadPurchaseHistory(currentUser.id);
+      showToast("Order completed. You can now rate and review.");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to confirm item received", "error");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const updateSellerOrderStage = async (order, stage) => {
+    if (!currentUser) {
+      openAuth("login");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await fetch(`${API_URL}/orders/${order.id}/seller-stage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ seller_id: currentUser.id, stage }),
+      }).then((response) => parseResponse(response, "Unable to update order progress"));
+      await loadSellerOrders(currentUser.id);
+      showToast("Order progress updated.");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to update order progress", "error");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -911,6 +999,11 @@ function Home() {
   };
 
   const openAccountPage = (page) => {
+    if (!currentUser) {
+      openAuth("login");
+      return;
+    }
+
     setShowAdminDashboard(false);
     setShowSellerPanel(false);
     setShowCartPanel(false);
@@ -920,6 +1013,20 @@ function Home() {
     setActiveAccountPage(page);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
+
+  const activeNavPage = showCartPanel
+    ? "cart"
+    : showPurchasesPage || (showSellerPanel && activeSellerTab === "my-listings") || activeAccountPage === "sales"
+      ? "activity"
+      : showSellerPanel && activeSellerTab === "add-listing"
+        ? "sell"
+        : activeAccountPage === "messages"
+          ? "messages"
+          : activeAccountPage
+            ? "account"
+            : activeCategoryPage
+              ? "shop"
+              : "home";
 
   return (
     <div className="home-page">
@@ -955,6 +1062,7 @@ function Home() {
         logo={logo}
         currentUser={currentUser}
         cartCount={cartItems.length}
+        activePage={activeNavPage}
         onHome={hideActivePages}
         onBrowse={handleBrowse}
         onOpenSellerTab={openSellerTab}
@@ -986,6 +1094,7 @@ function Home() {
         listings={activeCategoryListings}
         onBack={() => setActiveCategoryPage(null)}
         onSelectListing={setSelectedListing}
+        onViewSeller={handleViewSellerListings}
       />
 
       {showCartPanel && (
@@ -1005,8 +1114,12 @@ function Home() {
         <PastPurchasesPage
           currentUser={currentUser}
           purchases={purchaseHistory}
+          initialTab={ordersInitialTab}
           onBack={hideActivePages}
+          onConfirmReceived={confirmOrderReceived}
           onLogin={() => openAuth("login")}
+          onSubmitReview={submitRatingReview}
+          isSubmitting={isSubmitting}
         />
       )}
 
@@ -1047,6 +1160,7 @@ function Home() {
               myListings={myListings}
               openListingMenuId={openListingMenuId}
               pendingPhoto={pendingPhoto}
+              sellerOrders={sellerOrders}
               onClose={hideActivePages}
               onDeleteListing={handleDeleteListing}
               onEditListing={handleEditListing}
@@ -1061,6 +1175,7 @@ function Home() {
               onPhotoRemove={removePhoto}
               onResetForm={resetListingForm}
               onSubmit={handleListingSubmit}
+              onUpdateOrderStage={updateSellerOrderStage}
             />
           )}
 
@@ -1074,6 +1189,7 @@ function Home() {
             onClearFilters={clearFilters}
             onSelectCategory={setSelectedCategory}
             onSelectListing={setSelectedListing}
+            onViewSeller={handleViewSellerListings}
             onSortChange={setSortOption}
           />
 
@@ -1087,7 +1203,41 @@ function Home() {
         onClose={() => setSelectedListing(null)}
         onAddToCart={addToCart}
         onReportListing={submitListingReport}
+        onViewSeller={handleViewSellerListings}
       />
+
+      {selectedSeller && (
+        <div className="auth-modal-backdrop" onClick={() => setSelectedSeller(null)}>
+          <div className="seller-products-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="auth-header">
+              <div>
+                <span className="section-kicker">Seller listings</span>
+                <h3>{selectedSeller.username}</h3>
+              </div>
+              <button type="button" className="close-button" onClick={() => setSelectedSeller(null)} aria-label="Close">
+                x
+              </button>
+            </div>
+            {selectedSellerListings.length ? (
+              <div className="seller-products-grid">
+                {selectedSellerListings.map((listing) => (
+                  <ProductCard
+                    listing={listing}
+                    showPrice
+                    onSelect={(selectedProduct) => {
+                      setSelectedSeller(null);
+                      setSelectedListing(selectedProduct);
+                    }}
+                    key={listing.id}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="empty-state">This seller has no other available listings.</p>
+            )}
+          </div>
+        </div>
+      )}
 
       {pendingReviewItems.length > 0 && (
         <div className="auth-modal-backdrop" onClick={() => setPendingReviewItems([])}>

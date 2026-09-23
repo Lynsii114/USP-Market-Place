@@ -112,7 +112,8 @@ def item_detail(request, item_id):
 def purchase_item(request, item_id):
     if request.method != "POST":
         return method_not_allowed()
-    return run(lambda: (services.purchase_item(item_id, request.GET.get("buyer_id")), True))
+    data = json_body(request)
+    return run(lambda: (services.purchase_item(item_id, request.GET.get("buyer_id"), data.get("payment_method", "cash")), True))
 
 
 @csrf_exempt
@@ -133,6 +134,28 @@ def list_buyer_purchases(request, buyer_id):
     if request.method != "GET":
         return method_not_allowed()
     return run(lambda: (services.list_buyer_purchases(buyer_id), False))
+
+
+def list_seller_orders(request, seller_id):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.list_seller_orders(seller_id), False))
+
+
+@csrf_exempt
+def seller_order_stage(request, purchase_id):
+    if request.method != "POST":
+        return method_not_allowed()
+    data = json_body(request)
+    return run(lambda: (services.update_seller_order_stage(purchase_id, data.get("seller_id"), data.get("stage")), True))
+
+
+@csrf_exempt
+def buyer_order_received(request, purchase_id):
+    if request.method != "POST":
+        return method_not_allowed()
+    data = json_body(request)
+    return run(lambda: (services.confirm_order_received(purchase_id, data.get("buyer_id")), True))
 
 
 def admin_dashboard(request):
