@@ -3,7 +3,6 @@ import base64
 from io import BytesIO
 import json
 import secrets
-import re
 import pyotp
 import qrcode
 from urllib.error import HTTPError, URLError
@@ -17,9 +16,6 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_date
-# FUTURE MICROSOFT ENTRA INTEGRATION:
-# import jwt
-# from jwt import PyJWKClient
 
 from .constants import ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_USERNAME, HIDDEN_ITEM_NAMES
 from .exceptions import ApiError
@@ -334,67 +330,6 @@ def verify_authenticator(data):
         user.authenticator_enabled = True
         user.save(update_fields=["authenticator_enabled"])
     return {"user": serialize_user(user), "message": "Login successful"}
-
-
-''' FUTURE MICROSOFT ENTRA INTEGRATION - enable after USP provides tenant configuration.
-def microsoft_login(data):
-    token = str(data.get("id_token", "")).strip()
-    if not token:
-        raise ApiError("Microsoft sign-in token is required", 422)
-    if not settings.MICROSOFT_CLIENT_ID or not settings.MICROSOFT_TENANT_ID:
-        raise ApiError("Microsoft sign-in is not configured on the server", 503)
-
-    issuer = f"https://login.microsoftonline.com/{settings.MICROSOFT_TENANT_ID}/v2.0"
-    jwks_client = PyJWKClient(
-        f"https://login.microsoftonline.com/{settings.MICROSOFT_TENANT_ID}/discovery/v2.0/keys"
-    )
-    try:
-        signing_key = jwks_client.get_signing_key_from_jwt(token)
-        claims = jwt.decode(
-            token,
-            signing_key.key,
-            algorithms=["RS256"],
-            audience=settings.MICROSOFT_CLIENT_ID,
-            issuer=issuer,
-        )
-    except (jwt.PyJWTError, Exception) as exc:
-        raise ApiError("Microsoft sign-in could not be verified", 401) from exc
-
-    email = str(claims.get("preferred_username") or claims.get("email") or "").strip().lower()
-    if not re.match(r"^s\d+@(?:[a-z0-9-]+\.)*usp\.ac\.fj$", email):
-        raise ApiError("Only verified USP student Microsoft accounts can sign in", 403)
-
-    student_id = email.split("@", 1)[0].upper()
-    user = User.objects.filter(email__iexact=email).first()
-    if user:
-        if user.status == "suspended":
-            raise ApiError("Account is suspended", 403)
-        if not user.authenticator_secret:
-            user.authenticator_secret = pyotp.random_base32()
-            user.save(update_fields=["authenticator_secret"])
-            return {
-                "authenticator_setup_required": True,
-                "user_id": user.id,
-                "username": user.username,
-                **authenticator_setup(user.authenticator_secret, user.email),
-                "message": "Set up Microsoft Authenticator to finish signing in",
-            }
-        return {"user": serialize_user(user), "message": "Microsoft sign-in successful"}
-
-    username = student_id.lower()
-    if User.objects.filter(username=username).exists():
-        username = f"{username}_{student_id[-4:].lower()}"
-    user = User.objects.create(
-        username=username,
-        student_id=student_id,
-        email=email,
-        password_hash="",
-        role="student",
-        status="active",
-    )
-    PendingRegistration.objects.filter(email__iexact=email).delete()
-    return {"user": serialize_user(user), "message": "USP Microsoft account connected successfully"}
-'''
 
 
 def list_items():
