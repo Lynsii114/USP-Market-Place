@@ -1,4 +1,5 @@
 import React from "react";
+import OrderProgressTracker from "./OrderProgressTracker";
 
 function SellerPanel({
   activeSellerTab,
@@ -10,6 +11,7 @@ function SellerPanel({
   myListings,
   openListingMenuId,
   pendingPhoto,
+  sellerOrders,
   onClose,
   onDeleteListing,
   onEditListing,
@@ -22,7 +24,10 @@ function SellerPanel({
   onPhotoRemove,
   onResetForm,
   onSubmit,
+  onUpdateOrderStage,
 }) {
+  const activeSellerOrders = sellerOrders.filter((order) => order.order_stage !== "completed" && order.status !== "completed");
+
   return (
     <section className="seller-section" id="seller-listings">
       <div className="seller-panel-header">
@@ -211,6 +216,45 @@ function SellerPanel({
               ) : (
                 <p className="empty-state">You have not listed any items yet.</p>
               )}
+              <div className="seller-orders-panel">
+                <h3>Active Order Progress</h3>
+                {activeSellerOrders.length ? (
+                  <div className="seller-order-list">
+                    {activeSellerOrders.map((order) => (
+                      <div className="seller-order-card" key={order.id}>
+                        <div className="seller-order-header">
+                          <div>
+                            <strong>{order.item_name}</strong>
+                            <span>Buyer: {order.buyer_username}</span>
+                          </div>
+                          <strong>${Number(order.total_amount || order.price).toFixed(2)}</strong>
+                        </div>
+                        <OrderProgressTracker stage={order.order_stage} />
+                        <div className="seller-order-actions">
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() => onUpdateOrderStage(order, "preparing_item")}
+                            disabled={["preparing_item", "ready_for_collection", "completed"].includes(order.order_stage)}
+                          >
+                            Preparing Item
+                          </button>
+                          <button
+                            type="button"
+                            className="auth-submit"
+                            onClick={() => onUpdateOrderStage(order, "ready_for_collection")}
+                            disabled={order.order_stage !== "preparing_item"}
+                          >
+                            Ready for Collection
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="empty-state">No buyer orders for your listings yet.</p>
+                )}
+              </div>
             </div>
           )}
         </>

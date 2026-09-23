@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 
-function ProductModal({ listing, currentUser, onClose, onAddToCart, onReportListing }) {
+function ProductModal({ listing, currentUser, onClose, onAddToCart, onReportListing, onViewSeller }) {
   const [reportReason, setReportReason] = useState("");
   const [reportTarget, setReportTarget] = useState("listing");
   const [reportMode, setReportMode] = useState(null);
@@ -58,7 +58,13 @@ function ProductModal({ listing, currentUser, onClose, onAddToCart, onReportList
           <p>{listing.description}</p>
           <div className="seller-details">
             <strong>Seller</strong>
-            <span>{listing.seller_username}</span>
+            {onViewSeller ? (
+              <button type="button" className="seller-link-button" onClick={() => onViewSeller(listing)}>
+                {listing.seller_username}
+              </button>
+            ) : (
+              <span>{listing.seller_username}</span>
+            )}
           </div>
           <div className="seller-details">
             <strong>Contact</strong>

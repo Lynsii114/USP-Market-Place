@@ -11,6 +11,13 @@ function CartPage({
   isSubmitting,
 }) {
   const [isConfirmingCheckout, setIsConfirmingCheckout] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState("");
+  const paymentOptions = [
+    { value: "mycash", label: "MyCash" },
+    { value: "mpaisa", label: "M-PAiSA" },
+    { value: "cash", label: "Cash" },
+    { value: "visa", label: "Visa Card" },
+  ];
   const itemCount = cartItems.length;
   const availableItems = cartItems.filter((item) => item.status !== "sold" && Number(item.stock) > 0);
   const hasAvailableItems = availableItems.length > 0;
@@ -58,12 +65,19 @@ function CartPage({
             <span>Total Paid</span>
             <strong>${Number(receipt.total).toFixed(2)}</strong>
           </div>
+          {receipt.paymentMethod && (
+            <div className="receipt-total">
+              <span>Payment Method</span>
+              <strong>{receipt.paymentMethod}</strong>
+            </div>
+          )}
 
           <button
             type="button"
             className="auth-submit"
             onClick={() => {
               setIsConfirmingCheckout(false);
+              setPaymentMethod("");
               onClearReceipt();
               onClose();
             }}
@@ -104,11 +118,29 @@ function CartPage({
             <strong>${confirmationTotal.toFixed(2)}</strong>
           </div>
 
+          <div className="payment-method-panel">
+            <span>Payment Method</span>
+            <div className="payment-method-options">
+              {paymentOptions.map((option) => (
+                <label className={paymentMethod === option.value ? "payment-option selected" : "payment-option"} key={option.value}>
+                  <input
+                    type="radio"
+                    name="payment_method"
+                    value={option.value}
+                    checked={paymentMethod === option.value}
+                    onChange={(event) => setPaymentMethod(event.target.value)}
+                  />
+                  <strong>{option.label}</strong>
+                </label>
+              ))}
+            </div>
+          </div>
+
           <div className="checkout-actions">
             <button type="button" className="secondary-button" onClick={() => setIsConfirmingCheckout(false)}>
               Back to Cart
             </button>
-            <button type="button" className="auth-submit" onClick={onCheckout} disabled={isSubmitting}>
+            <button type="button" className="auth-submit" onClick={() => onCheckout(paymentMethod)} disabled={isSubmitting || !paymentMethod}>
               {isSubmitting ? "Checking Out..." : "Confirm Checkout"}
             </button>
           </div>

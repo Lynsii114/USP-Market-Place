@@ -34,8 +34,11 @@ TABLE_COLUMNS = {
         "seller_contact": "VARCHAR(128) NOT NULL DEFAULT ''",
         "quantity": "INTEGER NOT NULL DEFAULT 1",
         "total_amount": "FLOAT NOT NULL DEFAULT 0",
+        "payment_method": "VARCHAR(32) NOT NULL DEFAULT 'cash'",
         "status": "VARCHAR(32) NOT NULL DEFAULT 'completed'",
+        "order_stage": "VARCHAR(32) NOT NULL DEFAULT 'completed'",
         "purchased_at": "DATETIME NULL",
+        "updated_at": "DATETIME NULL",
     },
     "admin_notifications": {
         "category": "VARCHAR(40) NOT NULL DEFAULT 'activity'",
@@ -49,6 +52,7 @@ TABLE_COLUMNS = {
         "created_at": "DATETIME NULL",
     },
     "rating_reviews": {
+        "purchase_id": "INTEGER NULL",
         "created_at": "DATETIME NULL",
     },
 }

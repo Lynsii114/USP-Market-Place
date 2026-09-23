@@ -1,8 +1,16 @@
 import React, { useState } from "react";
+import OrderProgressTracker from "./OrderProgressTracker";
 
-function PastPurchasesPage({ currentUser, purchases, onBack, onLogin }) {
+function PastPurchasesPage({ currentUser, purchases, initialTab = "track", onBack, onLogin, onConfirmReceived, onSubmitReview, isSubmitting }) {
   const [isConfirmingDownload, setIsConfirmingDownload] = useState(false);
-  const totalSpent = purchases.reduce((total, purchase) => total + Number(purchase.price), 0);
+  const [reviewingPurchase, setReviewingPurchase] = useState(null);
+  const [reviewForm, setReviewForm] = useState({ rating: "5", review: "" });
+  const isActiveOrder = (purchase) => !["completed", "cancelled", "canceled"].includes(purchase.order_stage || purchase.status);
+  const activeOrders = purchases.filter(isActiveOrder);
+  const orderHistory = purchases.filter((purchase) => !isActiveOrder(purchase));
+  const activeOrdersTotal = activeOrders.reduce((total, purchase) => total + Number(purchase.total_amount || purchase.price), 0);
+  const orderHistoryTotal = orderHistory.reduce((total, purchase) => total + Number(purchase.total_amount || purchase.price), 0);
+
   const formatPurchaseDate = (value) =>
     new Date(value).toLocaleString([], {
       year: "numeric",
@@ -69,7 +77,7 @@ function PastPurchasesPage({ currentUser, purchases, onBack, onLogin }) {
     }
 
     addText("Total Amount Paid", 350, Math.max(y, 72), 12, "F2");
-    addText(`$${totalSpent.toFixed(2)}`, 486, Math.max(y, 72), 14, "F2");
+    addText(`$${orderHistoryTotal.toFixed(2)}`, 486, Math.max(y, 72), 14, "F2");
     addText("This report is generated for personal record keeping.", 44, 44, 8);
     const textCommands = commands.join("\n");
     const objects = [
@@ -122,39 +130,118 @@ function PastPurchasesPage({ currentUser, purchases, onBack, onLogin }) {
       {currentUser ? (
         purchases.length ? (
           <>
-            <div className="report-download-actions">
-              <button type="button" className="auth-submit report-download-button" onClick={() => setIsConfirmingDownload(true)}>
-                Download PDF Report
-              </button>
-            </div>
-
-            <div className="purchase-report-table-head">
-              <span>Item</span>
-              <span>Unit Cost</span>
-              <span>Date &amp; Time</span>
-            </div>
-            <div className="purchase-report-list">
-              {purchases.map((purchase) => (
-                <div className="purchase-report-item" key={purchase.id}>
-                  <div>
-                    <strong>{purchase.item_name}</strong>
-                    <small>{purchase.category}</small>
-                  </div>
-                  <div>
-                    <span>${Number(purchase.price).toFixed(2)}</span>
-                    <small>Contact: {purchase.seller_contact || purchase.seller_username}</small>
-                  </div>
-                  <time dateTime={purchase.purchased_at}>{formatPurchaseDate(purchase.purchased_at)}</time>
-                </div>
-              ))}
-            </div>
-
-            <div className="purchase-total-card">
-              <div>
-                <span>Total Amount</span>
-                <strong>${totalSpent.toFixed(2)}</strong>
+            {initialTab === "track" && (
+              <div className="orders-section">
+              <div className="orders-section-header">
+                <h3>Track Orders</h3>
+                <span>{activeOrders.length} active</span>
               </div>
-            </div>
+              {activeOrders.length ? (
+                <div className="purchase-report-list">
+                  {activeOrders.map((purchase) => (
+                    <div className="purchase-report-item" key={purchase.id}>
+                      <div>
+                        <strong>{purchase.item_name}</strong>
+                        <small>{purchase.category}</small>
+                      </div>
+                      <div>
+                        <span>${Number(purchase.price).toFixed(2)}</span>
+                        <small>Contact: {purchase.seller_contact || purchase.seller_username}</small>
+                      </div>
+                      <time dateTime={purchase.purchased_at}>{formatPurchaseDate(purchase.purchased_at)}</time>
+                      <div className="purchase-order-progress">
+                        <OrderProgressTracker stage={purchase.order_stage} />
+                        <div className="purchase-order-actions">
+                          {purchase.order_stage === "ready_for_collection" && (
+                            <button
+                              type="button"
+                              className="auth-submit"
+                              onClick={() => onConfirmReceived(purchase)}
+                              disabled={isSubmitting}
+                            >
+                              Confirm Item Received
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="empty-state">No active orders to track.</p>
+              )}
+              <div className="purchase-total-card">
+                <div>
+                  <span>Active Orders Total</span>
+                  <strong>${activeOrdersTotal.toFixed(2)}</strong>
+                </div>
+              </div>
+              </div>
+            )}
+
+            {initialTab === "history" && (
+              <div className="orders-section">
+              <div className="report-download-actions">
+                <button type="button" className="auth-submit report-download-button" onClick={() => setIsConfirmingDownload(true)}>
+                  Download PDF Report
+                </button>
+              </div>
+              <div className="orders-section-header">
+                <h3>My Purchases</h3>
+                <span>{orderHistory.length} saved</span>
+              </div>
+              <div className="purchase-report-table-head">
+                <span>Item</span>
+                <span>Unit Cost</span>
+                <span>Date &amp; Time</span>
+              </div>
+              {orderHistory.length ? (
+                <div className="purchase-report-list">
+                  {orderHistory.map((purchase) => (
+                    <div className="purchase-report-item" key={purchase.id}>
+                      <div>
+                        <strong>{purchase.item_name}</strong>
+                        <small>{purchase.category}</small>
+                      </div>
+                      <div>
+                        <span>${Number(purchase.price).toFixed(2)}</span>
+                        <small>Contact: {purchase.seller_contact || purchase.seller_username}</small>
+                      </div>
+                      <time dateTime={purchase.purchased_at}>{formatPurchaseDate(purchase.purchased_at)}</time>
+                      <div className="purchase-order-progress">
+                        <div className="purchase-order-actions">
+                          {purchase.order_stage === "completed" && !purchase.has_review && (
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              onClick={() => {
+                                setReviewingPurchase(purchase);
+                                setReviewForm({ rating: "5", review: "" });
+                              }}
+                            >
+                              Rate & Review
+                            </button>
+                          )}
+                          {purchase.has_review && <span className="review-submitted-label">Review submitted</span>}
+                          {["cancelled", "canceled"].includes(purchase.order_stage || purchase.status) && (
+                            <span className="review-submitted-label cancelled">Cancelled</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="empty-state">Completed and cancelled orders will appear here.</p>
+              )}
+              <div className="purchase-total-card">
+                <div>
+                  <span>Order History Total</span>
+                  <strong>${orderHistoryTotal.toFixed(2)}</strong>
+                </div>
+              </div>
+              </div>
+            )}
 
             {isConfirmingDownload && (
               <div className="auth-modal-backdrop" onClick={() => setIsConfirmingDownload(false)}>
@@ -168,6 +255,61 @@ function PastPurchasesPage({ currentUser, purchases, onBack, onLogin }) {
                     <button type="button" className="auth-submit" onClick={createPdfReport}>
                       Confirm Download
                     </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {reviewingPurchase && (
+              <div className="auth-modal-backdrop" onClick={() => setReviewingPurchase(null)}>
+                <div className="checkout-review-modal" onClick={(event) => event.stopPropagation()}>
+                  <div className="auth-header">
+                    <div>
+                      <span className="section-kicker">Rate & Review</span>
+                      <h2>{reviewingPurchase.item_name}</h2>
+                    </div>
+                    <button type="button" className="close-button" onClick={() => setReviewingPurchase(null)} aria-label="Close">
+                      x
+                    </button>
+                  </div>
+                  <div className="feedback-block checkout-review-form">
+                    <strong>Rating</strong>
+                    <div className="rating-control" aria-label="Rating">
+                      {[1, 2, 3, 4, 5].map((value) => (
+                        <button
+                          type="button"
+                          className={Number(reviewForm.rating) >= value ? "active" : ""}
+                          onClick={() => setReviewForm((form) => ({ ...form, rating: String(value) }))}
+                          key={value}
+                        >
+                          ★
+                        </button>
+                      ))}
+                    </div>
+                    <textarea
+                      value={reviewForm.review}
+                      onChange={(event) => setReviewForm((form) => ({ ...form, review: event.target.value }))}
+                      placeholder="Share a short review"
+                      rows="4"
+                    />
+                    <div className="checkout-review-actions">
+                      <button type="button" className="secondary-button" onClick={() => setReviewingPurchase(null)}>
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        className="auth-submit"
+                        onClick={async () => {
+                          const saved = await onSubmitReview(reviewingPurchase, Number(reviewForm.rating), reviewForm.review);
+                          if (saved) {
+                            setReviewingPurchase(null);
+                          }
+                        }}
+                        disabled={isSubmitting}
+                      >
+                        Submit Review
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

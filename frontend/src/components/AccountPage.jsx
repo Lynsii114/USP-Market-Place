@@ -32,6 +32,14 @@ function AccountPage({ page, currentUser, myListings, purchaseHistory, onBack })
         ["Purchase Records", `${purchaseHistory.length} saved`],
       ],
     },
+    messages: {
+      kicker: "Messages",
+      title: "Messages",
+      rows: [
+        ["Inbox", "No new messages"],
+        ["Status", "Messaging history will appear here"],
+      ],
+    },
   };
   const pageContent = content[page];
 
