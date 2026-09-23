@@ -16,10 +16,6 @@ import PastPurchasesPage from "./components/PastPurchasesPage";
 import ProductModal from "./components/ProductModal";
 import SellerPanel from "./components/SellerPanel";
 import Toast from "./components/Toast";
-// FUTURE MICROSOFT ENTRA INTEGRATION: enable this import after USP provides tenant details.
-// import { microsoftLoginAvailable, microsoftLogin } from "./auth/microsoft";
-// FUTURE MICROSOFT ENTRA INTEGRATION: restore this when USP provides tenant configuration.
-// const microsoftLoginAvailable = true;
 import { EMPTY_AUTH_FORM, EMPTY_LISTING_FORM } from "./constants/forms";
 import { categories } from "./data/categories";
 import logo from "../logo.png";
@@ -353,30 +349,6 @@ function Home() {
       setIsSubmitting(false);
     }
   };
-
-  /* FUTURE MICROSOFT ENTRA INTEGRATION:
-  const handleMicrosoftLogin = async () => {
-    setIsSubmitting(true);
-    setFormMessage("");
-    try {
-      const idToken = await microsoftLogin();
-      const response = await fetch(`${API_URL}/users/microsoft-login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id_token: idToken }),
-      });
-      const data = await parseResponse(response, "Microsoft sign-in failed");
-      setCurrentUser(data.user);
-      setAuthForm(EMPTY_AUTH_FORM);
-      setAuthMode(null);
-      showToast(data.message, "success");
-    } catch (error) {
-      setFormMessage(error instanceof Error ? error.message : "Microsoft sign-in failed");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-  */
 
   const resendVerification = async () => {
     setIsSubmitting(true);
