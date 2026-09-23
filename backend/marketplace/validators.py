@@ -12,8 +12,8 @@ def validate_signup(data):
         raise ApiError("Username must be at least 3 characters long", 422)
     if not username.replace("_", "").replace("-", "").isalnum():
         raise ApiError("Username can only contain letters, numbers, hyphens, and underscores", 422)
-    if not re.match(r"^s\d{8}@student\.usp\.ac\.fj$", email.lower()):
-        raise ApiError("Email must be in format: SXXXXXXXX@student.usp.ac.fj, where X is a number", 422)
+    if not re.fullmatch(r"S\d+@student\.usp\.ac\.fj", email, flags=re.IGNORECASE):
+        raise ApiError("Use your USP student email, for example S12345678@student.usp.ac.fj", 422)
     if len(password) < 6:
         raise ApiError("Password must be at least 6 characters long", 422)
 

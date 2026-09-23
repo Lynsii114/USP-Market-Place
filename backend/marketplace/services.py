@@ -1,13 +1,29 @@
 import hashlib
+import base64
+from io import BytesIO
+import json
+import secrets
+import re
+import pyotp
+import qrcode
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 
+from django.core.mail import send_mail
+from django.conf import settings
+from django.db import transaction
 from django.db.models import Q
+from django.utils import timezone
 from django.utils.dateparse import parse_date
+# FUTURE MICROSOFT ENTRA INTEGRATION:
+# import jwt
+# from jwt import PyJWKClient
 
 from .constants import ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_USERNAME, HIDDEN_ITEM_NAMES
 from .exceptions import ApiError
-from .models import Item, Purchase, User
+from .models import EmailVerification, Item, PasswordReset, PendingRegistration, Purchase, User
 from .queries import find_student, find_user_by_login, item_status, public_items, visible_items, visible_purchases
 from .serializers import serialize_item, serialize_purchase, serialize_user
 from .validators import validate_item_payload, validate_signup
@@ -57,22 +73,220 @@ def get_or_create_admin_user():
     )
 
 
+def hash_verification_code(code):
+    return hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+
+def authenticator_setup(secret, email):
+    uri = pyotp.TOTP(secret).provisioning_uri(name=email, issuer_name="USP Marketplace")
+    qr_image = qrcode.make(uri)
+    qr_buffer = BytesIO()
+    qr_image.save(qr_buffer, format="PNG")
+    return {
+        "authenticator_secret": secret,
+        "authenticator_uri": uri,
+        "authenticator_qr": "data:image/png;base64," + base64.b64encode(qr_buffer.getvalue()).decode("ascii"),
+    }
+
+
+def send_email(subject, message, recipient):
+    if settings.EMAIL_HOST:
+        send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [recipient])
+        return
+
+    if settings.RESEND_API_KEY:
+        request = Request(
+            "https://api.resend.com/emails",
+            data=json.dumps({
+                "from": settings.RESEND_FROM_EMAIL,
+                "to": [recipient],
+                "subject": subject,
+                "text": message,
+            }).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {settings.RESEND_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=15) as response:
+                if response.status not in range(200, 300):
+                    raise ApiError("Email provider rejected the message", 502)
+        except HTTPError as exc:
+            raw_error = ""
+            try:
+                raw_error = exc.read().decode("utf-8")
+                error_body = json.loads(raw_error)
+                provider_error = error_body.get("message") or error_body.get("name")
+            except (ValueError, UnicodeDecodeError):
+                provider_error = raw_error.strip() or None
+            detail = provider_error or f"HTTP {exc.code} from email provider"
+            raise ApiError(f"Resend error: {detail}", 502) from exc
+        except (URLError, TimeoutError) as exc:
+            raise ApiError("Unable to connect to Resend. Check your network connection.", 502) from exc
+        return
+
+    send_mail(subject, message, None, [recipient])
+
+
+def send_verification_code(registration):
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    registration.code_hash = hash_verification_code(code)
+    registration.expires_at = timezone.now() + timedelta(minutes=10)
+    registration.attempts = 0
+    registration.save(update_fields=["code_hash", "expires_at", "attempts"])
+    send_email(
+        "Verify your USP Marketplace account",
+        f"Your USP Marketplace verification code is {code}. It expires in 10 minutes.",
+        registration.email,
+    )
+
+
 def signup_user(data):
     validate_signup(data)
     username = data["username"].strip()
     email = data["email"].strip()
+    student_id = email.split("@", 1)[0]
 
-    if User.objects.filter(Q(username=username) | Q(email=email)).exists():
-        raise ApiError("Username or email already exists", 400)
+    username_registered = User.objects.filter(username__iexact=username).exists()
+    username_pending = PendingRegistration.objects.filter(username__iexact=username).exists()
+    email_registered = User.objects.filter(email__iexact=email).exists()
+    email_pending = PendingRegistration.objects.filter(email__iexact=email).exists()
+    username_exists = username_registered or username_pending
+    email_exists = email_registered or email_pending
+    if username_exists and email_exists:
+        raise ApiError("This username and email are already registered", 400)
+    if username_exists:
+        raise ApiError("This username is already registered", 400)
+    if email_registered:
+        raise ApiError("This email is already registered", 400)
+    if email_pending:
+        raise ApiError("A verification email has already been sent for these details", 400)
 
-    user = User.objects.create(
+    registration = PendingRegistration.objects.create(
         username=username,
+        student_id=student_id,
         email=email,
         password_hash=hash_password(data["password"]),
-        role="student",
-        status="active",
+        code_hash="",
+        expires_at=timezone.now(),
     )
-    return {"user": serialize_user(user), "message": "Account created successfully."}
+    try:
+        send_verification_code(registration)
+    except Exception:
+        registration.delete()
+        raise
+    return {
+        "user": None,
+        "email": email,
+        "verification_required": True,
+        "message": "Verification code sent to your personal email.",
+    }
+
+
+def verify_email(data):
+    email = str(data.get("email", "")).strip().lower()
+    code = str(data.get("code", "")).strip()
+    if not email or not code.isdigit() or len(code) != 6:
+        raise ApiError("Enter the six-digit verification code sent to your email", 422)
+
+    registration = PendingRegistration.objects.filter(email__iexact=email).first()
+    if not registration:
+        user = User.objects.filter(email__iexact=email).first()
+        if user and user.status == "active":
+            return {"user": serialize_user(user), "message": "Email already verified."}
+        raise ApiError("Verification request not found", 404)
+    if registration.expires_at <= timezone.now():
+        raise ApiError("That code has expired. Request a new code.", 400)
+    if registration.attempts >= 5:
+        raise ApiError("Too many attempts. Request a new code.", 429)
+
+    if not secrets.compare_digest(registration.code_hash, hash_verification_code(code)):
+        registration.attempts += 1
+        registration.save(update_fields=["attempts"])
+        raise ApiError("Incorrect verification code", 400)
+
+    with transaction.atomic():
+        user = User.objects.create(
+            username=registration.username,
+            student_id=registration.student_id,
+            email=registration.email,
+            password_hash=registration.password_hash,
+            authenticator_secret=pyotp.random_base32(),
+            role="student",
+            status="active",
+        )
+        registration.delete()
+    return {
+        "user": None,
+        "authenticator_setup_required": True,
+        "user_id": user.id,
+        **authenticator_setup(user.authenticator_secret, user.email),
+        "message": "Email verified. Set up Microsoft Authenticator to finish creating your account.",
+    }
+
+
+def resend_verification(data):
+    email = str(data.get("email", "")).strip().lower()
+    registration = PendingRegistration.objects.filter(email__iexact=email).first()
+    if not registration:
+        raise ApiError("Verification request not found", 404)
+    send_verification_code(registration)
+    return {"message": "A new verification code was sent to your USP email."}
+
+
+def cancel_verification(data):
+    email = str(data.get("email", "")).strip().lower()
+    if not email:
+        raise ApiError("Email is required", 422)
+    deleted, _ = PendingRegistration.objects.filter(email__iexact=email).delete()
+    return {"message": "Verification cancelled.", "deleted": deleted > 0}
+
+
+def request_password_reset(data):
+    email = str(data.get("email", "")).strip().lower()
+    user = User.objects.filter(email__iexact=email, status="active").first()
+    if user:
+        PasswordReset.objects.filter(user=user, used_at__isnull=True).update(used_at=timezone.now())
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        PasswordReset.objects.create(
+            user=user,
+            code_hash=hash_verification_code(code),
+            expires_at=timezone.now() + timedelta(minutes=10),
+        )
+        send_email(
+            "Reset your USP Marketplace password",
+            f"Your USP Marketplace password reset code is {code}. It expires in 10 minutes.",
+            user.email,
+        )
+    return {"message": "If that USP email is registered, a password reset code has been sent."}
+
+
+def reset_password(data):
+    email = str(data.get("email", "")).strip().lower()
+    code = str(data.get("code", "")).strip()
+    password = str(data.get("password", ""))
+    if len(password) < 6:
+        raise ApiError("Password must be at least 6 characters long", 422)
+    reset = PasswordReset.objects.filter(
+        user__email__iexact=email,
+        used_at__isnull=True,
+        expires_at__gt=timezone.now(),
+    ).order_by("-created_at").first()
+    if not reset:
+        raise ApiError("That reset code is invalid or expired", 400)
+    if reset.attempts >= 5:
+        raise ApiError("Too many attempts. Request a new reset code.", 429)
+    if not code.isdigit() or len(code) != 6 or not secrets.compare_digest(reset.code_hash, hash_verification_code(code)):
+        reset.attempts += 1
+        reset.save(update_fields=["attempts"])
+        raise ApiError("That reset code is invalid or expired", 400)
+    reset.user.password_hash = hash_password(password)
+    reset.user.save(update_fields=["password_hash"])
+    reset.used_at = timezone.now()
+    reset.save(update_fields=["used_at"])
+    return {"message": "Password reset successfully. You can now log in."}
 
 
 def login_user(data):
@@ -86,9 +300,101 @@ def login_user(data):
     user = find_user_by_login(login_name)
     if not user or user.password_hash != hash_password(password):
         raise ApiError("Invalid username or password", 401)
+    if user.status == "pending_verification":
+        raise ApiError("Please verify your USP email before logging in", 403)
     if user.status == "suspended":
         raise ApiError("Account is suspended", 403)
+    if not user.authenticator_secret or not user.authenticator_enabled:
+        user.authenticator_secret = pyotp.random_base32()
+        user.authenticator_enabled = False
+        user.save(update_fields=["authenticator_secret", "authenticator_enabled"])
+        return {
+            "authenticator_setup_required": True,
+            "user_id": user.id,
+            "username": user.username,
+            **authenticator_setup(user.authenticator_secret, user.email),
+            "message": "Set up Microsoft Authenticator to finish signing in",
+        }
+    return {
+        "authenticator_required": True,
+        "user_id": user.id,
+        "message": "Enter the code from Microsoft Authenticator",
+    }
+
+
+def verify_authenticator(data):
+    user_id = data.get("user_id")
+    code = str(data.get("code", "")).strip().replace(" ", "")
+    user = User.objects.filter(id=user_id).first()
+    if not user or not user.authenticator_secret:
+        raise ApiError("Authenticator setup is not available for this account", 400)
+    if not code.isdigit() or len(code) != 6 or not pyotp.TOTP(user.authenticator_secret).verify(code, valid_window=1):
+        raise ApiError("Incorrect Microsoft Authenticator code", 401)
+    if not user.authenticator_enabled:
+        user.authenticator_enabled = True
+        user.save(update_fields=["authenticator_enabled"])
     return {"user": serialize_user(user), "message": "Login successful"}
+
+
+''' FUTURE MICROSOFT ENTRA INTEGRATION - enable after USP provides tenant configuration.
+def microsoft_login(data):
+    token = str(data.get("id_token", "")).strip()
+    if not token:
+        raise ApiError("Microsoft sign-in token is required", 422)
+    if not settings.MICROSOFT_CLIENT_ID or not settings.MICROSOFT_TENANT_ID:
+        raise ApiError("Microsoft sign-in is not configured on the server", 503)
+
+    issuer = f"https://login.microsoftonline.com/{settings.MICROSOFT_TENANT_ID}/v2.0"
+    jwks_client = PyJWKClient(
+        f"https://login.microsoftonline.com/{settings.MICROSOFT_TENANT_ID}/discovery/v2.0/keys"
+    )
+    try:
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
+        claims = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=settings.MICROSOFT_CLIENT_ID,
+            issuer=issuer,
+        )
+    except (jwt.PyJWTError, Exception) as exc:
+        raise ApiError("Microsoft sign-in could not be verified", 401) from exc
+
+    email = str(claims.get("preferred_username") or claims.get("email") or "").strip().lower()
+    if not re.match(r"^s\d+@(?:[a-z0-9-]+\.)*usp\.ac\.fj$", email):
+        raise ApiError("Only verified USP student Microsoft accounts can sign in", 403)
+
+    student_id = email.split("@", 1)[0].upper()
+    user = User.objects.filter(email__iexact=email).first()
+    if user:
+        if user.status == "suspended":
+            raise ApiError("Account is suspended", 403)
+        if not user.authenticator_secret:
+            user.authenticator_secret = pyotp.random_base32()
+            user.save(update_fields=["authenticator_secret"])
+            return {
+                "authenticator_setup_required": True,
+                "user_id": user.id,
+                "username": user.username,
+                **authenticator_setup(user.authenticator_secret, user.email),
+                "message": "Set up Microsoft Authenticator to finish signing in",
+            }
+        return {"user": serialize_user(user), "message": "Microsoft sign-in successful"}
+
+    username = student_id.lower()
+    if User.objects.filter(username=username).exists():
+        username = f"{username}_{student_id[-4:].lower()}"
+    user = User.objects.create(
+        username=username,
+        student_id=student_id,
+        email=email,
+        password_hash="",
+        role="student",
+        status="active",
+    )
+    PendingRegistration.objects.filter(email__iexact=email).delete()
+    return {"user": serialize_user(user), "message": "USP Microsoft account connected successfully"}
+'''
 
 
 def list_items():
