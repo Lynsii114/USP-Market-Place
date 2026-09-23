@@ -1,6 +1,6 @@
 from django.db import OperationalError, connection
 
-from .models import Item, Purchase, User
+from .models import EmailVerification, Item, PasswordReset, PendingRegistration, Purchase, User
 
 
 TABLE_COLUMNS = {
@@ -17,6 +17,9 @@ TABLE_COLUMNS = {
         "created_at": "DATETIME NULL",
     },
     "users": {
+        "student_id": "VARCHAR(32) NULL",
+        "authenticator_secret": "VARCHAR(32) NULL",
+        "authenticator_enabled": "BOOLEAN NOT NULL DEFAULT 0",
         "role": "VARCHAR(20) NOT NULL DEFAULT 'student'",
         "status": "VARCHAR(20) NOT NULL DEFAULT 'active'",
         "created_at": "DATETIME NULL",
@@ -33,7 +36,7 @@ TABLE_COLUMNS = {
 
 def ensure_schema():
     existing_tables = connection.introspection.table_names()
-    models = [User, Item, Purchase]
+    models = [User, EmailVerification, PasswordReset, PendingRegistration, Item, Purchase]
 
     with connection.schema_editor() as schema_editor:
         for model in models:
@@ -57,3 +60,10 @@ def ensure_schema():
                     cursor.execute(
                         f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}"
                     )
+
+        # Personal-email demo registrations do not have a student ID. Make the
+        # legacy USP field nullable when upgrading an existing database.
+        if "pending_registrations" in connection.introspection.table_names():
+            cursor.execute(
+                "ALTER TABLE pending_registrations MODIFY COLUMN student_id VARCHAR(32) NULL"
+            )

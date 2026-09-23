@@ -2,6 +2,7 @@ def serialize_user(user):
     return {
         "id": user.id,
         "username": user.username,
+        "student_id": user.student_id,
         "email": user.email,
         "role": user.role,
         "status": user.status,

@@ -308,6 +308,12 @@
   animation: toast-pop 0.25s ease-out, toast-fade 0.45s ease-in 2.55s forwards;
 }
 
+.toast-error {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
 @keyframes toast-pop {
   from {
     opacity: 0;
@@ -338,6 +344,20 @@
   z-index: 100;
 }
 
+.auth-page {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 32px 20px;
+  background:
+    radial-gradient(circle at 12% 12%, rgba(37, 99, 235, 0.16), transparent 34%),
+    linear-gradient(145deg, #eef5ff 0%, #f8fbff 48%, #e4edf8 100%);
+}
+
+.auth-page .auth-modal {
+  box-shadow: 0 28px 70px rgba(12, 45, 77, 0.2);
+}
+
 .auth-modal {
   width: min(480px, 100%);
   background: white;
@@ -353,9 +373,25 @@
   margin-bottom: 18px;
 }
 
+.auth-kicker {
+  margin: 0 0 5px;
+  color: var(--usp-blue);
+  font-size: 0.74rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .auth-header h2 {
   margin: 0;
   color: var(--usp-navy);
+}
+
+.auth-subtitle {
+  margin: 7px 0 0;
+  color: var(--usp-muted);
+  font-size: 0.88rem;
+  line-height: 1.4;
 }
 
 .close-button {
@@ -390,6 +426,41 @@
   transition: border-color 0.2s ease, background-color 0.2s ease;
 }
 
+.password-input-wrap {
+  position: relative;
+  display: block;
+}
+
+.password-input-wrap input {
+  width: 100%;
+  padding-right: 48px;
+}
+
+.password-visibility-button {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--usp-muted);
+  cursor: pointer;
+  font-size: 1.15rem;
+  transform: translateY(-50%);
+}
+
+.password-visibility-button:hover,
+.password-visibility-button:focus {
+  background: #edf3ff;
+  color: var(--usp-blue);
+  outline: none;
+}
+
 .auth-form input:focus {
   border-color: var(--usp-blue);
   box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.12);
@@ -412,9 +483,73 @@
   font-weight: 500;
 }
 
+.auth-verification-note {
+  margin: -2px 0 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--usp-blue);
+  background: #f0f6ff;
+  color: #173e7d;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.authenticator-setup {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-left: 3px solid var(--usp-blue);
+  background: #f0f6ff;
+  color: #173e7d;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.authenticator-setup p {
+  margin: 0;
+}
+
+.authenticator-setup code {
+  display: block;
+  overflow-wrap: anywhere;
+  padding: 7px 8px;
+  background: #ffffff;
+  border: 1px solid #dbe7fb;
+  color: var(--usp-navy);
+  font-size: 0.74rem;
+}
+
+.authenticator-qr {
+  width: 180px;
+  height: 180px;
+  justify-self: center;
+  padding: 8px;
+  background: #ffffff;
+  border: 1px solid #dbe7fb;
+}
+
+.authenticator-confirmation {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: flex-start;
+  gap: 8px !important;
+  color: var(--usp-navy) !important;
+  font-size: 0.82rem;
+  font-weight: 700 !important;
+}
+
+.authenticator-confirmation input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+}
+
+.authenticator-uri {
+  margin-top: 4px !important;
+}
+
 .auth-message {
   margin: 0;
-  color: #0f766e;
+  color: #b91c1c;
   font-weight: 600;
 }
 
@@ -431,6 +566,52 @@
 .auth-submit:disabled {
   cursor: not-allowed;
   opacity: 0.65;
+}
+
+.auth-resend-button {
+  align-self: flex-start;
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: var(--usp-blue);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.auth-resend-button:hover,
+.auth-resend-button:focus {
+  color: var(--usp-navy);
+  text-decoration: underline;
+}
+
+.auth-resend-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.auth-switch {
+  margin: 18px 0 0;
+  color: var(--usp-muted);
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.auth-switch button {
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: var(--usp-blue);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 800;
+}
+
+.auth-switch button:hover,
+.auth-switch button:focus {
+  color: var(--usp-navy);
+  text-decoration: underline;
 }
 
 .admin-shell {
