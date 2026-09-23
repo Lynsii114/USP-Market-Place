@@ -24,6 +24,7 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
   const [isLoading, setIsLoading] = useState(false);
   const [isConfirmingReport, setIsConfirmingReport] = useState(false);
   const [notifications, setNotifications] = useState([]);
+  const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
   const [selectedNotification, setSelectedNotification] = useState(null);
   const [selectedAdminListing, setSelectedAdminListing] = useState(null);
   const [selectedStudent, setSelectedStudent] = useState(null);
@@ -490,42 +491,70 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
             <h1>{activeTab}</h1>
           </div>
           <div className="admin-topbar-actions">
-            <div className="nav-dropdown notification-dropdown">
-              <button type="button" className="icon-nav-button notification-icon-button" aria-label="Notifications">
+            <div className="notification-popover-anchor">
+              <button
+                type="button"
+                className="icon-nav-button notification-icon-button"
+                onClick={() => setIsNotificationPanelOpen((isOpen) => !isOpen)}
+                aria-label="Notifications"
+                aria-expanded={isNotificationPanelOpen}
+              >
                 <span aria-hidden="true">&#128276;</span>
                 {unreadNotifications.length > 0 && <span className="notification-count">{unreadNotifications.length}</span>}
               </button>
-              <div className="nav-dropdown-menu notification-menu">
-                <strong>Notifications</strong>
-                {notifications.length ? (
-                  notifications.slice(0, 8).map((notification) => (
-                    <div className={notification.is_read ? "notification-row viewed" : "notification-row unread"} key={notification.id}>
-                      <button
-                        type="button"
-                        className="notification-item"
-                        onClick={() => openNotification(notification)}
-                      >
-                        <span>{notification.title}</span>
-                        <small>{notification.is_read ? "Viewed" : "New"}</small>
-                        <p>{notification.message}</p>
-                      </button>
-                      <button
-                        type="button"
-                        className="notification-remove-button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          removeNotification(notification.id);
-                        }}
-                        aria-label="Remove notification"
-                      >
-                        x
-                      </button>
+              {isNotificationPanelOpen && (
+                <div className="notification-center-modal">
+                  <div className="notification-center-header">
+                    <div>
+                      <span className="section-kicker">Admin notifications</span>
+                      <h3>Notifications</h3>
                     </div>
-                  ))
-                ) : (
-                  <p>No admin notifications yet.</p>
-                )}
-              </div>
+                    <button
+                      type="button"
+                      className="close-button"
+                      onClick={() => setIsNotificationPanelOpen(false)}
+                      aria-label="Close notifications"
+                    >
+                      x
+                    </button>
+                  </div>
+                  <div className="notification-center-summary">
+                    <span>{notifications.length} total</span>
+                    <span>{unreadNotifications.length} unread</span>
+                  </div>
+                  <div className="notification-center-list">
+                    {notifications.length ? (
+                      notifications.map((notification) => (
+                        <div className={notification.is_read ? "notification-row viewed" : "notification-row unread"} key={notification.id}>
+                          <button
+                            type="button"
+                            className="notification-item"
+                            onClick={() => {
+                              setIsNotificationPanelOpen(false);
+                              openNotification(notification);
+                            }}
+                          >
+                            <span>{notification.title}</span>
+                            <small>{notification.is_read ? "Viewed" : "New"}</small>
+                            <p>{notification.message}</p>
+                            <time dateTime={notification.created_at}>{formatDate(notification.created_at)}</time>
+                          </button>
+                          <button
+                            type="button"
+                            className="notification-remove-button"
+                            onClick={() => removeNotification(notification.id)}
+                            aria-label="Remove notification"
+                          >
+                            x
+                          </button>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="empty-state">No admin notifications yet.</p>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
             <button type="button" className="secondary-button" onClick={onMarketplace}>
               USP Buy & Sell
