@@ -499,12 +499,13 @@
   place-items: center;
   padding: 32px 20px;
   background:
-    radial-gradient(circle at 12% 12%, rgba(37, 99, 235, 0.16), transparent 34%),
-    linear-gradient(145deg, #eef5ff 0%, #f8fbff 48%, #e4edf8 100%);
+    linear-gradient(135deg, rgba(10, 31, 68, 0.58), rgba(16, 82, 127, 0.34)),
+    url("../login background.jfif") center / cover no-repeat;
 }
 
 .auth-page .auth-modal {
-  box-shadow: 0 28px 70px rgba(12, 45, 77, 0.2);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 28px 70px rgba(12, 45, 77, 0.28);
 }
 
 .auth-modal {
