@@ -15,6 +15,10 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
   const [orderStatus, setOrderStatus] = useState("");
   const [orderDate, setOrderDate] = useState("");
   const [reportPeriod, setReportPeriod] = useState("daily");
+  const [reportFromDate, setReportFromDate] = useState("");
+  const [reportToDate, setReportToDate] = useState("");
+  const [reportOrders, setReportOrders] = useState([]);
+  const [reportListings, setReportListings] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isConfirmingReport, setIsConfirmingReport] = useState(false);
 
@@ -61,8 +65,14 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
   };
 
   const loadReport = async () => {
-    const data = await fetchAdmin(`/admin/reports?period=${reportPeriod}`, "Unable to load reports");
-    setReport(data);
+    const [reportData, ordersData, listingsData] = await Promise.all([
+      fetchAdmin(`/admin/reports?period=${reportPeriod}`, "Unable to load reports"),
+      fetchAdmin("/admin/orders", "Unable to load report orders"),
+      fetchAdmin("/admin/listings", "Unable to load report listings"),
+    ]);
+    setReport(reportData);
+    setReportOrders(ordersData);
+    setReportListings(listingsData);
   };
 
   const refreshActiveTab = async () => {
@@ -102,6 +112,55 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
       ["Today's Sales", `$${Number(dashboard?.todays_sales ?? 0).toFixed(2)}`],
     ],
     [dashboard]
+  );
+
+  const filteredReportOrders = useMemo(() => {
+    const fromTime = reportFromDate ? new Date(`${reportFromDate}T00:00:00`).getTime() : null;
+    const toTime = reportToDate ? new Date(`${reportToDate}T23:59:59`).getTime() : null;
+
+    return reportOrders.filter((order) => {
+      if (!order.purchased_at) {
+        return false;
+      }
+
+      const orderTime = new Date(order.purchased_at).getTime();
+      return (fromTime === null || orderTime >= fromTime) && (toTime === null || orderTime <= toTime);
+    });
+  }, [reportOrders, reportFromDate, reportToDate]);
+
+  const reportSummary = useMemo(() => {
+    const useReportTotals = !reportFromDate && !reportToDate && reportOrders.length === 0;
+    const totalRevenue = filteredReportOrders.reduce(
+      (total, order) => total + Number(order.total_amount || order.price || 0),
+      0
+    );
+    const itemsSold = filteredReportOrders.reduce((total, order) => total + Number(order.quantity || 1), 0);
+    const completedOrders = filteredReportOrders.filter((order) => order.status === "completed").length;
+
+    return {
+      totalSales: useReportTotals ? report?.total_orders ?? 0 : completedOrders,
+      totalOrders: useReportTotals ? report?.total_orders ?? 0 : filteredReportOrders.length,
+      itemsSold: useReportTotals ? report?.total_items_sold ?? 0 : itemsSold,
+      revenue: useReportTotals ? Number(report?.total_sales ?? 0) : totalRevenue,
+    };
+  }, [filteredReportOrders, report, reportFromDate, reportOrders.length, reportToDate]);
+
+  const orderStatusSummary = useMemo(
+    () => ({
+      completed: filteredReportOrders.filter((order) => order.status === "completed").length,
+      pending: filteredReportOrders.filter((order) => order.status === "pending").length,
+      cancelled: filteredReportOrders.filter((order) => ["cancelled", "canceled"].includes(order.status)).length,
+    }),
+    [filteredReportOrders]
+  );
+
+  const listingSummary = useMemo(
+    () => ({
+      active: reportListings.filter((listing) => listing.status === "available").length,
+      sold: reportListings.filter((listing) => listing.status === "sold").length,
+      removed: reportListings.filter((listing) => listing.status === "removed").length,
+    }),
+    [reportListings]
   );
 
   const formatDate = (value) =>
@@ -170,6 +229,16 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const generateReport = async () => {
+    if (reportFromDate && reportToDate && reportFromDate > reportToDate) {
+      showToast("From date cannot be after To date.");
+      return;
+    }
+
+    await loadReport();
+    showToast("Report generated successfully.");
   };
 
   const createReportPdf = () => {
@@ -428,46 +497,96 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
         )}
 
         {activeTab === "Reports" && (
-          <div className="admin-table-card">
-            <div className="admin-filters">
-              <select value={reportPeriod} onChange={(event) => setReportPeriod(event.target.value)}>
-                <option value="daily">Daily</option>
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Monthly</option>
-              </select>
+          <div className="reports-page">
+            <div className="reports-header">
+              <div>
+                <p className="section-kicker">Marketplace analytics</p>
+                <h2>Reports</h2>
+                <span>View marketplace sales, orders and listing activity.</span>
+              </div>
               <button type="button" className="auth-submit" onClick={() => setIsConfirmingReport(true)}>
                 Export PDF
               </button>
             </div>
-            <div className="admin-stat-grid compact">
-              <div className="admin-stat-card">
+
+            <div className="report-filter">
+              <label>
+                Period
+                <select value={reportPeriod} onChange={(event) => setReportPeriod(event.target.value)}>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </label>
+              <label>
+                From
+                <input type="date" value={reportFromDate} onChange={(event) => setReportFromDate(event.target.value)} />
+              </label>
+              <label>
+                To
+                <input type="date" value={reportToDate} onChange={(event) => setReportToDate(event.target.value)} />
+              </label>
+              <button type="button" className="secondary-button" onClick={generateReport}>
+                Generate Report
+              </button>
+            </div>
+
+            <div className="summary-grid">
+              <div className="summary-card">
+                <span>Total Sales</span>
+                <h3>{reportSummary.totalSales}</h3>
+              </div>
+              <div className="summary-card">
                 <span>Total Orders</span>
-                <strong>{report?.total_orders ?? 0}</strong>
+                <h3>{reportSummary.totalOrders}</h3>
               </div>
-              <div className="admin-stat-card">
-                <span>Total Items Sold</span>
-                <strong>{report?.total_items_sold ?? 0}</strong>
+              <div className="summary-card">
+                <span>Items Sold</span>
+                <h3>{reportSummary.itemsSold}</h3>
               </div>
-              <div className="admin-stat-card">
+              <div className="summary-card revenue-card">
                 <span>Total Revenue</span>
-                <strong>${Number(report?.total_sales ?? 0).toFixed(2)}</strong>
+                <h3>${Number(reportSummary.revenue).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
               </div>
             </div>
-            <div className="admin-table">
-              <div className="admin-table-head reports-grid">
-                <span>Date</span>
-                <span>Orders</span>
-                <span>Items Sold</span>
-                <span>Total Sales</span>
-              </div>
-              {(report?.rows ?? []).map((row) => (
-                <div className="admin-table-row reports-grid" key={row.date}>
-                  <strong>{row.date}</strong>
-                  <span>{row.orders}</span>
-                  <span>{row.items_sold}</span>
-                  <span>${Number(row.total_sales).toFixed(2)}</span>
+
+            <div className="report-sections">
+              <div className="report-box">
+                <h3>Order Summary</h3>
+                <div className="status-row">
+                  <span>Completed</span>
+                  <strong>{orderStatusSummary.completed}</strong>
                 </div>
-              ))}
+                <div className="status-row">
+                  <span>Pending</span>
+                  <strong>{orderStatusSummary.pending}</strong>
+                </div>
+                <div className="status-row">
+                  <span>Cancelled</span>
+                  <strong>{orderStatusSummary.cancelled}</strong>
+                </div>
+              </div>
+
+              <div className="report-box">
+                <h3>Listing Summary</h3>
+                <div className="status-row">
+                  <span>Active Listings</span>
+                  <strong>{listingSummary.active}</strong>
+                </div>
+                <div className="status-row">
+                  <span>Sold Listings</span>
+                  <strong>{listingSummary.sold}</strong>
+                </div>
+                <div className="status-row">
+                  <span>Removed Listings</span>
+                  <strong>{listingSummary.removed}</strong>
+                </div>
+              </div>
+            </div>
+
+            <div className="transactions admin-table-card">
+              <h3>Sales & Order Report</h3>
+              <AdminReportTable orders={filteredReportOrders} />
             </div>
           </div>
         )}
@@ -531,6 +650,35 @@ function AdminOrdersTable({ orders, formatDate }) {
           <span>${Number(order.total_amount || order.price).toFixed(2)}</span>
           <span>{formatDate(order.purchased_at)}</span>
           <span className={`status-pill ${order.status}`}>{order.status}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AdminReportTable({ orders }) {
+  if (!orders.length) {
+    return <p className="empty-state">No report records found.</p>;
+  }
+
+  return (
+    <div className="admin-table">
+      <div className="admin-table-head report-orders-grid">
+        <span>Order ID</span>
+        <span>Item</span>
+        <span>Seller</span>
+        <span>Buyer</span>
+        <span>Status</span>
+        <span>Amount</span>
+      </div>
+      {orders.map((order) => (
+        <div className="admin-table-row report-orders-grid" key={order.id}>
+          <strong>ORD{String(order.id).padStart(3, "0")}</strong>
+          <span>{order.item_name}</span>
+          <span>{order.seller_username}</span>
+          <span>{order.buyer_username}</span>
+          <span className={`status-pill ${order.status}`}>{order.status}</span>
+          <span>${Number(order.total_amount || order.price).toFixed(2)}</span>
         </div>
       ))}
     </div>
