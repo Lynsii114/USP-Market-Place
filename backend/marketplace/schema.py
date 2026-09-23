@@ -20,11 +20,15 @@ TABLE_COLUMNS = {
     },
     "users": {
         "student_id": "VARCHAR(32) NULL",
-        "authenticator_secret": "VARCHAR(32) NULL",
-        "authenticator_enabled": "BOOLEAN NOT NULL DEFAULT 0",
+        "name": "VARCHAR(128) NOT NULL DEFAULT ''",
         "role": "VARCHAR(20) NOT NULL DEFAULT 'student'",
         "status": "VARCHAR(20) NOT NULL DEFAULT 'active'",
+        "verified": "BOOLEAN NOT NULL DEFAULT 0",
+        "confirmation_code": "VARCHAR(64) NULL",
+        "authenticator_enabled": "BOOLEAN NOT NULL DEFAULT 0",
+        "authenticator_secret": "VARCHAR(32) NULL",
         "created_at": "DATETIME NULL",
+        "updated_at": "DATETIME NULL",
     },
     "purchases": {
         "seller_contact": "VARCHAR(128) NOT NULL DEFAULT ''",
@@ -48,6 +52,22 @@ TABLE_COLUMNS = {
         "created_at": "DATETIME NULL",
     },
 }
+
+USER_COLUMN_ORDER = [
+    ("student_id", "VARCHAR(32) NULL", "id"),
+    ("name", "VARCHAR(128) NOT NULL DEFAULT ''", "student_id"),
+    ("username", "VARCHAR(64) NOT NULL", "name"),
+    ("email", "VARCHAR(128) NOT NULL", "username"),
+    ("password_hash", "VARCHAR(255) NOT NULL", "email"),
+    ("role", "VARCHAR(20) NOT NULL DEFAULT 'student'", "password_hash"),
+    ("status", "VARCHAR(20) NOT NULL DEFAULT 'active'", "role"),
+    ("verified", "BOOLEAN NOT NULL DEFAULT 0", "status"),
+    ("confirmation_code", "VARCHAR(64) NULL", "verified"),
+    ("authenticator_enabled", "BOOLEAN NOT NULL DEFAULT 0", "confirmation_code"),
+    ("authenticator_secret", "VARCHAR(32) NULL", "authenticator_enabled"),
+    ("created_at", "DATETIME NULL", "authenticator_secret"),
+    ("updated_at", "DATETIME NULL", "created_at"),
+]
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +108,15 @@ def ensure_schema():
                 cursor.execute(
                     "ALTER TABLE pending_registrations MODIFY COLUMN student_id VARCHAR(32) NULL"
                 )
+            if "users" in connection.introspection.table_names():
+                cursor.execute("UPDATE users SET name = username WHERE name IS NULL OR name = ''")
+                cursor.execute("UPDATE users SET verified = 1 WHERE status = 'active'")
+                cursor.execute("UPDATE users SET updated_at = COALESCE(updated_at, created_at, NOW())")
+                if connection.vendor == "mysql":
+                    for column_name, column_definition, previous_column in USER_COLUMN_ORDER:
+                        cursor.execute(
+                            f"ALTER TABLE users MODIFY COLUMN {column_name} {column_definition} AFTER {previous_column}"
+                        )
     except (DatabaseError, OperationalError) as exc:
         logger.warning("Could not update database schema: %s", exc)
         connection.close()

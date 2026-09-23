@@ -2,15 +2,19 @@ from django.db import models
 
 
 class User(models.Model):
-    username = models.CharField(max_length=64, unique=True, db_index=True)
     student_id = models.CharField(max_length=32, unique=True, db_index=True, null=True, blank=True)
+    name = models.CharField(max_length=128, default="", blank=True)
+    username = models.CharField(max_length=64, unique=True, db_index=True)
     email = models.CharField(max_length=128, unique=True, db_index=True)
     password_hash = models.CharField(max_length=255)
-    authenticator_secret = models.CharField(max_length=32, null=True, blank=True)
-    authenticator_enabled = models.BooleanField(default=False)
     role = models.CharField(max_length=20, default="student")
     status = models.CharField(max_length=20, default="active")
+    verified = models.BooleanField(default=False)
+    confirmation_code = models.CharField(max_length=64, null=True, blank=True)
+    authenticator_enabled = models.BooleanField(default=False)
+    authenticator_secret = models.CharField(max_length=32, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "users"

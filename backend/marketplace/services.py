@@ -58,18 +58,22 @@ def get_or_create_admin_user():
     admin_user = User.objects.filter(email=ADMIN_EMAIL).first()
     if admin_user:
         admin_user.username = ADMIN_USERNAME
+        admin_user.name = ADMIN_USERNAME
         admin_user.password_hash = hash_password(ADMIN_PASSWORD)
         admin_user.role = "admin"
         admin_user.status = "active"
+        admin_user.verified = True
         admin_user.save()
         return admin_user
 
     return User.objects.create(
         username=ADMIN_USERNAME,
+        name=ADMIN_USERNAME,
         email=ADMIN_EMAIL,
         password_hash=hash_password(ADMIN_PASSWORD),
         role="admin",
         status="active",
+        verified=True,
     )
 
 
@@ -260,11 +264,13 @@ def verify_email(data):
         user = User.objects.create(
             username=registration.username,
             student_id=registration.student_id,
+            name=registration.username,
             email=registration.email,
             password_hash=registration.password_hash,
             authenticator_secret=pyotp.random_base32(),
             role="student",
             status="active",
+            verified=True,
         )
         registration.delete()
     return {
@@ -436,10 +442,12 @@ def microsoft_login(data):
     user = User.objects.create(
         username=username,
         student_id=student_id,
+        name=claims.get("name") or username,
         email=email,
         password_hash="",
         role="student",
         status="active",
+        verified=True,
     )
     PendingRegistration.objects.filter(email__iexact=email).delete()
     return {"user": serialize_user(user), "message": "USP Microsoft account connected successfully"}
