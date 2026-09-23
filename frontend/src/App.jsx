@@ -356,30 +356,6 @@ function Home() {
     }
   };
 
-  /* FUTURE MICROSOFT ENTRA INTEGRATION:
-  const handleMicrosoftLogin = async () => {
-    setIsSubmitting(true);
-    setFormMessage("");
-    try {
-      const idToken = await microsoftLogin();
-      const response = await fetch(`${API_URL}/users/microsoft-login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id_token: idToken }),
-      });
-      const data = await parseResponse(response, "Microsoft sign-in failed");
-      setCurrentUser(data.user);
-      setAuthForm(EMPTY_AUTH_FORM);
-      setAuthMode(null);
-      showToast(data.message, "success");
-    } catch (error) {
-      setFormMessage(error instanceof Error ? error.message : "Microsoft sign-in failed");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-  */
-
   const resendVerification = async () => {
     setIsSubmitting(true);
     setFormMessage("");

@@ -34,8 +34,6 @@ function AuthModal({
   onFieldChange,
   onResendVerification,
   onCancelVerification,
-  onMicrosoftLogin,
-  microsoftLoginAvailable,
   standalone = false,
   onSwitchMode,
   authenticatorSecret,
@@ -92,14 +90,6 @@ function AuthModal({
           </button>
         )}
       </div>
-
-      {/* FUTURE MICROSOFT ENTRA INTEGRATION:
-      {authMode !== "verify-email" && microsoftLoginAvailable && (
-        <button type="button" className="microsoft-login-button" onClick={onMicrosoftLogin} disabled={isSubmitting}>
-          Continue with USP Microsoft
-        </button>
-      )}
-      */}
 
       <form onSubmit={onSubmit} className="auth-form">
         {authMode === "verify-email" || authMode === "authenticator" || authMode === "authenticator-setup" || authMode === "reset-password" ? (

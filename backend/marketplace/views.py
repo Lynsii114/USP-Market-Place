@@ -82,14 +82,6 @@ def verify_authenticator(request):
     return run(lambda: (services.verify_authenticator(json_body(request)), True))
 
 
-# FUTURE MICROSOFT ENTRA INTEGRATION:
-# @csrf_exempt
-# def microsoft_login(request):
-#     if request.method != "POST":
-#         return method_not_allowed()
-#     return run(lambda: (services.microsoft_login(json_body(request)), True))
-
-
 @csrf_exempt
 def items_collection(request):
     if request.method == "GET":
