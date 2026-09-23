@@ -2,3 +2,6 @@ Django
 pymysql
 python-dotenv
 pytest
+PyJWT[crypto]
+pyotp
+qrcode[pil]

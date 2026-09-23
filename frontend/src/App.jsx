@@ -16,6 +16,10 @@ import PastPurchasesPage from "./components/PastPurchasesPage";
 import ProductModal from "./components/ProductModal";
 import SellerPanel from "./components/SellerPanel";
 import Toast from "./components/Toast";
+// FUTURE MICROSOFT ENTRA INTEGRATION: enable this import after USP provides tenant details.
+// import { microsoftLoginAvailable, microsoftLogin } from "./auth/microsoft";
+// FUTURE MICROSOFT ENTRA INTEGRATION: restore this when USP provides tenant configuration.
+// const microsoftLoginAvailable = true;
 import { EMPTY_AUTH_FORM, EMPTY_LISTING_FORM } from "./constants/forms";
 import { categories } from "./data/categories";
 import logo from "../logo.png";
@@ -23,9 +27,15 @@ import logo from "../logo.png";
 const API_URL = "http://localhost:8000/api";
 
 function Home() {
-  const [authMode, setAuthMode] = useState(null);
+  const [authMode, setAuthMode] = useState("login");
+  const [verificationEmail, setVerificationEmail] = useState("");
+  const [authenticatorUserId, setAuthenticatorUserId] = useState(null);
+  const [authenticatorSecret, setAuthenticatorSecret] = useState("");
+  const [authenticatorUri, setAuthenticatorUri] = useState("");
+  const [authenticatorQr, setAuthenticatorQr] = useState("");
   const [currentUser, setCurrentUser] = useState(null);
   const [toastMessage, setToastMessage] = useState("");
+  const [toastType, setToastType] = useState("success");
   const [formMessage, setFormMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [emailError, setEmailError] = useState("");
@@ -103,8 +113,9 @@ function Home() {
     return data;
   };
 
-  const showToast = (message) => {
+  const showToast = (message, type = "success") => {
     setToastMessage("");
+    setToastType(type);
     window.setTimeout(() => setToastMessage(message), 10);
   };
 
@@ -116,7 +127,7 @@ function Home() {
       const data = await parseResponse(response, "Unable to load listings");
       setListings(data);
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "Unable to load listings");
+      showToast(error instanceof Error ? error.message : "Unable to load listings", "error");
     } finally {
       setIsLoadingListings(false);
     }
@@ -128,14 +139,38 @@ function Home() {
       const data = await parseResponse(response, "Unable to load purchase history");
       setPurchaseHistory(data);
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "Unable to load purchase history");
+      showToast(error instanceof Error ? error.message : "Unable to load purchase history", "error");
     }
   };
 
   const resetAuth = () => {
     setAuthMode(null);
+    setVerificationEmail("");
     setFormMessage("");
     setEmailError("");
+    setAuthenticatorUserId(null);
+    setAuthenticatorSecret("");
+    setAuthenticatorUri("");
+    setAuthenticatorQr("");
+  };
+
+  const cancelVerification = async () => {
+    const email = verificationEmail;
+    resetAuth();
+
+    if (!email) {
+      return;
+    }
+
+    try {
+      await fetch(`${API_URL}/users/cancel-verification`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+    } catch {
+      // Closing the dialog should still work if the API is unavailable.
+    }
   };
 
   const validateUSPEmail = (email) => {
@@ -144,14 +179,20 @@ function Home() {
       return true;
     }
 
-    const isValid = /^s\d{8}@student\.usp\.ac\.fj$/.test(email.toLowerCase());
-    setEmailError(isValid ? "" : "Email must be in format: SXXXXXXXX@student.usp.ac.fj");
+    const isValid = /^S\d+@student\.usp\.ac\.fj$/i.test(email.trim());
+    setEmailError(isValid ? "" : "Use your USP student email, for example S12345678@student.usp.ac.fj");
     return isValid;
+  };
+
+  const validateUsername = (username) => {
+    const normalizedUsername = username.trim();
+    return normalizedUsername.length >= 3 && /^[a-zA-Z0-9_-]+$/.test(normalizedUsername);
   };
 
   const handleAuthFieldChange = (event) => {
     const { name, value } = event.target;
     setAuthForm((previous) => ({ ...previous, [name]: value }));
+    setFormMessage("");
 
     if (name === "email" && authMode === "signup") {
       validateUSPEmail(value);
@@ -164,15 +205,108 @@ function Home() {
     setFormMessage("");
 
     try {
+      if (authMode === "verify-email") {
+        const response = await fetch(`${API_URL}/users/verify-email`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: verificationEmail, code: authForm.verification_code }),
+        });
+        const data = await parseResponse(response, "Email verification failed");
+        if (data.authenticator_setup_required) {
+          setAuthenticatorUserId(data.user_id);
+          setAuthenticatorSecret(data.authenticator_secret);
+          setAuthenticatorUri(data.authenticator_uri);
+          setAuthenticatorQr(data.authenticator_qr);
+          setAuthForm((previous) => ({ ...previous, verification_code: "", authenticator_code: "" }));
+          setAuthMode("authenticator-setup");
+        } else {
+          setCurrentUser(data.user);
+          setAuthForm(EMPTY_AUTH_FORM);
+          setAuthMode(null);
+          setVerificationEmail("");
+          showToast(data.message || "Email verified successfully.");
+        }
+        return;
+      }
+
+      if (authMode === "authenticator" || authMode === "authenticator-setup") {
+        const response = await fetch(`${API_URL}/users/verify-authenticator`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: authenticatorUserId, code: authForm.authenticator_code }),
+        });
+        const data = await parseResponse(response, "Authenticator verification failed");
+        setCurrentUser(data.user);
+        setAuthForm(EMPTY_AUTH_FORM);
+        setAuthMode(null);
+        setVerificationEmail("");
+        setAuthenticatorUserId(null);
+        setAuthenticatorSecret("");
+        setAuthenticatorUri("");
+        setAuthenticatorQr("");
+        showToast(data.message || "Login successful.");
+        return;
+      }
+
+      if (authMode === "forgot-password") {
+        if (!validateUSPEmail(authForm.email)) {
+          setFormMessage("Please enter your USP student email address");
+          return;
+        }
+        const response = await fetch(`${API_URL}/users/request-password-reset`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: authForm.email.trim() }),
+        });
+        const data = await parseResponse(response, "Unable to request a password reset");
+        setVerificationEmail(authForm.email.trim());
+        setAuthForm((previous) => ({ ...previous, reset_code: "", new_password: "", new_password_confirmation: "" }));
+        setAuthMode("reset-password");
+        showToast(data.message);
+        return;
+      }
+
+      if (authMode === "reset-password") {
+        if (authForm.new_password !== authForm.new_password_confirmation) {
+          setFormMessage("Passwords do not match");
+          return;
+        }
+        const response = await fetch(`${API_URL}/users/reset-password`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: verificationEmail,
+            code: authForm.reset_code,
+            password: authForm.new_password,
+          }),
+        });
+        const data = await parseResponse(response, "Unable to reset your password");
+        setAuthForm(EMPTY_AUTH_FORM);
+        setVerificationEmail("");
+        setAuthMode("login");
+        showToast(data.message);
+        return;
+      }
+
+      if (authMode === "signup" && !validateUsername(authForm.username)) {
+        setFormMessage("Username must be at least 3 characters and use only letters, numbers, hyphens, or underscores");
+        return;
+      }
+
       if (authMode === "signup" && !validateUSPEmail(authForm.email)) {
-        setFormMessage("Please enter a valid USP email address");
+        setFormMessage("Please enter your USP student email address");
+        return;
+      }
+
+      if (authMode === "signup" && authForm.password !== authForm.password_confirmation) {
+        setFormMessage("Passwords do not match");
         return;
       }
 
       const endpoint = authMode === "signup" ? "/users/signup" : "/users/login";
       const payload =
         authMode === "signup"
-          ? authForm
+          ? { ...authForm, username: authForm.username.trim() }
           : {
               username: authForm.username,
               password: authForm.password,
@@ -185,6 +319,24 @@ function Home() {
       });
       const data = await parseResponse(response, "Authentication failed");
 
+      if (data.authenticator_setup_required || data.authenticator_required) {
+        setAuthenticatorUserId(data.user_id);
+        setAuthenticatorSecret(data.authenticator_secret || "");
+        setAuthenticatorUri(data.authenticator_uri || "");
+        setAuthenticatorQr(data.authenticator_qr || "");
+        setAuthForm((previous) => ({ ...previous, authenticator_code: "" }));
+        setAuthMode(data.authenticator_setup_required ? "authenticator-setup" : "authenticator");
+        return;
+      }
+
+      if (authMode === "signup" && data.verification_required) {
+        setVerificationEmail(authForm.email.trim());
+        setAuthForm((previous) => ({ ...previous, verification_code: "" }));
+        setAuthMode("verify-email");
+        showToast("Registration started. Check your USP email for the verification code.");
+        return;
+      }
+
       setCurrentUser(data.user);
       setAuthForm(EMPTY_AUTH_FORM);
       setAuthMode(null);
@@ -193,9 +345,52 @@ function Home() {
         setShowAdminDashboard(true);
         window.history.pushState({}, "", "/admin/dashboard");
       }
-      showToast(data.message || (authMode === "signup" ? "Account created successfully!" : "Login successful!"));
+      showToast(authMode === "signup" ? "Registration successful. Welcome to USP Marketplace!" : data.message || "Login successful!");
     } catch (error) {
-      setFormMessage(error instanceof Error ? error.message : "Something went wrong");
+      const message = error instanceof Error ? error.message : "Something went wrong";
+      setFormMessage(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  /* FUTURE MICROSOFT ENTRA INTEGRATION:
+  const handleMicrosoftLogin = async () => {
+    setIsSubmitting(true);
+    setFormMessage("");
+    try {
+      const idToken = await microsoftLogin();
+      const response = await fetch(`${API_URL}/users/microsoft-login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id_token: idToken }),
+      });
+      const data = await parseResponse(response, "Microsoft sign-in failed");
+      setCurrentUser(data.user);
+      setAuthForm(EMPTY_AUTH_FORM);
+      setAuthMode(null);
+      showToast(data.message, "success");
+    } catch (error) {
+      setFormMessage(error instanceof Error ? error.message : "Microsoft sign-in failed");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+  */
+
+  const resendVerification = async () => {
+    setIsSubmitting(true);
+    setFormMessage("");
+    try {
+      const response = await fetch(`${API_URL}/users/resend-verification`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: verificationEmail }),
+      });
+      const data = await parseResponse(response, "Unable to resend verification code");
+      showToast(data.message);
+    } catch (error) {
+      setFormMessage(error instanceof Error ? error.message : "Unable to resend verification code");
     } finally {
       setIsSubmitting(false);
     }
@@ -227,6 +422,7 @@ function Home() {
 
   const handleLogout = () => {
     setCurrentUser(null);
+    setAuthMode("login");
     hideActivePages();
     window.history.pushState({}, "", "/");
     showToast("Logged out successfully.");
@@ -237,6 +433,29 @@ function Home() {
     window.history.pushState({}, "", "/");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
+
+  if (!currentUser && !showAdminDashboard) {
+    return (
+      <AuthModal
+        authMode={authMode || "login"}
+        authForm={authForm}
+        emailError={emailError}
+        formMessage={formMessage}
+        isSubmitting={isSubmitting}
+        verificationEmail={verificationEmail}
+        onClose={resetAuth}
+        onSubmit={handleAuthSubmit}
+        onFieldChange={handleAuthFieldChange}
+        onResendVerification={resendVerification}
+        onCancelVerification={cancelVerification}
+        standalone
+        onSwitchMode={openAuth}
+        authenticatorSecret={authenticatorSecret}
+        authenticatorUri={authenticatorUri}
+        authenticatorQr={authenticatorQr}
+      />
+    );
+  }
 
   const handleListingFieldChange = (event) => {
     const { name, value } = event.target;
@@ -255,7 +474,7 @@ function Home() {
     if (!isJpg) {
       event.target.value = "";
       setPendingPhoto(null);
-      showToast("Please upload a JPG photo only.");
+      showToast("Please upload a JPG photo only.", "error");
       return;
     }
 
@@ -267,7 +486,7 @@ function Home() {
       });
     };
     reader.onerror = () => {
-      showToast("Unable to read the selected photo.");
+      showToast("Unable to read the selected photo.", "error");
     };
     reader.readAsDataURL(file);
   };
@@ -299,12 +518,12 @@ function Home() {
 
     try {
       if (pendingPhoto) {
-        showToast("Please confirm the selected photo before adding the listing.");
+        showToast("Please confirm the selected photo before adding the listing.", "error");
         return;
       }
 
       if (listingForm.stock === "") {
-        showToast("Please enter the number of units in stock.");
+        showToast("Please enter the number of units in stock.", "error");
         return;
       }
 
@@ -330,7 +549,7 @@ function Home() {
       setOpenListingMenuId(null);
       showToast(editingListingId ? "Listing updated successfully." : "Listing created successfully.");
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "Something went wrong");
+      showToast(error instanceof Error ? error.message : "Something went wrong", "error");
     } finally {
       setIsSubmitting(false);
     }
@@ -370,7 +589,7 @@ function Home() {
       setOpenListingMenuId(null);
       showToast(data.message || "Listing removed successfully.");
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "Unable to remove listing");
+      showToast(error instanceof Error ? error.message : "Unable to remove listing", "error");
     } finally {
       setIsSubmitting(false);
     }
@@ -517,20 +736,20 @@ function Home() {
   const addToCart = (listing) => {
     if (!currentUser) {
       setSelectedListing(null);
-      showToast("Please login to add items to cart.");
+      showToast("Please login to add items to cart.", "error");
       openAuth("login");
       return;
     }
 
     if (listing.seller_id === currentUser.id) {
       setSelectedListing(null);
-      showToast("You cannot add your own listing to cart.");
+      showToast("You cannot add your own listing to cart.", "error");
       return;
     }
 
     if (listing.status === "sold" || Number(listing.stock) <= 0) {
       setSelectedListing(null);
-      showToast("This item is sold out.");
+      showToast("This item is sold out.", "error");
       return;
     }
 
@@ -538,7 +757,7 @@ function Home() {
 
     if (alreadyInCart) {
       setSelectedListing(null);
-      showToast("Item is already in your cart.");
+      showToast("Item is already in your cart.", "error");
       return;
     }
 
@@ -550,14 +769,14 @@ function Home() {
 
   const checkoutCart = async () => {
     if (!currentUser) {
-      showToast("Please login to purchase items.");
+      showToast("Please login to purchase items.", "error");
       openAuth("login");
       return;
     }
 
     const availableItems = cartItems.filter((item) => item.status !== "sold" && Number(item.stock) > 0);
     if (!availableItems.length) {
-      showToast("No available items to checkout.");
+      showToast("No available items to checkout.", "error");
       return;
     }
 
@@ -588,7 +807,7 @@ function Home() {
       });
       showToast("Checkout successful.");
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "Unable to checkout");
+      showToast(error instanceof Error ? error.message : "Unable to checkout", "error");
       await loadListings();
     } finally {
       setIsSubmitting(false);
@@ -638,16 +857,19 @@ function Home() {
     <div className="home-page">
       {showAdminDashboard ? (
         <>
-          <Toast message={toastMessage} />
+          <Toast message={toastMessage} type={toastType} />
           <AuthModal
             authMode={authMode}
             authForm={authForm}
             emailError={emailError}
             formMessage={formMessage}
             isSubmitting={isSubmitting}
+            verificationEmail={verificationEmail}
             onClose={resetAuth}
             onSubmit={handleAuthSubmit}
             onFieldChange={handleAuthFieldChange}
+            onResendVerification={resendVerification}
+            onCancelVerification={cancelVerification}
           />
           <AdminDashboard
             apiUrl={API_URL}
@@ -675,7 +897,7 @@ function Home() {
         onLogout={handleLogout}
       />
 
-      <Toast message={toastMessage} />
+      <Toast message={toastMessage} type={toastType} />
 
       <AuthModal
         authMode={authMode}
@@ -683,9 +905,12 @@ function Home() {
         emailError={emailError}
         formMessage={formMessage}
         isSubmitting={isSubmitting}
+        verificationEmail={verificationEmail}
         onClose={resetAuth}
         onSubmit={handleAuthSubmit}
         onFieldChange={handleAuthFieldChange}
+        onResendVerification={resendVerification}
+        onCancelVerification={cancelVerification}
       />
 
       <CategoryPage

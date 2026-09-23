@@ -31,10 +31,60 @@ def signup(request):
 
 
 @csrf_exempt
+def verify_email(request):
+    if request.method != "POST":
+        return method_not_allowed()
+    return run(lambda: (services.verify_email(json_body(request)), True))
+
+
+@csrf_exempt
+def resend_verification(request):
+    if request.method != "POST":
+        return method_not_allowed()
+    return run(lambda: (services.resend_verification(json_body(request)), True))
+
+
+@csrf_exempt
+def cancel_verification(request):
+    if request.method != "POST":
+        return method_not_allowed()
+    return run(lambda: (services.cancel_verification(json_body(request)), True))
+
+
+@csrf_exempt
+def request_password_reset(request):
+    if request.method != "POST":
+        return method_not_allowed()
+    return run(lambda: (services.request_password_reset(json_body(request)), True))
+
+
+@csrf_exempt
+def reset_password(request):
+    if request.method != "POST":
+        return method_not_allowed()
+    return run(lambda: (services.reset_password(json_body(request)), True))
+
+
+@csrf_exempt
 def login(request):
     if request.method != "POST":
         return method_not_allowed()
     return run(lambda: (services.login_user(json_body(request)), True))
+
+
+@csrf_exempt
+def verify_authenticator(request):
+    if request.method != "POST":
+        return method_not_allowed()
+    return run(lambda: (services.verify_authenticator(json_body(request)), True))
+
+
+# FUTURE MICROSOFT ENTRA INTEGRATION:
+# @csrf_exempt
+# def microsoft_login(request):
+#     if request.method != "POST":
+#         return method_not_allowed()
+#     return run(lambda: (services.microsoft_login(json_body(request)), True))
 
 
 @csrf_exempt

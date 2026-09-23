@@ -5,7 +5,15 @@ from . import views
 urlpatterns = [
     path("health", views.health),
     path("users/signup", views.signup),
+    path("users/verify-email", views.verify_email),
+    path("users/resend-verification", views.resend_verification),
+    path("users/cancel-verification", views.cancel_verification),
+    path("users/request-password-reset", views.request_password_reset),
+    path("users/reset-password", views.reset_password),
     path("users/login", views.login),
+    path("users/verify-authenticator", views.verify_authenticator),
+    # FUTURE MICROSOFT ENTRA INTEGRATION:
+    # path("users/microsoft-login", views.microsoft_login),
     path("users/<int:buyer_id>/purchases", views.list_buyer_purchases),
     path("users/<int:seller_id>/items", views.list_seller_items),
     path("items", views.items_collection),
