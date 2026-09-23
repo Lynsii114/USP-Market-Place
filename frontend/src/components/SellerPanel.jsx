@@ -16,6 +16,7 @@ function SellerPanel({
   onFieldChange,
   onLogin,
   onMenuToggle,
+  onViewListing,
   onPhotoChange,
   onPhotoConfirm,
   onPhotoRemove,
@@ -179,23 +180,27 @@ function SellerPanel({
                           {listing.status === "sold" || Number(listing.stock) <= 0 ? "Sold" : `${listing.stock} in stock`}
                         </span>
                       </div>
-                      <div className="listing-menu">
+                      <div className="admin-action-dropdown">
                         <button
                           type="button"
-                          className="listing-menu-button"
+                          className="admin-action-trigger"
                           aria-label={`Open actions for ${listing.name}`}
                           aria-expanded={openListingMenuId === listing.id}
                           onClick={() => onMenuToggle(listing.id)}
                         >
-                          ...
+                          Actions
                         </button>
                         {openListingMenuId === listing.id && (
-                          <div className="listing-menu-panel">
-                            <button type="button" onClick={() => onEditListing(listing)}>
-                              Edit
+                          <div className="admin-action-menu">
+                            <button type="button" onClick={() => onViewListing(listing)}>
+                              View Listing
                             </button>
-                            <button type="button" className="danger-button" onClick={() => onDeleteListing(listing.id)}>
-                              Remove
+                            <button type="button" onClick={() => onEditListing(listing)}>
+                              Edit Listing
+                            </button>
+                            <div className="admin-action-divider" />
+                            <button type="button" className="danger-action" onClick={() => onDeleteListing(listing.id)}>
+                              Remove Listing
                             </button>
                           </div>
                         )}

@@ -1,9 +1,10 @@
-import React from "react";
+import React, { useMemo, useState } from "react";
 
 function Navbar({
   logo,
   currentUser,
   cartCount,
+  notifications = [],
   onHome,
   onBrowse,
   onOpenSellerTab,
@@ -13,11 +14,17 @@ function Navbar({
   onOpenAuth,
   onLogout,
 }) {
+  const [dismissedNotifications, setDismissedNotifications] = useState([]);
+  const visibleNotifications = useMemo(
+    () => notifications.filter((notification) => !dismissedNotifications.includes(notification.id)),
+    [dismissedNotifications, notifications]
+  );
+
   return (
     <header className="navbar">
       <div className="brand">
         <img src={logo} alt="USP logo" className="usp-logo" />
-        <span>USP Buy & Sell</span>
+        <span>USP Online Marketplace</span>
       </div>
 
       <nav className="nav-links">
@@ -49,6 +56,37 @@ function Navbar({
           </div>
         ) : null}
         <div className="nav-actions">
+          <div className="nav-dropdown notification-dropdown">
+            <button type="button" className="icon-nav-button notification-icon-button" aria-label="Notifications">
+              <span aria-hidden="true">&#128276;</span>
+              {visibleNotifications.length > 0 && <span className="notification-count">{visibleNotifications.length}</span>}
+            </button>
+            <div className="nav-dropdown-menu notification-menu">
+              <strong>Notifications</strong>
+              {visibleNotifications.length ? (
+                visibleNotifications.slice(0, 4).map((notification) => (
+                  <div className="notification-row viewed" key={notification.id}>
+                    <p>{notification.message}</p>
+                    <button
+                      type="button"
+                      className="notification-remove-button"
+                      onClick={() =>
+                        setDismissedNotifications((currentNotifications) => [
+                          ...currentNotifications,
+                          notification.id,
+                        ])
+                      }
+                      aria-label="Remove notification"
+                    >
+                      x
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <p>No new notifications.</p>
+              )}
+            </div>
+          </div>
           <button type="button" className="icon-nav-button cart-nav-button" onClick={onOpenCart} aria-label="Open cart">
             <span className="cart-icon" aria-hidden="true">
               &#128722;

@@ -16,9 +16,17 @@ class DatabaseFeatures(MySQLDatabaseFeatures):
 
     @cached_property
     def can_return_columns_from_insert(self):
+        if self.connection.connection is None:
+            return False
         if self.connection.mysql_is_mariadb and self.connection.mysql_version < (10, 5):
             return False
         return super().can_return_columns_from_insert
+
+    @cached_property
+    def has_native_uuid_field(self):
+        if self.connection.connection is None:
+            return False
+        return super().has_native_uuid_field
 
 
 class DatabaseWrapper(MySQLDatabaseWrapper):

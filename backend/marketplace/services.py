@@ -23,9 +23,9 @@ from django.utils.dateparse import parse_date
 
 from .constants import ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_USERNAME, HIDDEN_ITEM_NAMES
 from .exceptions import ApiError
-from .models import EmailVerification, Item, PasswordReset, PendingRegistration, Purchase, User
+from .models import AdminNotification, EmailVerification, Item, PasswordReset, PendingRegistration, Purchase, RatingReview, User, UserReport
 from .queries import find_student, find_user_by_login, item_status, public_items, visible_items, visible_purchases
-from .serializers import serialize_item, serialize_purchase, serialize_user
+from .serializers import serialize_item, serialize_notification, serialize_purchase, serialize_rating_review, serialize_user, serialize_user_report
 from .validators import validate_item_payload, validate_signup
 
 
@@ -71,6 +71,55 @@ def get_or_create_admin_user():
         role="admin",
         status="active",
     )
+
+
+def notify_admin(title, message, category="activity", actor=None):
+    return AdminNotification.objects.create(
+        title=title,
+        message=message,
+        category=category,
+        actor_id=actor.id if actor else None,
+        actor_username=actor.username if actor else None,
+    )
+
+
+def serialize_admin_item(item):
+    data = serialize_item(item)
+    seller = User.objects.filter(id=item.seller_id).first()
+    if seller:
+        data["seller"] = serialize_user(seller)
+    return data
+
+
+def serialize_admin_purchase(purchase):
+    data = serialize_purchase(purchase)
+    buyer = User.objects.filter(id=purchase.buyer_id).first()
+    seller = User.objects.filter(id=purchase.seller_id).first()
+    if buyer:
+        data["buyer"] = serialize_user(buyer)
+    if seller:
+        data["seller"] = serialize_user(seller)
+    return data
+
+
+def serialize_admin_review(review):
+    data = serialize_rating_review(review)
+    reviewer = User.objects.filter(id=review.reviewer_id).first()
+    seller = User.objects.filter(id=review.seller_id).first()
+    if reviewer:
+        data["reviewer"] = serialize_user(reviewer)
+    if seller:
+        data["seller"] = serialize_user(seller)
+    return data
+
+
+def serialize_admin_notification(notification):
+    data = serialize_notification(notification)
+    if notification.actor_id:
+        actor = User.objects.filter(id=notification.actor_id).first()
+        if actor:
+            data["actor"] = serialize_user(actor)
+    return data
 
 
 def hash_verification_code(code):
@@ -499,7 +548,13 @@ def purchase_item(item_id, buyer_id):
         total_amount=item.price,
         status="completed",
     )
-    return serialize_item(item)
+    notify_admin(
+        "Checkout payment completed",
+        f"{buyer.username} purchased {item.name} from {item.seller_username} for ${item.price:.2f}.",
+        "checkout",
+        buyer,
+    )
+    return serialize_admin_item(item)
 
 
 def list_buyer_purchases(buyer_id):
@@ -523,7 +578,7 @@ def dashboard(admin_id):
         "total_active_listings": visible_items().filter(status="available").count(),
         "total_orders": len(purchases),
         "todays_sales": todays_sales,
-        "recent_orders": [serialize_purchase(purchase) for purchase in purchases[:5]],
+        "recent_orders": [serialize_admin_purchase(purchase) for purchase in purchases[:5]],
     }
 
 
@@ -542,7 +597,190 @@ def set_student_status(admin_id, student_id, status):
         raise ApiError("Student not found", 404)
     student.status = status
     student.save()
-    return serialize_user(student)
+
+    if status == "suspended":
+        subject = "Your USP Marketplace account has been suspended"
+        message = (
+            f"Hello {student.username},\n\n"
+            "Your USP Marketplace account has been suspended by an administrator. "
+            "You will not be able to use marketplace features while your account is suspended.\n\n"
+            "If you believe this was a mistake, please contact the USP Marketplace admin team."
+        )
+        notification = "Suspension email sent to the student."
+    else:
+        subject = "Your USP Marketplace account has been reactivated"
+        message = (
+            f"Hello {student.username},\n\n"
+            "Your USP Marketplace account has been reactivated by an administrator. "
+            "You can now sign in and use marketplace features again.\n\n"
+            "Thank you for using USP Marketplace."
+        )
+        notification = "Reactivation email sent to the student."
+
+    send_email(subject, message, student.email)
+    notify_admin(
+        "Student account status changed",
+        f"{student.username} was {status}. {notification}",
+        "account",
+        student,
+    )
+    return {
+        "user": serialize_user(student),
+        "message": notification,
+        "email_sent": True,
+    }
+
+
+def delete_student(admin_id, student_id):
+    require_admin(admin_id)
+    student = find_student(student_id)
+    if not student:
+        raise ApiError("Student not found", 404)
+
+    username = student.username
+    email = student.email
+    Item.objects.filter(seller_id=student.id).delete()
+    PendingRegistration.objects.filter(email__iexact=email).delete()
+    student.delete()
+    notify_admin(
+        "Student account deleted",
+        f"Admin permanently deleted student account '{username}' and removed that student's listings.",
+        "account",
+    )
+    return {"message": f"{username} was permanently deleted."}
+
+
+def list_admin_notifications(admin_id):
+    require_admin(admin_id)
+    notifications = AdminNotification.objects.order_by("-id")[:30]
+    return [serialize_admin_notification(notification) for notification in notifications]
+
+
+def mark_admin_notification_viewed(admin_id, notification_id):
+    require_admin(admin_id)
+    notification = AdminNotification.objects.filter(id=notification_id).first()
+    if not notification:
+        raise ApiError("Notification not found", 404)
+    notification.is_read = True
+    notification.save(update_fields=["is_read"])
+    return serialize_admin_notification(notification)
+
+
+def delete_admin_notification(admin_id, notification_id):
+    require_admin(admin_id)
+    deleted, _ = AdminNotification.objects.filter(id=notification_id).delete()
+    if not deleted:
+        raise ApiError("Notification not found", 404)
+    return {"message": "Notification removed."}
+
+
+def submit_user_report(data):
+    reporter = require_active_user(data.get("reporter_id"))
+    target_type = str(data.get("target_type", "")).strip().lower()
+    reason = str(data.get("reason", "")).strip()
+
+    if target_type not in {"listing", "user"}:
+        raise ApiError("Report target must be listing or user", 422)
+    if len(reason) < 8:
+        raise ApiError("Report reason must be at least 8 characters long", 422)
+
+    target_id = data.get("target_id")
+    target_label = str(data.get("target_label", "")).strip()
+    if target_type == "listing":
+        item = Item.objects.filter(id=target_id).first()
+        if not item:
+            raise ApiError("Listing not found", 404)
+        target_label = item.name
+        target_id = item.id
+    elif target_id:
+        target_user = User.objects.filter(id=target_id).first()
+        if target_user:
+            target_label = target_user.username
+
+    if not target_label:
+        raise ApiError("Report target is required", 422)
+
+    report_record = UserReport.objects.create(
+        reporter_id=reporter.id,
+        reporter_username=reporter.username,
+        target_type=target_type,
+        target_id=target_id or None,
+        target_label=target_label,
+        reason=reason,
+    )
+    notify_admin(
+        "New user report",
+        f"{reporter.username} reported {target_type} '{target_label}'.",
+        "report",
+        reporter,
+    )
+    return {"report": serialize_user_report(report_record), "message": "Report submitted to admin."}
+
+
+def submit_rating_review(data):
+    reviewer = require_active_user(data.get("reviewer_id"))
+    item = Item.objects.filter(id=data.get("item_id")).first()
+    if not item:
+        raise ApiError("Listing not found", 404)
+    if item.seller_id == reviewer.id:
+        raise ApiError("You cannot review your own listing", 400)
+
+    try:
+        rating = int(data.get("rating"))
+    except (TypeError, ValueError) as exc:
+        raise ApiError("Rating must be a number from 1 to 5", 422) from exc
+    if rating < 1 or rating > 5:
+        raise ApiError("Rating must be from 1 to 5", 422)
+
+    review_text = str(data.get("review", "")).strip()
+    if len(review_text) < 5:
+        raise ApiError("Review must be at least 5 characters long", 422)
+
+    review_record = RatingReview.objects.create(
+        reviewer_id=reviewer.id,
+        reviewer_username=reviewer.username,
+        item_id=item.id,
+        item_name=item.name,
+        seller_id=item.seller_id,
+        seller_username=item.seller_username,
+        rating=rating,
+        review=review_text,
+    )
+    notify_admin(
+        "New rating and review",
+        f"{reviewer.username} rated {item.name} {rating}/5.",
+        "review",
+        reviewer,
+    )
+    return {"review": serialize_rating_review(review_record), "message": "Rating and review submitted."}
+
+
+def list_user_reports(admin_id):
+    require_admin(admin_id)
+    reports = []
+    for report_record in UserReport.objects.order_by("-id"):
+        serialized_report = serialize_user_report(report_record)
+        if report_record.target_type == "listing" and report_record.target_id:
+            item = Item.objects.filter(id=report_record.target_id).first()
+            if item:
+                serialized_report["target_item"] = serialize_admin_item(item)
+                seller = User.objects.filter(id=item.seller_id).first()
+                if seller:
+                    serialized_report["seller"] = serialize_user(seller)
+        elif report_record.target_type == "user" and report_record.target_id:
+            seller = User.objects.filter(id=report_record.target_id).first()
+            if seller:
+                serialized_report["seller"] = serialize_user(seller)
+        reporter = User.objects.filter(id=report_record.reporter_id).first()
+        if reporter:
+            serialized_report["reporter"] = serialize_user(reporter)
+        reports.append(serialized_report)
+    return reports
+
+
+def list_rating_reviews(admin_id):
+    require_admin(admin_id)
+    return [serialize_admin_review(review_record) for review_record in RatingReview.objects.order_by("-id")]
 
 
 def list_admin_items(admin_id, search=""):
@@ -554,7 +792,23 @@ def list_admin_items(admin_id, search=""):
             | Q(category__contains=search)
             | Q(seller_username__contains=search)
         )
-    return [serialize_item(item) for item in query.order_by("-id")]
+    return [serialize_admin_item(item) for item in query.order_by("-id")]
+
+
+def hide_listing(admin_id, item_id, reason):
+    require_admin(admin_id)
+    item = Item.objects.filter(id=item_id).first()
+    if not item:
+        raise ApiError("Item not found", 404)
+    item.status = "hidden"
+    item.removed_reason = reason
+    item.save()
+    notify_admin(
+        "Listing hidden",
+        f"Admin hid listing '{item.name}'.",
+        "listing",
+    )
+    return serialize_admin_item(item)
 
 
 def remove_listing(admin_id, item_id, reason):
@@ -565,7 +819,12 @@ def remove_listing(admin_id, item_id, reason):
     item.status = "removed"
     item.removed_reason = reason
     item.save()
-    return serialize_item(item)
+    notify_admin(
+        "Listing removed",
+        f"Admin removed listing '{item.name}'.",
+        "listing",
+    )
+    return serialize_admin_item(item)
 
 
 def restore_listing(admin_id, item_id):
@@ -576,7 +835,7 @@ def restore_listing(admin_id, item_id):
     item.status = item_status(item.stock)
     item.removed_reason = None
     item.save()
-    return serialize_item(item)
+    return serialize_admin_item(item)
 
 
 def list_orders(admin_id, search="", status="", order_date=""):
@@ -602,7 +861,7 @@ def list_orders(admin_id, search="", status="", order_date=""):
             if order.purchased_at and order.purchased_at.date() == selected_date
         ]
 
-    return [serialize_purchase(order) for order in orders]
+    return [serialize_admin_purchase(order) for order in orders]
 
 
 def report(admin_id, period="daily"):

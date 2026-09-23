@@ -57,6 +57,8 @@ function Home() {
   const [showCartPanel, setShowCartPanel] = useState(false);
   const [showPurchasesPage, setShowPurchasesPage] = useState(false);
   const [receipt, setReceipt] = useState(null);
+  const [pendingReviewItems, setPendingReviewItems] = useState([]);
+  const [checkoutReviewForm, setCheckoutReviewForm] = useState({ rating: "5", review: "" });
   const [purchaseHistory, setPurchaseHistory] = useState([]);
   const [activeLegalPage, setActiveLegalPage] = useState(null);
   const [activeAccountPage, setActiveAccountPage] = useState(null);
@@ -572,6 +574,11 @@ function Home() {
     document.getElementById("seller-listings")?.scrollIntoView({ behavior: "smooth" });
   };
 
+  const handleViewOwnListing = (listing) => {
+    setOpenListingMenuId(null);
+    setSelectedListing(listing);
+  };
+
   const handleDeleteListing = async (listingId) => {
     if (!currentUser) {
       return;
@@ -805,6 +812,8 @@ function Home() {
         items: purchasedItems,
         total: availableItems.reduce((total, item) => total + Number(item.price), 0),
       });
+      setPendingReviewItems(purchasedItems);
+      setCheckoutReviewForm({ rating: "5", review: "" });
       showToast("Checkout successful.");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to checkout", "error");
@@ -812,6 +821,89 @@ function Home() {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const submitListingReport = async (listing, reason, targetType = "listing") => {
+    if (!currentUser) {
+      showToast("Please login to report listings.", "error");
+      openAuth("login");
+      return;
+    }
+
+    if (reason.trim().length < 8) {
+      showToast("Please enter a report reason with at least 8 characters.", "error");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/reports`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reporter_id: currentUser.id,
+          target_type: targetType,
+          target_id: targetType === "user" ? listing.seller_id : listing.id,
+          target_label: targetType === "user" ? listing.seller_username : listing.name,
+          reason,
+        }),
+      });
+      const data = await parseResponse(response, "Unable to submit report");
+      showToast(data.message || "Report submitted to admin.");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to submit report", "error");
+    }
+  };
+
+  const submitRatingReview = async (listing, rating, review) => {
+    if (!currentUser) {
+      showToast("Please login to submit a review.", "error");
+      openAuth("login");
+      return false;
+    }
+
+    if (review.trim().length < 5) {
+      showToast("Please enter a review with at least 5 characters.", "error");
+      return false;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/ratings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reviewer_id: currentUser.id,
+          item_id: listing.id,
+          rating,
+          review,
+        }),
+      });
+      const data = await parseResponse(response, "Unable to submit review");
+      showToast(data.message || "Rating and review submitted.");
+      return true;
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to submit review", "error");
+      return false;
+    }
+  };
+
+  const submitCheckoutReview = async () => {
+    const currentItem = pendingReviewItems[0];
+    if (!currentItem) {
+      return;
+    }
+
+    const saved = await submitRatingReview(currentItem, Number(checkoutReviewForm.rating), checkoutReviewForm.review);
+    if (!saved) {
+      return;
+    }
+
+    setPendingReviewItems((currentItems) => currentItems.slice(1));
+    setCheckoutReviewForm({ rating: "5", review: "" });
+  };
+
+  const skipCheckoutReview = () => {
+    setPendingReviewItems((currentItems) => currentItems.slice(1));
+    setCheckoutReviewForm({ rating: "5", review: "" });
   };
 
   const removeFromCart = (listingId) => {
@@ -987,6 +1079,7 @@ function Home() {
               onMenuToggle={(listingId) =>
                 setOpenListingMenuId((currentId) => (currentId === listingId ? null : listingId))
               }
+              onViewListing={handleViewOwnListing}
               onPhotoChange={handlePhotoChange}
               onPhotoConfirm={confirmPhoto}
               onPhotoRemove={removePhoto}
@@ -1017,7 +1110,68 @@ function Home() {
         currentUser={currentUser}
         onClose={() => setSelectedListing(null)}
         onAddToCart={addToCart}
+        onReportListing={submitListingReport}
       />
+
+      {pendingReviewItems.length > 0 && (
+        <div className="auth-modal-backdrop" onClick={() => setPendingReviewItems([])}>
+          <div className="checkout-review-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="auth-header">
+              <div>
+                <span className="section-kicker">Purchase complete</span>
+                <h2>Review your item</h2>
+              </div>
+              <button type="button" className="close-button" onClick={() => setPendingReviewItems([])} aria-label="Close">
+                x
+              </button>
+            </div>
+            <div className="review-item-summary">
+              {pendingReviewItems[0].photo ? (
+                <img src={pendingReviewItems[0].photo} alt={pendingReviewItems[0].name} />
+              ) : (
+                <span>{pendingReviewItems[0].category?.charAt(0) || "I"}</span>
+              )}
+              <div>
+                <strong>{pendingReviewItems[0].name}</strong>
+                <small>Seller: {pendingReviewItems[0].seller_username}</small>
+              </div>
+            </div>
+            <div className="feedback-block checkout-review-form">
+              <strong>Rating</strong>
+              <div className="rating-control" role="group" aria-label="Rating">
+                {[1, 2, 3, 4, 5].map((value) => (
+                  <button
+                    type="button"
+                    className={Number(checkoutReviewForm.rating) >= value ? "active" : ""}
+                    key={value}
+                    onClick={() => setCheckoutReviewForm((form) => ({ ...form, rating: String(value) }))}
+                    aria-label={`${value} star`}
+                  >
+                    &#9733;
+                  </button>
+                ))}
+              </div>
+              <textarea
+                value={checkoutReviewForm.review}
+                onChange={(event) => setCheckoutReviewForm((form) => ({ ...form, review: event.target.value }))}
+                placeholder="Share your experience after checkout"
+                rows="4"
+              />
+              <div className="checkout-review-actions">
+                <button type="button" className="secondary-button" onClick={skipCheckoutReview}>
+                  Skip
+                </button>
+                <button type="button" className="auth-submit" onClick={submitCheckoutReview}>
+                  Submit
+                </button>
+              </div>
+            </div>
+            {pendingReviewItems.length > 1 && (
+              <p className="review-progress">{pendingReviewItems.length - 1} more item review pending.</p>
+            )}
+          </div>
+        </div>
+      )}
 
       <Footer logo={logo} onLegalNavigate={openLegalPage} />
         </>

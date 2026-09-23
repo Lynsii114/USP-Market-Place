@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 
-const adminTabs = ["Dashboard", "Students", "Listings", "Orders", "Reports"];
+const adminTabs = ["Dashboard", "Students", "Listings", "Orders", "Reports", "Flags", "Reviews"];
 
 function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarketplace, showToast }) {
   const [activeTab, setActiveTab] = useState("Dashboard");
@@ -19,8 +19,16 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
   const [reportToDate, setReportToDate] = useState("");
   const [reportOrders, setReportOrders] = useState([]);
   const [reportListings, setReportListings] = useState([]);
+  const [userReports, setUserReports] = useState([]);
+  const [ratingReviews, setRatingReviews] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isConfirmingReport, setIsConfirmingReport] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [selectedNotification, setSelectedNotification] = useState(null);
+  const [selectedAdminListing, setSelectedAdminListing] = useState(null);
+  const [selectedStudent, setSelectedStudent] = useState(null);
+  const [openStudentActionId, setOpenStudentActionId] = useState(null);
+  const [openListingActionId, setOpenListingActionId] = useState(null);
 
   const isAdmin = currentUser?.role === "admin";
   const adminId = currentUser?.id;
@@ -75,6 +83,21 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
     setReportListings(listingsData);
   };
 
+  const loadNotifications = async () => {
+    const data = await fetchAdmin("/admin/notifications", "Unable to load notifications");
+    setNotifications(data);
+  };
+
+  const loadUserReports = async () => {
+    const data = await fetchAdmin("/admin/user-reports", "Unable to load user reports");
+    setUserReports(data);
+  };
+
+  const loadRatingReviews = async () => {
+    const data = await fetchAdmin("/admin/ratings", "Unable to load ratings and reviews");
+    setRatingReviews(data);
+  };
+
   const refreshActiveTab = async () => {
     if (!isAdmin) {
       return;
@@ -92,7 +115,12 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
         await loadOrders();
       } else if (activeTab === "Reports") {
         await loadReport();
+      } else if (activeTab === "Flags") {
+        await loadUserReports();
+      } else if (activeTab === "Reviews") {
+        await loadRatingReviews();
       }
+      await loadNotifications();
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to load admin data");
     } finally {
@@ -103,6 +131,12 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
   useEffect(() => {
     refreshActiveTab();
   }, [activeTab, isAdmin, reportPeriod]);
+
+  useEffect(() => {
+    if (isAdmin) {
+      loadNotifications().catch(() => {});
+    }
+  }, [isAdmin]);
 
   const stats = useMemo(
     () => [
@@ -174,6 +208,61 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
         })
       : "Not recorded";
 
+  const openUserProfile = (user) => {
+    if (!user) {
+      showToast("Profile details are not available for this user.");
+      return;
+    }
+    setSelectedStudent(user);
+  };
+
+  const unreadNotifications = notifications.filter((notification) => !notification.is_read);
+
+  const openNotification = async (notification) => {
+    setSelectedNotification(notification);
+    if (notification.is_read) {
+      return;
+    }
+
+    setNotifications((currentNotifications) =>
+      currentNotifications.map((currentNotification) =>
+        currentNotification.id === notification.id
+          ? { ...currentNotification, is_read: true }
+          : currentNotification
+      )
+    );
+
+    try {
+      const updatedNotification = await fetchAdmin(`/admin/notifications/${notification.id}/view`, "Unable to mark notification as viewed", {
+        method: "POST",
+      });
+      setSelectedNotification(updatedNotification);
+      setNotifications((currentNotifications) =>
+        currentNotifications.map((currentNotification) =>
+          currentNotification.id === updatedNotification.id ? updatedNotification : currentNotification
+        )
+      );
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to mark notification as viewed");
+    }
+  };
+
+  const removeNotification = async (notificationId) => {
+    try {
+      await fetchAdmin(`/admin/notifications/${notificationId}/view`, "Unable to remove notification", {
+        method: "DELETE",
+      });
+      setNotifications((currentNotifications) =>
+        currentNotifications.filter((notification) => notification.id !== notificationId)
+      );
+      if (selectedNotification?.id === notificationId) {
+        setSelectedNotification(null);
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to remove notification");
+    }
+  };
+
   const updateStudentStatus = async (student, action) => {
     const verb = action === "suspend" ? "suspend" : "reactivate";
     if (!window.confirm(`Are you sure you want to ${verb} ${student.username}?`)) {
@@ -182,9 +271,16 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
 
     setIsLoading(true);
     try {
-      await fetchAdmin(`/admin/students/${student.id}/${action}`, `Unable to ${verb} student`, { method: "POST" });
+      const data = await fetchAdmin(`/admin/students/${student.id}/${action}`, `Unable to ${verb} student`, { method: "POST" });
+      const notificationMessage =
+        data?.message || `${student.username} was ${action === "suspend" ? "suspended" : "reactivated"}. Email notification sent.`;
       await loadStudents();
-      showToast(`Student ${action === "suspend" ? "suspended" : "reactivated"} successfully.`);
+      await loadNotifications();
+      if (selectedStudent?.id === student.id && data?.user) {
+        setSelectedStudent(data.user);
+      }
+      setOpenStudentActionId(null);
+      showToast(`${student.username} ${action === "suspend" ? "suspended" : "reactivated"}. ${notificationMessage}`);
     } catch (error) {
       showToast(error instanceof Error ? error.message : `Unable to ${verb} student`);
     } finally {
@@ -192,23 +288,26 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
     }
   };
 
-  const removeListing = async (listing) => {
-    const reason = window.prompt(`Reason for removing "${listing.name}"`);
+  const moderateListing = async (listing, action) => {
+    const verb = action === "hide" ? "hiding" : "removing";
+    const reason = window.prompt(`Reason for ${verb} "${listing.name}"`);
     if (!reason) {
       return;
     }
 
     setIsLoading(true);
     try {
-      await fetchAdmin(`/admin/listings/${listing.id}/remove`, "Unable to remove listing", {
+      await fetchAdmin(`/admin/listings/${listing.id}/${action}`, `Unable to ${action} listing`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reason }),
       });
       await loadListings();
-      showToast("Listing removed from student view.");
+      await loadNotifications();
+      setOpenListingActionId(null);
+      showToast(action === "hide" ? "Listing hidden from the marketplace." : "Listing removed from student view.");
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "Unable to remove listing");
+      showToast(error instanceof Error ? error.message : `Unable to ${action} listing`);
     } finally {
       setIsLoading(false);
     }
@@ -223,9 +322,36 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
     try {
       await fetchAdmin(`/admin/listings/${listing.id}/restore`, "Unable to restore listing", { method: "POST" });
       await loadListings();
+      await loadNotifications();
+      setOpenListingActionId(null);
       showToast("Listing restored successfully.");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to restore listing");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const deleteStudentPermanently = async (student) => {
+    const confirmed = window.confirm(
+      `Permanently delete ${student.username}? This removes the student account and all listings created by this student.`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const data = await fetchAdmin(`/admin/students/${student.id}`, "Unable to delete student", { method: "DELETE" });
+      await loadStudents();
+      await loadNotifications();
+      if (selectedStudent?.id === student.id) {
+        setSelectedStudent(null);
+      }
+      setOpenStudentActionId(null);
+      showToast(data.message || "Student permanently deleted.");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to delete student");
     } finally {
       setIsLoading(false);
     }
@@ -363,9 +489,48 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
             <span className="section-kicker">Admin Panel</span>
             <h1>{activeTab}</h1>
           </div>
-          <button type="button" className="secondary-button" onClick={onMarketplace}>
-            USP Buy & Sell
-          </button>
+          <div className="admin-topbar-actions">
+            <div className="nav-dropdown notification-dropdown">
+              <button type="button" className="icon-nav-button notification-icon-button" aria-label="Notifications">
+                <span aria-hidden="true">&#128276;</span>
+                {unreadNotifications.length > 0 && <span className="notification-count">{unreadNotifications.length}</span>}
+              </button>
+              <div className="nav-dropdown-menu notification-menu">
+                <strong>Notifications</strong>
+                {notifications.length ? (
+                  notifications.slice(0, 8).map((notification) => (
+                    <div className={notification.is_read ? "notification-row viewed" : "notification-row unread"} key={notification.id}>
+                      <button
+                        type="button"
+                        className="notification-item"
+                        onClick={() => openNotification(notification)}
+                      >
+                        <span>{notification.title}</span>
+                        <small>{notification.is_read ? "Viewed" : "New"}</small>
+                        <p>{notification.message}</p>
+                      </button>
+                      <button
+                        type="button"
+                        className="notification-remove-button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          removeNotification(notification.id);
+                        }}
+                        aria-label="Remove notification"
+                      >
+                        x
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <p>No admin notifications yet.</p>
+                )}
+              </div>
+            </div>
+            <button type="button" className="secondary-button" onClick={onMarketplace}>
+              USP Buy & Sell
+            </button>
+          </div>
         </div>
 
         {isLoading && <p className="admin-loading">Loading admin data...</p>}
@@ -382,7 +547,7 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
             </div>
             <div className="admin-table-card">
               <h2>Recent Orders</h2>
-              <AdminOrdersTable orders={dashboard?.recent_orders ?? []} formatDate={formatDate} />
+              <AdminOrdersTable orders={dashboard?.recent_orders ?? []} formatDate={formatDate} onViewProfile={openUserProfile} />
             </div>
           </>
         )}
@@ -397,22 +562,55 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
                 <span>Email</span>
                 <span>Status</span>
                 <span>Registered</span>
-                <span>Action</span>
+                <span>Actions</span>
               </div>
               {students.map((student) => (
                 <div className="admin-table-row students-grid" key={student.id}>
                   <span>{student.id}</span>
-                  <strong>{student.username}</strong>
+                  <button type="button" className="profile-name-button" onClick={() => openUserProfile(student)}>
+                    {student.username}
+                  </button>
                   <span>{student.email}</span>
                   <span className={`status-pill ${student.status}`}>{student.status}</span>
                   <span>{formatDate(student.created_at)}</span>
-                  <button
-                    type="button"
-                    className={student.status === "suspended" ? "secondary-button" : "danger-outline-button"}
-                    onClick={() => updateStudentStatus(student, student.status === "suspended" ? "reactivate" : "suspend")}
-                  >
-                    {student.status === "suspended" ? "Reactivate" : "Suspend"}
-                  </button>
+                  <div className="admin-action-dropdown">
+                    <button
+                      type="button"
+                      className="admin-action-trigger"
+                      onClick={() =>
+                        setOpenStudentActionId((currentId) => (currentId === student.id ? null : student.id))
+                      }
+                      aria-expanded={openStudentActionId === student.id}
+                    >
+                      Actions
+                    </button>
+                    {openStudentActionId === student.id && (
+                      <div className="admin-action-menu">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedStudent(student);
+                            setOpenStudentActionId(null);
+                          }}
+                        >
+                          View
+                        </button>
+                        {student.status === "suspended" ? (
+                          <button type="button" onClick={() => updateStudentStatus(student, "reactivate")}>
+                            Reactivate
+                          </button>
+                        ) : (
+                          <button type="button" onClick={() => updateStudentStatus(student, "suspend")}>
+                            Suspend
+                          </button>
+                        )}
+                        <div className="admin-action-divider" />
+                        <button type="button" className="danger-action" onClick={() => deleteStudentPermanently(student)}>
+                          Delete Permanently
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -436,7 +634,7 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
                 <span>Stock</span>
                 <span>Status</span>
                 <span>Date</span>
-                <span>Action</span>
+                <span>Actions</span>
               </div>
               {listings.length ? (
                 listings.map((listing) => (
@@ -449,7 +647,9 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
                       </div>
                     </div>
                     <div className="admin-listing-meta">
-                      <strong>{listing.seller_username}</strong>
+                      <button type="button" className="profile-name-button" onClick={() => openUserProfile(listing.seller)}>
+                        {listing.seller_username}
+                      </button>
                       <small>{listing.contact || "No contact listed"}</small>
                     </div>
                     <span className="admin-category-pill">{listing.category}</span>
@@ -459,15 +659,46 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
                     </span>
                     <span className={`status-pill ${listing.status}`}>{listing.status}</span>
                     <time dateTime={listing.created_at}>{formatDate(listing.created_at)}</time>
-                    <div className="admin-row-actions">
-                      {listing.status === "removed" ? (
-                        <button type="button" className="secondary-button" onClick={() => restoreListing(listing)}>
-                          Restore
-                        </button>
-                      ) : (
-                        <button type="button" className="danger-outline-button" onClick={() => removeListing(listing)}>
-                          Remove
-                        </button>
+                    <div className="admin-action-dropdown">
+                      <button
+                        type="button"
+                        className="admin-action-trigger"
+                        onClick={() =>
+                          setOpenListingActionId((currentId) => (currentId === listing.id ? null : listing.id))
+                        }
+                        aria-expanded={openListingActionId === listing.id}
+                      >
+                        Actions
+                      </button>
+                      {openListingActionId === listing.id && (
+                        <div className="admin-action-menu">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedAdminListing(listing);
+                              setOpenListingActionId(null);
+                            }}
+                          >
+                            View
+                          </button>
+                          {listing.status === "hidden" || listing.status === "removed" ? (
+                            <button type="button" onClick={() => restoreListing(listing)}>
+                              Restore
+                            </button>
+                          ) : (
+                            <button type="button" onClick={() => moderateListing(listing, "hide")}>
+                              Hide
+                            </button>
+                          )}
+                          {listing.status !== "removed" && (
+                            <>
+                              <div className="admin-action-divider" />
+                              <button type="button" className="danger-action" onClick={() => moderateListing(listing, "remove")}>
+                                Remove
+                              </button>
+                            </>
+                          )}
+                        </div>
                       )}
                     </div>
                   </div>
@@ -492,7 +723,7 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
                 Search
               </button>
             </div>
-            <AdminOrdersTable orders={orders} formatDate={formatDate} />
+            <AdminOrdersTable orders={orders} formatDate={formatDate} onViewProfile={openUserProfile} />
           </div>
         )}
 
@@ -568,17 +799,17 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
               </div>
 
               <div className="report-box">
-                <h3>Listing Summary</h3>
+                <h3>Listings</h3>
                 <div className="status-row">
-                  <span>Active Listings</span>
+                  <span>Active</span>
                   <strong>{listingSummary.active}</strong>
                 </div>
                 <div className="status-row">
-                  <span>Sold Listings</span>
+                  <span>Sold</span>
                   <strong>{listingSummary.sold}</strong>
                 </div>
                 <div className="status-row">
-                  <span>Removed Listings</span>
+                  <span>Removed</span>
                   <strong>{listingSummary.removed}</strong>
                 </div>
               </div>
@@ -586,7 +817,104 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
 
             <div className="transactions admin-table-card">
               <h3>Sales & Order Report</h3>
-              <AdminReportTable orders={filteredReportOrders} />
+              <AdminReportTable orders={filteredReportOrders} onViewProfile={openUserProfile} />
+            </div>
+          </div>
+        )}
+
+        {activeTab === "Flags" && (
+          <div className="admin-table-card">
+            <div className="admin-section-toolbar">
+              <h2>Flags</h2>
+              <span className="admin-record-count">
+                {userReports.length} {userReports.length === 1 ? "report" : "reports"}
+              </span>
+            </div>
+            <div className="admin-table">
+              <div className="admin-table-head user-reports-grid">
+                <span>Reporter</span>
+                <span>Target</span>
+                <span>Seller</span>
+                <span>Reason</span>
+                <span>Status</span>
+                <span>Date</span>
+              </div>
+              {userReports.length ? (
+                userReports.map((reportRecord) => (
+                  <div className="admin-table-row user-reports-grid" key={reportRecord.id}>
+                    <button type="button" className="profile-name-button" onClick={() => openUserProfile(reportRecord.reporter)}>
+                      {reportRecord.reporter_username}
+                    </button>
+                    <div className="flag-target">
+                      <strong>{reportRecord.target_label}</strong>
+                      {reportRecord.target_item ? (
+                        <button type="button" onClick={() => setSelectedAdminListing(reportRecord.target_item)}>
+                          View item
+                        </button>
+                      ) : (
+                        <span>{reportRecord.target_type}</span>
+                      )}
+                    </div>
+                    <div className="flag-target">
+                      {reportRecord.seller ? (
+                        <button
+                          type="button"
+                          className="profile-name-button"
+                          onClick={() => openUserProfile(reportRecord.seller)}
+                        >
+                          {reportRecord.seller.username}
+                        </button>
+                      ) : (
+                        <span>Not available</span>
+                      )}
+                    </div>
+                    <span>{reportRecord.reason}</span>
+                    <span className={`status-pill ${reportRecord.status}`}>{reportRecord.status}</span>
+                    <span>{formatDate(reportRecord.created_at)}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="empty-state">No user reports submitted.</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === "Reviews" && (
+          <div className="admin-table-card">
+            <div className="admin-section-toolbar">
+              <h2>Reviews</h2>
+              <span className="admin-record-count">
+                {ratingReviews.length} {ratingReviews.length === 1 ? "review" : "reviews"}
+              </span>
+            </div>
+            <div className="admin-table">
+              <div className="admin-table-head ratings-grid">
+                <span>Reviewer</span>
+                <span>Listing</span>
+                <span>Seller</span>
+                <span>Rating</span>
+                <span>Review</span>
+                <span>Date</span>
+              </div>
+              {ratingReviews.length ? (
+                ratingReviews.map((reviewRecord) => (
+                  <div className="admin-table-row ratings-grid" key={reviewRecord.id}>
+                    <button type="button" className="profile-name-button" onClick={() => openUserProfile(reviewRecord.reviewer)}>
+                      {reviewRecord.reviewer_username}
+                    </button>
+                    <span>{reviewRecord.item_name}</span>
+                    <button type="button" className="profile-name-button" onClick={() => openUserProfile(reviewRecord.seller)}>
+                      {reviewRecord.seller_username}
+                    </button>
+                    <span className="rating-stars">{"★".repeat(reviewRecord.rating)}{"☆".repeat(5 - reviewRecord.rating)}</span>
+                    <span>{reviewRecord.review}</span>
+                    <span>{formatDate(reviewRecord.created_at)}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="empty-state">No ratings or reviews submitted.</p>
+              )}
             </div>
           </div>
         )}
@@ -608,6 +936,134 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
           </div>
         </div>
       )}
+
+      {selectedNotification && (
+        <div className="auth-modal-backdrop" onClick={() => setSelectedNotification(null)}>
+          <div className="notification-detail-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="auth-header">
+              <div>
+                <span className={`notification-view-state ${selectedNotification.is_read ? "viewed" : "unread"}`}>
+                  {selectedNotification.is_read ? "Viewed" : "New"}
+                </span>
+                <h3>{selectedNotification.title}</h3>
+              </div>
+              <button type="button" className="close-button" onClick={() => setSelectedNotification(null)} aria-label="Close">
+                x
+              </button>
+            </div>
+            <p>{selectedNotification.message}</p>
+            <div className="notification-detail-meta">
+              <span>Type: {selectedNotification.category}</span>
+              <span>
+                From:{" "}
+                {selectedNotification.actor ? (
+                  <button type="button" className="profile-name-button" onClick={() => openUserProfile(selectedNotification.actor)}>
+                    {selectedNotification.actor_username}
+                  </button>
+                ) : (
+                  selectedNotification.actor_username || "System"
+                )}
+              </span>
+              <span>{formatDate(selectedNotification.created_at)}</span>
+            </div>
+            <div className="admin-detail-actions">
+              <button type="button" className="danger-outline-button" onClick={() => removeNotification(selectedNotification.id)}>
+                Remove Notification
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedAdminListing && (
+        <div className="auth-modal-backdrop" onClick={() => setSelectedAdminListing(null)}>
+          <div className="admin-listing-detail-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="auth-header">
+              <div>
+                <span className={`status-pill ${selectedAdminListing.status}`}>{selectedAdminListing.status}</span>
+                <h3>{selectedAdminListing.name}</h3>
+              </div>
+              <button type="button" className="close-button" onClick={() => setSelectedAdminListing(null)} aria-label="Close">
+                x
+              </button>
+            </div>
+            {selectedAdminListing.photo ? (
+              <img src={selectedAdminListing.photo} alt={selectedAdminListing.name} className="admin-listing-detail-image" />
+            ) : null}
+            <div className="admin-listing-detail-grid">
+              <span>Listing ID</span>
+              <strong>#{selectedAdminListing.id}</strong>
+              <span>Seller</span>
+              {selectedAdminListing.seller ? (
+                <button type="button" className="profile-name-button" onClick={() => openUserProfile(selectedAdminListing.seller)}>
+                  {selectedAdminListing.seller_username}
+                </button>
+              ) : (
+                <strong>{selectedAdminListing.seller_username}</strong>
+              )}
+              <span>Category</span>
+              <strong>{selectedAdminListing.category}</strong>
+              <span>Price</span>
+              <strong>${Number(selectedAdminListing.price).toFixed(2)}</strong>
+              <span>Stock</span>
+              <strong>{selectedAdminListing.stock}</strong>
+              <span>Contact</span>
+              <strong>{selectedAdminListing.contact || "No contact listed"}</strong>
+              <span>Created</span>
+              <strong>{formatDate(selectedAdminListing.created_at)}</strong>
+            </div>
+            <p>{selectedAdminListing.description}</p>
+            {selectedAdminListing.removed_reason ? (
+              <div className="admin-listing-reason">
+                <strong>Moderation Reason</strong>
+                <p>{selectedAdminListing.removed_reason}</p>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      )}
+
+      {selectedStudent && (
+        <div className="auth-modal-backdrop" onClick={() => setSelectedStudent(null)}>
+          <div className="admin-student-detail-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="auth-header">
+              <div>
+                <span className={`status-pill ${selectedStudent.status}`}>{selectedStudent.status}</span>
+                <h3>{selectedStudent.username}</h3>
+              </div>
+              <button type="button" className="close-button" onClick={() => setSelectedStudent(null)} aria-label="Close">
+                x
+              </button>
+            </div>
+            <div className="admin-listing-detail-grid">
+              <span>Student ID</span>
+              <strong>{selectedStudent.student_id || selectedStudent.id}</strong>
+              <span>Email</span>
+              <strong>{selectedStudent.email}</strong>
+              <span>Role</span>
+              <strong>{selectedStudent.role}</strong>
+              <span>Status</span>
+              <strong>{selectedStudent.status}</strong>
+              <span>Registered</span>
+              <strong>{formatDate(selectedStudent.created_at)}</strong>
+            </div>
+            <div className="admin-detail-actions">
+              {selectedStudent.status === "suspended" ? (
+                <button type="button" className="secondary-button" onClick={() => updateStudentStatus(selectedStudent, "reactivate")}>
+                  Reactivate
+                </button>
+              ) : (
+                <button type="button" className="danger-outline-button" onClick={() => updateStudentStatus(selectedStudent, "suspend")}>
+                  Suspend
+                </button>
+              )}
+              <button type="button" className="danger-outline-button" onClick={() => deleteStudentPermanently(selectedStudent)}>
+                Delete Permanently
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
@@ -623,7 +1079,7 @@ function AdminSearch({ value, onChange, onSearch, placeholder }) {
   );
 }
 
-function AdminOrdersTable({ orders, formatDate }) {
+function AdminOrdersTable({ orders, formatDate, onViewProfile }) {
   if (!orders.length) {
     return <p className="empty-state">No records found.</p>;
   }
@@ -643,8 +1099,12 @@ function AdminOrdersTable({ orders, formatDate }) {
       {orders.map((order) => (
         <div className="admin-table-row orders-grid" key={order.id}>
           <strong>#{order.id}</strong>
-          <span>{order.buyer_username}</span>
-          <span>{order.seller_username}</span>
+          <button type="button" className="profile-name-button" onClick={() => onViewProfile(order.buyer)}>
+            {order.buyer_username}
+          </button>
+          <button type="button" className="profile-name-button" onClick={() => onViewProfile(order.seller)}>
+            {order.seller_username}
+          </button>
           <span>{order.item_name}</span>
           <span>{order.quantity}</span>
           <span>${Number(order.total_amount || order.price).toFixed(2)}</span>
@@ -656,7 +1116,7 @@ function AdminOrdersTable({ orders, formatDate }) {
   );
 }
 
-function AdminReportTable({ orders }) {
+function AdminReportTable({ orders, onViewProfile }) {
   if (!orders.length) {
     return <p className="empty-state">No report records found.</p>;
   }
@@ -675,8 +1135,12 @@ function AdminReportTable({ orders }) {
         <div className="admin-table-row report-orders-grid" key={order.id}>
           <strong>ORD{String(order.id).padStart(3, "0")}</strong>
           <span>{order.item_name}</span>
-          <span>{order.seller_username}</span>
-          <span>{order.buyer_username}</span>
+          <button type="button" className="profile-name-button" onClick={() => onViewProfile(order.seller)}>
+            {order.seller_username}
+          </button>
+          <button type="button" className="profile-name-button" onClick={() => onViewProfile(order.buyer)}>
+            {order.buyer_username}
+          </button>
           <span className={`status-pill ${order.status}`}>{order.status}</span>
           <span>${Number(order.total_amount || order.price).toFixed(2)}</span>
         </div>

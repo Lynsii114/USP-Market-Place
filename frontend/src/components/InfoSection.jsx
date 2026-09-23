@@ -3,19 +3,19 @@ import React from "react";
 function InfoSection() {
   return (
     <section className="info-section">
-      <h2>Why USP Buy & Sell?</h2>
+      <h2>Why USP Online Marketplace?</h2>
 
       <div className="info-container">
         <div className="info-card">
           <span>USP</span>
           <h3>USP Community</h3>
-          <p>A marketplace designed specifically for USP students.</p>
+          <p>An Online marketplace designed specifically for current USP students.</p>
         </div>
 
         <div className="info-card">
           <span>Buy</span>
           <h3>Easy Buying</h3>
-          <p>Browse products and find affordable items from other students.</p>
+          <p>Browse used products and find affordable items from other students.</p>
         </div>
 
         <div className="info-card">

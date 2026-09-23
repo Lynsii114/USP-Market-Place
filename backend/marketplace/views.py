@@ -1,3 +1,4 @@
+from django.db import DatabaseError
 from django.views.decorators.csrf import csrf_exempt
 
 from . import services
@@ -15,6 +16,8 @@ def run(action):
         return api_response(data, safe=safe)
     except ApiError as exc:
         return handle_api_error(exc)
+    except DatabaseError:
+        return api_response({"detail": "Database unavailable. Check that MySQL is running and DATABASE_URL is correct."}, status=503)
 
 
 def health(request):
@@ -120,6 +123,20 @@ def purchase_item(request, item_id):
     return run(lambda: (services.purchase_item(item_id, request.GET.get("buyer_id")), True))
 
 
+@csrf_exempt
+def report_user_activity(request):
+    if request.method != "POST":
+        return method_not_allowed()
+    return run(lambda: (services.submit_user_report(json_body(request)), True))
+
+
+@csrf_exempt
+def rating_review(request):
+    if request.method != "POST":
+        return method_not_allowed()
+    return run(lambda: (services.submit_rating_review(json_body(request)), True))
+
+
 def list_buyer_purchases(request, buyer_id):
     if request.method != "GET":
         return method_not_allowed()
@@ -130,6 +147,21 @@ def admin_dashboard(request):
     if request.method != "GET":
         return method_not_allowed()
     return run(lambda: (services.dashboard(get_admin_id(request)), True))
+
+
+def admin_notifications(request):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.list_admin_notifications(get_admin_id(request)), False))
+
+
+@csrf_exempt
+def admin_notification_detail(request, notification_id):
+    if request.method == "POST":
+        return run(lambda: (services.mark_admin_notification_viewed(get_admin_id(request), notification_id), True))
+    if request.method == "DELETE":
+        return run(lambda: (services.delete_admin_notification(get_admin_id(request), notification_id), True))
+    return method_not_allowed()
 
 
 def admin_students(request):
@@ -152,10 +184,24 @@ def admin_reactivate_student(request, student_id):
     return run(lambda: (services.set_student_status(get_admin_id(request), student_id, "active"), True))
 
 
+@csrf_exempt
+def admin_delete_student(request, student_id):
+    if request.method != "DELETE":
+        return method_not_allowed()
+    return run(lambda: (services.delete_student(get_admin_id(request), student_id), True))
+
+
 def admin_listings(request):
     if request.method != "GET":
         return method_not_allowed()
     return run(lambda: (services.list_admin_items(get_admin_id(request), request.GET.get("search", "")), False))
+
+
+@csrf_exempt
+def admin_hide_listing(request, item_id):
+    if request.method != "POST":
+        return method_not_allowed()
+    return run(lambda: (services.hide_listing(get_admin_id(request), item_id, json_body(request).get("reason", "")), True))
 
 
 @csrf_exempt
@@ -192,3 +238,15 @@ def admin_reports(request):
     if request.method != "GET":
         return method_not_allowed()
     return run(lambda: (services.report(get_admin_id(request), request.GET.get("period", "daily")), True))
+
+
+def admin_user_reports(request):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.list_user_reports(get_admin_id(request)), False))
+
+
+def admin_rating_reviews(request):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.list_rating_reviews(get_admin_id(request)), False))

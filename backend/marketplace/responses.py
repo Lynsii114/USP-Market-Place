@@ -20,8 +20,8 @@ def method_not_allowed():
     return error_response("Method not allowed", 405)
 
 
-def api_response(data, safe=True):
-    return JsonResponse(data, safe=safe)
+def api_response(data, safe=True, status=200):
+    return JsonResponse(data, safe=safe, status=status)
 
 
 def handle_api_error(exc):

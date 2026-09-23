@@ -16,7 +16,7 @@ def visible_items():
 
 
 def public_items():
-    return visible_items().exclude(status="removed")
+    return visible_items().exclude(status__in=["hidden", "removed"])
 
 
 def visible_purchases(include_test_records=False):
