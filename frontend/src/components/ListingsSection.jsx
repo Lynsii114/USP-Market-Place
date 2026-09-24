@@ -8,6 +8,8 @@ function ListingsSection({
   searchQuery,
   selectedCategory,
   sortOption,
+  title = "Recent Listings",
+  description = "",
   onClearFilters,
   onSelectCategory,
   onSelectListing,
@@ -17,8 +19,8 @@ function ListingsSection({
   return (
     <section className="listings" id="listings">
       <div className="section-heading">
-        <h2>Recent Listings</h2>
-        {selectedCategory !== "All" && <p>{`Showing products listed under ${selectedCategory}.`}</p>}
+        <h2>{title}</h2>
+        {description ? <p>{description}</p> : selectedCategory !== "All" && <p>{`Showing products listed under ${selectedCategory}.`}</p>}
       </div>
 
       <div className="listing-filters">

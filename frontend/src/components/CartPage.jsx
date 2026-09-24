@@ -3,6 +3,7 @@ import React, { useState } from "react";
 function CartPage({
   cartItems,
   cartTotal,
+  currentUser,
   receipt,
   onCheckout,
   onClearReceipt,
@@ -10,8 +11,13 @@ function CartPage({
   onRemove,
   isSubmitting,
 }) {
-  const [isConfirmingCheckout, setIsConfirmingCheckout] = useState(false);
+  const [checkoutStep, setCheckoutStep] = useState("cart");
+  const [deliveryMethod, setDeliveryMethod] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("");
+  const deliveryOptions = [
+    { value: "self_pickup", label: "Self Pickup", detail: "FREE", fee: 0 },
+    { value: "delivery", label: "Delivery", detail: "Delivery fee applies", fee: 5 },
+  ];
   const paymentOptions = [
     { value: "mycash", label: "MyCash" },
     { value: "mpaisa", label: "M-PAiSA" },
@@ -19,9 +25,26 @@ function CartPage({
     { value: "visa", label: "Visa Card" },
   ];
   const itemCount = cartItems.length;
-  const availableItems = cartItems.filter((item) => item.status !== "sold" && Number(item.stock) > 0);
+  const availableItems = cartItems.filter(
+    (item) =>
+      item.status !== "sold" &&
+      Number(item.stock) > 0 &&
+      (item.status !== "reserved" || item.reserved_buyer_id === currentUser?.id)
+  );
   const hasAvailableItems = availableItems.length > 0;
-  const confirmationTotal = availableItems.reduce((total, item) => total + Number(item.price), 0);
+  const itemsSubtotal = availableItems.reduce((total, item) => total + Number(item.price), 0);
+  const selectedDeliveryOption = deliveryOptions.find((option) => option.value === deliveryMethod);
+  const deliveryFee = selectedDeliveryOption?.fee ?? 0;
+  const includedTaxAmount = itemsSubtotal * 12 / 112;
+  const finalTotal = itemsSubtotal + deliveryFee;
+  const checkoutSummary = {
+    delivery_method: deliveryMethod,
+    delivery_fee: deliveryFee,
+    subtotal: itemsSubtotal,
+    included_tax_amount: includedTaxAmount,
+    final_total: finalTotal,
+    item_count: availableItems.length,
+  };
   return (
     <section className="cart-section cart-page" id="cart">
       <div className="cart-header">
@@ -76,7 +99,8 @@ function CartPage({
             type="button"
             className="auth-submit"
             onClick={() => {
-              setIsConfirmingCheckout(false);
+              setCheckoutStep("cart");
+              setDeliveryMethod("");
               setPaymentMethod("");
               onClearReceipt();
               onClose();
@@ -85,13 +109,56 @@ function CartPage({
             Continue Shopping
           </button>
         </div>
-      ) : isConfirmingCheckout ? (
+      ) : checkoutStep === "delivery" ? (
         <div className="checkout-confirmation">
           <div className="receipt-header">
             <div>
-              <span className="section-kicker">Confirm Order</span>
-              <h3>Review Your Order</h3>
-              <p>Please confirm these items before checkout.</p>
+              <span className="section-kicker">Delivery Method</span>
+              <h3>Choose How You Receive Your Order</h3>
+              <p>Select one option before reviewing checkout costs.</p>
+            </div>
+            <span>
+              {availableItems.length} {availableItems.length === 1 ? "item" : "items"}
+            </span>
+          </div>
+
+          <div className="payment-method-panel">
+            <span>Delivery Method</span>
+            <div className="delivery-method-options">
+              {deliveryOptions.map((option) => (
+                <label className={deliveryMethod === option.value ? "payment-option selected" : "payment-option"} key={option.value}>
+                  <input
+                    type="radio"
+                    name="delivery_method"
+                    value={option.value}
+                    checked={deliveryMethod === option.value}
+                    onChange={(event) => setDeliveryMethod(event.target.value)}
+                  />
+                  <span>
+                    <strong>{option.label}</strong>
+                    <small>{option.detail}</small>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="checkout-actions">
+            <button type="button" className="secondary-button" onClick={() => setCheckoutStep("cart")}>
+              Back to Cart
+            </button>
+            <button type="button" className="auth-submit" onClick={() => setCheckoutStep("confirm")} disabled={!deliveryMethod}>
+              Continue to Confirm Checkout
+            </button>
+          </div>
+        </div>
+      ) : checkoutStep === "confirm" ? (
+        <div className="checkout-confirmation">
+          <div className="receipt-header">
+            <div>
+              <span className="section-kicker">Confirm Checkout</span>
+              <h3>Review Costs Before Payment</h3>
+              <p>Prices include 12% tax.</p>
             </div>
             <span>
               {availableItems.length} {availableItems.length === 1 ? "item" : "items"}
@@ -106,16 +173,36 @@ function CartPage({
                   <small>Seller: {item.seller_username}</small>
                 </div>
                 <div>
+                  <span>Qty 1</span>
+                  <small>Quantity</small>
+                </div>
+                <div>
                   <span>${Number(item.price).toFixed(2)}</span>
-                  <small>{item.stock} in stock</small>
+                  <small>Item price</small>
                 </div>
               </div>
             ))}
           </div>
 
           <div className="receipt-total">
-            <span>Total</span>
-            <strong>${confirmationTotal.toFixed(2)}</strong>
+            <span>Items Subtotal</span>
+            <strong>${itemsSubtotal.toFixed(2)}</strong>
+          </div>
+          <div className="receipt-total subtle-total">
+            <span>12% Tax Included in Item Prices</span>
+            <strong>${includedTaxAmount.toFixed(2)}</strong>
+          </div>
+          <div className="receipt-total subtle-total">
+            <span>Selected Delivery Method</span>
+            <strong>{selectedDeliveryOption?.label}</strong>
+          </div>
+          <div className="receipt-total subtle-total">
+            <span>Delivery Fee</span>
+            <strong>{deliveryFee > 0 ? `$${deliveryFee.toFixed(2)}` : "FREE"}</strong>
+          </div>
+          <div className="receipt-total final-total">
+            <span>Final Total</span>
+            <strong>${finalTotal.toFixed(2)}</strong>
           </div>
 
           <div className="payment-method-panel">
@@ -137,11 +224,11 @@ function CartPage({
           </div>
 
           <div className="checkout-actions">
-            <button type="button" className="secondary-button" onClick={() => setIsConfirmingCheckout(false)}>
-              Back to Cart
+            <button type="button" className="secondary-button" onClick={() => setCheckoutStep("delivery")}>
+              Back
             </button>
-            <button type="button" className="auth-submit" onClick={() => onCheckout(paymentMethod)} disabled={isSubmitting || !paymentMethod}>
-              {isSubmitting ? "Checking Out..." : "Confirm Checkout"}
+            <button type="button" className="auth-submit" onClick={() => onCheckout(paymentMethod, checkoutSummary)} disabled={isSubmitting || !paymentMethod}>
+              {isSubmitting ? "Processing..." : "Confirm & Pay"}
             </button>
           </div>
         </div>
@@ -188,7 +275,7 @@ function CartPage({
             <button
               type="button"
               className="auth-submit"
-              onClick={() => setIsConfirmingCheckout(true)}
+              onClick={() => setCheckoutStep("delivery")}
               disabled={isSubmitting || !hasAvailableItems}
             >
               Checkout

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import "./Home.css";
 import AccountPage from "./components/AccountPage";
 import AdminDashboard from "./components/AdminDashboard";
@@ -37,6 +37,7 @@ function Home() {
   const [currentUser, setCurrentUser] = useState(null);
   const [toastMessage, setToastMessage] = useState("");
   const [toastType, setToastType] = useState("success");
+  const lastToastRef = useRef({ message: "", shownAt: 0 });
   const [formMessage, setFormMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [emailError, setEmailError] = useState("");
@@ -54,6 +55,7 @@ function Home() {
   const [selectedListing, setSelectedListing] = useState(null);
   const [selectedSeller, setSelectedSeller] = useState(null);
   const [showSellerPanel, setShowSellerPanel] = useState(false);
+  const [showShopPage, setShowShopPage] = useState(false);
   const [activeCategoryPage, setActiveCategoryPage] = useState(null);
   const [cartItems, setCartItems] = useState([]);
   const [showCartPanel, setShowCartPanel] = useState(false);
@@ -66,6 +68,10 @@ function Home() {
   const [ordersInitialTab, setOrdersInitialTab] = useState("track");
   const [activeLegalPage, setActiveLegalPage] = useState(null);
   const [activeAccountPage, setActiveAccountPage] = useState(null);
+  const [conversations, setConversations] = useState([]);
+  const [activeConversationId, setActiveConversationId] = useState(null);
+  const [messageDraft, setMessageDraft] = useState("");
+  const [unreadMessageCount, setUnreadMessageCount] = useState(0);
   const [showAdminDashboard, setShowAdminDashboard] = useState(() =>
     window.location.pathname.startsWith("/admin")
   );
@@ -87,9 +93,14 @@ function Home() {
     if (currentUser) {
       loadPurchaseHistory(currentUser.id);
       loadSellerOrders(currentUser.id);
+      loadConversations(currentUser.id);
+      loadUnreadMessageCount(currentUser.id);
     } else {
       setPurchaseHistory([]);
       setSellerOrders([]);
+      setConversations([]);
+      setActiveConversationId(null);
+      setUnreadMessageCount(0);
     }
   }, [currentUser]);
 
@@ -115,13 +126,22 @@ function Home() {
     }
 
     if (!response.ok) {
-      throw new Error(data?.detail || data?.message || fallbackMessage);
+      const detail = data?.detail || data?.message || fallbackMessage;
+      if (response.status === 503 || /database unavailable/i.test(detail)) {
+        throw new Error("Marketplace database is unavailable. Start MySQL in XAMPP, then refresh the page.");
+      }
+      throw new Error(detail);
     }
 
     return data;
   };
 
   const showToast = (message, type = "success") => {
+    const now = Date.now();
+    if (message === lastToastRef.current.message && now - lastToastRef.current.shownAt < 2500) {
+      return;
+    }
+    lastToastRef.current = { message, shownAt: now };
     setToastMessage("");
     setToastType(type);
     window.setTimeout(() => setToastMessage(message), 10);
@@ -395,6 +415,7 @@ function Home() {
   const hideActivePages = () => {
     setShowAdminDashboard(false);
     setShowSellerPanel(false);
+    setShowShopPage(false);
     setShowCartPanel(false);
     setShowPurchasesPage(false);
     setActiveCategoryPage(null);
@@ -561,6 +582,29 @@ function Home() {
     setSelectedListing(listing);
   };
 
+  const loadConversations = async (userId, activeId = activeConversationId) => {
+    try {
+      const response = await fetch(`${API_URL}/users/${userId}/conversations`);
+      const data = await parseResponse(response, "Unable to load messages");
+      setConversations(data);
+      if (!activeId && data.length) {
+        setActiveConversationId(data[0].id);
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to load messages", "error");
+    }
+  };
+
+  const loadUnreadMessageCount = async (userId) => {
+    try {
+      const response = await fetch(`${API_URL}/users/${userId}/messages/unread`);
+      const data = await parseResponse(response, "Unable to load unread messages");
+      setUnreadMessageCount(data.unread_count || 0);
+    } catch {
+      setUnreadMessageCount(0);
+    }
+  };
+
   const loadSellerOrders = async (sellerId) => {
     try {
       const response = await fetch(`${API_URL}/users/${sellerId}/sales`);
@@ -667,6 +711,7 @@ function Home() {
   const chooseCategory = (categoryName) => {
     setShowAdminDashboard(false);
     setShowSellerPanel(false);
+    setShowShopPage(false);
     setShowCartPanel(false);
     setShowPurchasesPage(false);
     setActiveAccountPage(null);
@@ -686,9 +731,9 @@ function Home() {
     hideActivePages();
     setSearchQuery("");
     setSelectedCategory("All");
-    window.setTimeout(() => {
-      document.getElementById("listings")?.scrollIntoView({ behavior: "smooth" });
-    }, 0);
+    setSortOption("newest");
+    setShowShopPage(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const openSellerTab = (tabName) => {
@@ -703,6 +748,7 @@ function Home() {
 
     setShowSellerPanel(true);
     setShowAdminDashboard(false);
+    setShowShopPage(false);
     setShowCartPanel(false);
     setShowPurchasesPage(false);
     setActiveCategoryPage(null);
@@ -717,6 +763,7 @@ function Home() {
   const openCart = () => {
     setShowAdminDashboard(false);
     setShowSellerPanel(false);
+    setShowShopPage(false);
     setShowPurchasesPage(false);
     setActiveCategoryPage(null);
     setActiveLegalPage(null);
@@ -730,6 +777,7 @@ function Home() {
   const openPurchasesPage = (tabName = "track") => {
     setShowAdminDashboard(false);
     setShowSellerPanel(false);
+    setShowShopPage(false);
     setShowCartPanel(false);
     setActiveCategoryPage(null);
     setActiveLegalPage(null);
@@ -764,6 +812,12 @@ function Home() {
       return;
     }
 
+    if (listing.status === "reserved" && listing.reserved_buyer_id !== currentUser.id) {
+      setSelectedListing(null);
+      showToast("This item is reserved for another buyer.", "error");
+      return;
+    }
+
     const alreadyInCart = cartItems.some((item) => item.id === listing.id);
 
     if (alreadyInCart) {
@@ -785,7 +839,12 @@ function Home() {
     visa: "Visa Card",
   };
 
-  const checkoutCart = async (paymentMethod) => {
+  const deliveryMethodLabels = {
+    self_pickup: "Self Pickup",
+    delivery: "Delivery",
+  };
+
+  const checkoutCart = async (paymentMethod, checkoutSummary = {}) => {
     if (!currentUser) {
       showToast("Please login to purchase items.", "error");
       openAuth("login");
@@ -797,7 +856,18 @@ function Home() {
       return;
     }
 
-    const availableItems = cartItems.filter((item) => item.status !== "sold" && Number(item.stock) > 0);
+    const deliveryMethod = checkoutSummary.delivery_method || "self_pickup";
+    if (!deliveryMethodLabels[deliveryMethod]) {
+      showToast("Please select a delivery method.", "error");
+      return;
+    }
+
+    const availableItems = cartItems.filter(
+      (item) =>
+        item.status !== "sold" &&
+        Number(item.stock) > 0 &&
+        (item.status !== "reserved" || item.reserved_buyer_id === currentUser.id)
+    );
     if (!availableItems.length) {
       showToast("No available items to checkout.", "error");
       return;
@@ -807,12 +877,27 @@ function Home() {
 
     try {
       const purchasedItems = [];
+      const deliveryFee = Number(checkoutSummary.delivery_fee || 0);
+      const deliveryFeeInCents = Math.round(deliveryFee * 100);
+      const baseFeeShareInCents = Math.floor(deliveryFeeInCents / availableItems.length);
+      const feeRemainderInCents = deliveryFeeInCents - baseFeeShareInCents * availableItems.length;
 
-      for (const item of availableItems) {
+      for (const [index, item] of availableItems.entries()) {
+        const itemSubtotal = Number(item.price);
+        const itemDeliveryFee = (baseFeeShareInCents + (index < feeRemainderInCents ? 1 : 0)) / 100;
+        const itemIncludedTaxAmount = itemSubtotal * 12 / 112;
+        const itemFinalTotal = itemSubtotal + itemDeliveryFee;
         const response = await fetch(`${API_URL}/items/${item.id}/purchase?buyer_id=${currentUser.id}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ payment_method: paymentMethod }),
+          body: JSON.stringify({
+            payment_method: paymentMethod,
+            delivery_method: deliveryMethod,
+            delivery_fee: itemDeliveryFee,
+            subtotal: itemSubtotal,
+            included_tax_amount: itemIncludedTaxAmount,
+            final_total: itemFinalTotal,
+          }),
         });
         const purchasedItem = await parseResponse(response, `Unable to purchase ${item.name}`);
         purchasedItems.push(purchasedItem);
@@ -824,15 +909,21 @@ function Home() {
         currentListings.map((listing) => purchasedItems.find((item) => item.id === listing.id) || listing)
       );
       await loadPurchaseHistory(currentUser.id);
-      setReceipt({
-        id: `USP-${Date.now()}`,
-        purchasedAt: new Date().toLocaleString(),
-        items: purchasedItems,
-        total: availableItems.reduce((total, item) => total + Number(item.price), 0),
-        paymentMethod: paymentMethodLabels[paymentMethod],
-      });
+      setReceipt(null);
+      setShowAdminDashboard(false);
+      setShowSellerPanel(false);
+      setShowShopPage(false);
+      setShowCartPanel(false);
+      setActiveCategoryPage(null);
+      setActiveLegalPage(null);
+      setActiveAccountPage(null);
+      setOrdersInitialTab("track");
+      setShowPurchasesPage(true);
       await loadSellerOrders(currentUser.id);
       showToast("Checkout successful.");
+      window.setTimeout(() => {
+        document.getElementById("past-purchases")?.scrollIntoView({ behavior: "smooth" });
+      }, 0);
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to checkout", "error");
       await loadListings();
@@ -950,6 +1041,163 @@ function Home() {
     }
   };
 
+  const openProductConversation = async (listing) => {
+    if (!currentUser) {
+      setSelectedListing(null);
+      showToast("Please login to message the seller.", "error");
+      openAuth("login");
+      return;
+    }
+
+    if (listing.seller_id === currentUser.id) {
+      showToast("You cannot message yourself about your own listing.", "error");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`${API_URL}/items/${listing.id}/conversation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ buyer_id: currentUser.id }),
+      });
+      const conversation = await parseResponse(response, "Unable to open conversation");
+      setSelectedListing(null);
+      setConversations((currentConversations) => {
+        const remaining = currentConversations.filter((item) => item.id !== conversation.id);
+        return [conversation, ...remaining];
+      });
+      setActiveConversationId(conversation.id);
+      await loadUnreadMessageCount(currentUser.id);
+      openAccountPage("messages");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to open conversation", "error");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const openConversation = async (conversationId) => {
+    if (!currentUser) {
+      openAuth("login");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/conversations/${conversationId}?user_id=${currentUser.id}`);
+      const conversation = await parseResponse(response, "Unable to open conversation");
+      setConversations((currentConversations) =>
+        currentConversations.map((item) => (item.id === conversation.id ? conversation : item))
+      );
+      setActiveConversationId(conversation.id);
+      await loadUnreadMessageCount(currentUser.id);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to open conversation", "error");
+    }
+  };
+
+  const sendConversationMessage = async () => {
+    if (!currentUser || !activeConversationId || !messageDraft.trim()) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`${API_URL}/conversations/${activeConversationId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sender_id: currentUser.id, body: messageDraft }),
+      });
+      const conversation = await parseResponse(response, "Unable to send message");
+      setConversations((currentConversations) =>
+        currentConversations.map((item) => (item.id === conversation.id ? conversation : item))
+      );
+      setActiveConversationId(conversation.id);
+      setMessageDraft("");
+      await loadUnreadMessageCount(currentUser.id);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to send message", "error");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const loadReservationBuyers = async (listing) => {
+    if (!currentUser) {
+      openAuth("login");
+      return [];
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/items/${listing.id}/message-buyers?seller_id=${currentUser.id}`);
+      return await parseResponse(response, "Unable to load interested buyers");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to load interested buyers", "error");
+      return [];
+    }
+  };
+
+  const reserveListingForBuyer = async (listing, buyerId) => {
+    if (!currentUser) {
+      openAuth("login");
+      return false;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`${API_URL}/items/${listing.id}/reserve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ seller_id: currentUser.id, buyer_id: buyerId }),
+      });
+      const data = await parseResponse(response, "Unable to reserve listing");
+      await loadListings();
+      await loadConversations(currentUser.id);
+      await loadUnreadMessageCount(currentUser.id);
+      setOpenListingMenuId(null);
+      showToast(data.message || "Listing reserved.");
+      return true;
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to reserve listing", "error");
+      return false;
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const updateListingSellerStatus = async (listing, status) => {
+    if (!currentUser) {
+      openAuth("login");
+      return;
+    }
+
+    const labels = {
+      available: "mark this listing available again",
+      sold: "mark this listing sold",
+      hidden: "deactivate this listing",
+    };
+    if (!window.confirm(`Are you sure you want to ${labels[status] || "update this listing"}?`)) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`${API_URL}/items/${listing.id}/seller-status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ seller_id: currentUser.id, status }),
+      });
+      const data = await parseResponse(response, "Unable to update listing status");
+      await loadListings();
+      setOpenListingMenuId(null);
+      showToast(data.message || "Listing updated.");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to update listing status", "error");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const submitCheckoutReview = async () => {
     const currentItem = pendingReviewItems[0];
     if (!currentItem) {
@@ -990,6 +1238,7 @@ function Home() {
   const openLegalPage = (page) => {
     setShowAdminDashboard(false);
     setShowSellerPanel(false);
+    setShowShopPage(false);
     setShowCartPanel(false);
     setShowPurchasesPage(false);
     setActiveCategoryPage(null);
@@ -1006,6 +1255,7 @@ function Home() {
 
     setShowAdminDashboard(false);
     setShowSellerPanel(false);
+    setShowShopPage(false);
     setShowCartPanel(false);
     setShowPurchasesPage(false);
     setActiveCategoryPage(null);
@@ -1026,7 +1276,9 @@ function Home() {
             ? "account"
             : activeCategoryPage
               ? "shop"
-              : "home";
+              : showShopPage
+                ? "shop"
+                : "home";
 
   return (
     <div className="home-page">
@@ -1062,6 +1314,7 @@ function Home() {
         logo={logo}
         currentUser={currentUser}
         cartCount={cartItems.length}
+        unreadMessageCount={unreadMessageCount}
         activePage={activeNavPage}
         onHome={hideActivePages}
         onBrowse={handleBrowse}
@@ -1101,6 +1354,7 @@ function Home() {
         <CartPage
           cartItems={cartItems}
           cartTotal={cartTotal}
+          currentUser={currentUser}
           receipt={receipt}
           onClose={() => setShowCartPanel(false)}
           onCheckout={checkoutCart}
@@ -1128,12 +1382,37 @@ function Home() {
         currentUser={currentUser}
         myListings={myListings}
         purchaseHistory={purchaseHistory}
+        conversations={conversations}
+        activeConversationId={activeConversationId}
+        messageDraft={messageDraft}
+        onConversationSelect={openConversation}
+        onViewConversationListing={(listing) => listing && setSelectedListing(listing)}
+        onMessageDraftChange={setMessageDraft}
+        onSendMessage={sendConversationMessage}
         onBack={hideActivePages}
       />
 
       <LegalPage page={activeLegalPage} onBack={hideActivePages} />
 
-      {!activeCategoryPage && !showCartPanel && !showPurchasesPage && !activeLegalPage && !activeAccountPage && (
+      {showShopPage && !activeCategoryPage && !showCartPanel && !showPurchasesPage && !activeLegalPage && !activeAccountPage && (
+        <ListingsSection
+          categories={categories}
+          filteredListings={filteredListings}
+          isLoadingListings={isLoadingListings}
+          searchQuery={searchQuery}
+          selectedCategory={selectedCategory}
+          sortOption={sortOption}
+          title="All Products"
+          description="Browse every available listing in the marketplace."
+          onClearFilters={clearFilters}
+          onSelectCategory={setSelectedCategory}
+          onSelectListing={setSelectedListing}
+          onViewSeller={handleViewSellerListings}
+          onSortChange={setSortOption}
+        />
+      )}
+
+      {!showShopPage && !activeCategoryPage && !showCartPanel && !showPurchasesPage && !activeLegalPage && !activeAccountPage && (
         <>
           <HeroSection
             searchQuery={searchQuery}
@@ -1161,6 +1440,9 @@ function Home() {
               openListingMenuId={openListingMenuId}
               pendingPhoto={pendingPhoto}
               sellerOrders={sellerOrders}
+              onLoadReservationBuyers={loadReservationBuyers}
+              onReserveListing={reserveListingForBuyer}
+              onUpdateListingStatus={updateListingSellerStatus}
               onClose={hideActivePages}
               onDeleteListing={handleDeleteListing}
               onEditListing={handleEditListing}
@@ -1202,6 +1484,7 @@ function Home() {
         currentUser={currentUser}
         onClose={() => setSelectedListing(null)}
         onAddToCart={addToCart}
+        onMessageSeller={openProductConversation}
         onReportListing={submitListingReport}
         onViewSeller={handleViewSellerListings}
       />

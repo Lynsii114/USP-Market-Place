@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 function Navbar({
   logo,
   currentUser,
   cartCount,
+  unreadMessageCount = 0,
   notifications = [],
   activePage,
   onHome,
@@ -16,14 +17,47 @@ function Navbar({
   onLogout,
 }) {
   const [dismissedNotifications, setDismissedNotifications] = useState([]);
+  const [isNavHidden, setIsNavHidden] = useState(false);
+  const lastScrollY = useRef(0);
+  const ticking = useRef(false);
   const visibleNotifications = useMemo(
     () => notifications.filter((notification) => !dismissedNotifications.includes(notification.id)),
     [dismissedNotifications, notifications]
   );
   const navClass = (page) => (activePage === page ? "nav-item active" : "nav-item");
 
+  useEffect(() => {
+    lastScrollY.current = window.scrollY;
+
+    const updateNavbar = () => {
+      const currentScrollY = Math.max(window.scrollY, 0);
+      const scrollDifference = currentScrollY - lastScrollY.current;
+
+      if (currentScrollY <= 8) {
+        setIsNavHidden(false);
+      } else if (scrollDifference > 6 && currentScrollY > 96) {
+        setIsNavHidden(true);
+      } else if (scrollDifference < -6) {
+        setIsNavHidden(false);
+      }
+
+      lastScrollY.current = currentScrollY;
+      ticking.current = false;
+    };
+
+    const handleScroll = () => {
+      if (!ticking.current) {
+        window.requestAnimationFrame(updateNavbar);
+        ticking.current = true;
+      }
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
   return (
-    <header className="navbar">
+    <header className={isNavHidden ? "navbar navbar-hidden" : "navbar"}>
       <div className="brand">
         <img src={logo} alt="USP logo" className="usp-logo" />
         <span>USP Online Marketplace</span>
@@ -81,8 +115,9 @@ function Navbar({
             </div>
           </div>
         ) : null}
-        <button type="button" className={`${navClass("messages")} nav-symbol-button`} onClick={() => onOpenAccountPage("messages")} aria-label="Messages" title="Messages">
+        <button type="button" className={`${navClass("messages")} nav-symbol-button nav-badge-button`} onClick={() => onOpenAccountPage("messages")} aria-label="Messages" title="Messages">
           <span aria-hidden="true">✉</span>
+          {unreadMessageCount > 0 && <span className="notification-count">{unreadMessageCount}</span>}
         </button>
         <div className="nav-actions">
           <div className="nav-dropdown notification-dropdown">
@@ -158,3 +193,5 @@ function Navbar({
 }
 
 export default Navbar;
+
+

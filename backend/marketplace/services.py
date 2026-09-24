@@ -23,9 +23,9 @@ from django.utils.dateparse import parse_date
 
 from .constants import ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_USERNAME, HIDDEN_ITEM_NAMES
 from .exceptions import ApiError
-from .models import AdminNotification, EmailVerification, Item, PasswordReset, PendingRegistration, Purchase, RatingReview, User, UserReport
+from .models import AdminNotification, Conversation, EmailVerification, Item, Message, PasswordReset, PendingRegistration, Purchase, RatingReview, User, UserReport
 from .queries import find_student, find_user_by_login, item_status, public_items, visible_items, visible_purchases
-from .serializers import serialize_item, serialize_notification, serialize_purchase, serialize_rating_review, serialize_user, serialize_user_report
+from .serializers import serialize_conversation, serialize_item, serialize_message, serialize_notification, serialize_purchase, serialize_rating_review, serialize_user, serialize_user_report
 from .validators import validate_item_payload, validate_signup
 
 
@@ -508,7 +508,8 @@ def update_item(item_id, seller_id, data):
     if "stock" in data:
         item.stock = int(data["stock"])
 
-    item.status = item_status(item.stock)
+    if item.status != "reserved":
+        item.status = item_status(item.stock)
     item.save()
     return serialize_item(item)
 
@@ -523,11 +524,165 @@ def delete_item(item_id, seller_id):
     return {"message": "Listing removed successfully."}
 
 
+def _conversation_payload(conversation, current_user_id=None, mark_read=False):
+    item = Item.objects.filter(id=conversation.item_id).first()
+    buyer = User.objects.filter(id=conversation.buyer_id).first()
+    seller = User.objects.filter(id=conversation.seller_id).first()
+    if mark_read and current_user_id:
+        Message.objects.filter(conversation_id=conversation.id, receiver_id=current_user_id, is_read=False).update(is_read=True)
+    messages = list(Message.objects.filter(conversation_id=conversation.id).order_by("created_at", "id"))
+    return serialize_conversation(conversation, item, buyer, seller, messages, current_user_id)
+
+
+def list_conversations(user_id):
+    user = require_active_user(user_id)
+    conversations = Conversation.objects.filter(Q(buyer_id=user.id) | Q(seller_id=user.id)).order_by("-updated_at", "-id")
+    return [_conversation_payload(conversation, user.id) for conversation in conversations]
+
+
+def get_unread_message_count(user_id):
+    user = require_active_user(user_id)
+    return {"unread_count": Message.objects.filter(receiver_id=user.id, is_read=False).count()}
+
+
+def open_item_conversation(item_id, buyer_id):
+    buyer = require_active_user(buyer_id)
+    item = Item.objects.filter(id=item_id).first()
+    if not item or item.status in {"hidden", "removed"}:
+        raise ApiError("Item not found", 404)
+    if item.seller_id == buyer.id:
+        raise ApiError("You cannot message yourself about your own listing", 400)
+    seller = require_active_user(item.seller_id)
+    conversation, _ = Conversation.objects.get_or_create(
+        item_id=item.id,
+        buyer_id=buyer.id,
+        seller_id=seller.id,
+    )
+    conversation.save(update_fields=["updated_at"])
+    return _conversation_payload(conversation, buyer.id, mark_read=True)
+
+
+def send_conversation_message(conversation_id, sender_id, body):
+    sender = require_active_user(sender_id)
+    message_body = str(body or "").strip()
+    if len(message_body) < 1:
+        raise ApiError("Message cannot be empty", 422)
+    if len(message_body) > 1000:
+        raise ApiError("Message is too long", 422)
+    conversation = Conversation.objects.filter(id=conversation_id).first()
+    if not conversation:
+        raise ApiError("Conversation not found", 404)
+    if sender.id not in {conversation.buyer_id, conversation.seller_id}:
+        raise ApiError("You are not part of this conversation", 403)
+    receiver_id = conversation.seller_id if sender.id == conversation.buyer_id else conversation.buyer_id
+    Message.objects.create(
+        conversation_id=conversation.id,
+        sender_id=sender.id,
+        receiver_id=receiver_id,
+        body=message_body,
+        is_read=False,
+    )
+    conversation.save(update_fields=["updated_at"])
+    return _conversation_payload(conversation, sender.id)
+
+
+def get_conversation(conversation_id, user_id):
+    user = require_active_user(user_id)
+    conversation = Conversation.objects.filter(id=conversation_id).first()
+    if not conversation:
+        raise ApiError("Conversation not found", 404)
+    if user.id not in {conversation.buyer_id, conversation.seller_id}:
+        raise ApiError("You are not part of this conversation", 403)
+    return _conversation_payload(conversation, user.id, mark_read=True)
+
+
+def list_item_message_buyers(item_id, seller_id):
+    seller = require_active_user(seller_id)
+    item = Item.objects.filter(id=item_id).first()
+    if not item:
+        raise ApiError("Item not found", 404)
+    if item.seller_id != seller.id:
+        raise ApiError("You can only reserve your own listings", 403)
+    buyer_ids = Conversation.objects.filter(item_id=item.id, seller_id=seller.id).values_list("buyer_id", flat=True).distinct()
+    return [serialize_user(user) for user in User.objects.filter(id__in=list(buyer_ids)).order_by("username")]
+
+
+def reserve_item(item_id, seller_id, buyer_id):
+    seller = require_active_user(seller_id)
+    buyer = require_active_user(buyer_id)
+    item = Item.objects.filter(id=item_id).first()
+    if not item:
+        raise ApiError("Item not found", 404)
+    if item.seller_id != seller.id:
+        raise ApiError("You can only reserve your own listings", 403)
+    if item.status == "sold" or item.stock <= 0:
+        raise ApiError("Sold items cannot be reserved", 400)
+    if not Conversation.objects.filter(item_id=item.id, seller_id=seller.id, buyer_id=buyer.id).exists():
+        raise ApiError("Select a buyer who has messaged about this item", 422)
+    item.status = "reserved"
+    item.reserved_buyer_id = buyer.id
+    item.reserved_buyer_username = buyer.username
+    item.save(update_fields=["status", "reserved_buyer_id", "reserved_buyer_username"])
+    conversation = Conversation.objects.filter(item_id=item.id, seller_id=seller.id, buyer_id=buyer.id).first()
+    if conversation:
+        Message.objects.create(
+            conversation_id=conversation.id,
+            sender_id=seller.id,
+            receiver_id=buyer.id,
+            body=f"{seller.username} reserved {item.name} for you. You can now proceed with checkout.",
+            is_read=False,
+        )
+        conversation.save(update_fields=["updated_at"])
+    AdminNotification.objects.create(
+        title="Item reserved",
+        message=f"{seller.username} reserved {item.name} for {buyer.username}.",
+        category="reservation",
+        actor_id=seller.id,
+        actor_username=seller.username,
+    )
+    return {"item": serialize_item(item), "message": f"{item.name} reserved for {buyer.username}."}
+
+
+def update_item_seller_status(item_id, seller_id, status):
+    seller = require_active_user(seller_id)
+    item = Item.objects.filter(id=item_id).first()
+    if not item:
+        raise ApiError("Item not found", 404)
+    if item.seller_id != seller.id:
+        raise ApiError("You can only update your own listings", 403)
+
+    if status == "available":
+        if item.stock <= 0:
+            raise ApiError("Add stock before marking this item available", 400)
+        item.status = "available"
+        item.reserved_buyer_id = None
+        item.reserved_buyer_username = None
+    elif status == "sold":
+        item.status = "sold"
+        item.stock = 0
+        item.reserved_buyer_id = None
+        item.reserved_buyer_username = None
+    elif status == "hidden":
+        item.status = "hidden"
+        item.reserved_buyer_id = None
+        item.reserved_buyer_username = None
+    else:
+        raise ApiError("Unsupported listing status", 422)
+
+    item.save()
+    return {"item": serialize_item(item), "message": "Listing status updated."}
+
+
 PAYMENT_METHODS = {
     "mycash": "MyCash",
     "mpaisa": "M-PAiSA",
     "cash": "Cash",
     "visa": "Visa Card",
+}
+
+DELIVERY_METHODS = {
+    "self_pickup": "Self Pickup",
+    "delivery": "Delivery",
 }
 
 ORDER_STAGES = [
@@ -542,7 +697,16 @@ ORDER_STAGES = [
 SELLER_ORDER_STAGES = {"preparing_item", "ready_for_collection"}
 
 
-def purchase_item(item_id, buyer_id, payment_method="cash"):
+def purchase_item(
+    item_id,
+    buyer_id,
+    payment_method="cash",
+    delivery_method="self_pickup",
+    delivery_fee=0,
+    subtotal=None,
+    included_tax_amount=None,
+    final_total=None,
+):
     if not buyer_id:
         raise ApiError("User not found", 404)
 
@@ -550,21 +714,35 @@ def purchase_item(item_id, buyer_id, payment_method="cash"):
     if payment_method_key not in PAYMENT_METHODS:
         raise ApiError("Select a valid payment method", 422)
 
+    delivery_method_key = str(delivery_method or "").strip().lower()
+    if delivery_method_key not in DELIVERY_METHODS:
+        raise ApiError("Select a valid delivery method", 422)
+
     buyer = require_active_user(buyer_id)
     item = Item.objects.filter(id=item_id).first()
     if not item or item.status == "removed":
         raise ApiError("Item not found", 404)
     if item.seller_id == buyer.id:
         raise ApiError("You cannot purchase your own listing", 400)
+    if item.status == "reserved" and item.reserved_buyer_id != buyer.id:
+        raise ApiError("This item is reserved for another buyer", 403)
     if item.stock <= 0 or item.status == "sold":
         item.stock = 0
         item.status = "sold"
         item.save()
         raise ApiError("Item is sold out", 400)
 
+    was_reserved = item.status == "reserved"
     item.stock -= 1
-    item.status = item_status(item.stock)
+    item.status = "sold" if was_reserved or item.stock <= 0 else item_status(item.stock)
+    if item.status == "sold":
+        item.reserved_buyer_id = None
+        item.reserved_buyer_username = None
     item.save()
+    item_subtotal = float(subtotal if subtotal is not None else item.price)
+    item_delivery_fee = float(delivery_fee or 0)
+    item_tax_amount = float(included_tax_amount if included_tax_amount is not None else item_subtotal * 12 / 112)
+    item_final_total = float(final_total if final_total is not None else item_subtotal + item_delivery_fee)
     Purchase.objects.create(
         buyer_id=buyer.id,
         buyer_username=buyer.username,
@@ -576,14 +754,19 @@ def purchase_item(item_id, buyer_id, payment_method="cash"):
         seller_username=item.seller_username,
         seller_contact=item.contact,
         quantity=1,
-        total_amount=item.price,
+        total_amount=item_final_total,
         payment_method=payment_method_key,
+        delivery_method=delivery_method_key,
+        delivery_fee=item_delivery_fee,
+        subtotal=item_subtotal,
+        included_tax_amount=item_tax_amount,
+        final_total=item_final_total,
         status="in_progress",
         order_stage="payment_confirmed",
     )
     notify_admin(
         "Checkout payment completed",
-        f"{buyer.username} purchased {item.name} from {item.seller_username} for ${item.price:.2f} using {PAYMENT_METHODS[payment_method_key]}.",
+        f"{buyer.username} purchased {item.name} from {item.seller_username} for ${item_final_total:.2f} using {PAYMENT_METHODS[payment_method_key]} with {DELIVERY_METHODS[delivery_method_key]}.",
         "checkout",
         buyer,
     )

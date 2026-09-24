@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 
-function ProductModal({ listing, currentUser, onClose, onAddToCart, onReportListing, onViewSeller }) {
+function ProductModal({ listing, currentUser, onClose, onAddToCart, onMessageSeller, onReportListing, onViewSeller }) {
   const [reportReason, setReportReason] = useState("");
   const [reportTarget, setReportTarget] = useState("listing");
   const [reportMode, setReportMode] = useState(null);
@@ -10,6 +10,8 @@ function ProductModal({ listing, currentUser, onClose, onAddToCart, onReportList
   }
 
   const isSold = listing.status === "sold" || Number(listing.stock) <= 0;
+  const isReserved = listing.status === "reserved";
+  const isReservedForCurrentUser = isReserved && listing.reserved_buyer_id === currentUser?.id;
   const isOwnListing = currentUser?.id === listing.seller_id;
 
   return (
@@ -47,13 +49,14 @@ function ProductModal({ listing, currentUser, onClose, onAddToCart, onReportList
         <div className="product-modal-image">
           {listing.photo ? <img src={listing.photo} alt={listing.name} /> : <span>{listing.category}</span>}
           {isSold && <span className="sold-badge">Sold</span>}
+          {!isSold && isReserved && <span className="sold-badge reserved">Reserved</span>}
         </div>
 
         <div className="product-modal-details">
           <p className="product-price">${Number(listing.price).toFixed(2)}</p>
           <p className="product-meta">{listing.category}</p>
-          <p className={isSold ? "stock-badge sold" : "stock-badge"}>
-            {isSold ? "Sold" : `${listing.stock} in stock`}
+          <p className={isSold ? "stock-badge sold" : isReserved ? "stock-badge reserved" : "stock-badge"}>
+            {isSold ? "Sold" : isReserved ? "Reserved" : `${listing.stock} in stock`}
           </p>
           <p>{listing.description}</p>
           <div className="seller-details">
@@ -70,8 +73,24 @@ function ProductModal({ listing, currentUser, onClose, onAddToCart, onReportList
             <strong>Contact</strong>
             <span>{listing.contact}</span>
           </div>
-          <button type="button" className="auth-submit" onClick={() => onAddToCart(listing)} disabled={isSold || isOwnListing}>
-            {isSold ? "Sold Out" : isOwnListing ? "Your Listing" : "Add to Cart"}
+          {currentUser && !isOwnListing && (
+            <button type="button" className="secondary-button" onClick={() => onMessageSeller(listing)} disabled={isSold}>
+              Message Seller
+            </button>
+          )}
+          <button
+            type="button"
+            className="auth-submit"
+            onClick={() => onAddToCart(listing)}
+            disabled={isSold || isOwnListing || (isReserved && !isReservedForCurrentUser)}
+          >
+            {isSold
+              ? "Sold Out"
+              : isOwnListing
+                ? "Your Listing"
+                : isReserved && !isReservedForCurrentUser
+                  ? "Reserved"
+                  : "Add to Cart"}
           </button>
         </div>
       </div>
