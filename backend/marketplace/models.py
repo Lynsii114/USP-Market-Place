@@ -69,6 +69,8 @@ class Item(models.Model):
     status = models.CharField(max_length=32, default="available")
     seller_id = models.IntegerField(db_index=True)
     seller_username = models.CharField(max_length=64)
+    reserved_buyer_id = models.IntegerField(null=True, blank=True, db_index=True)
+    reserved_buyer_username = models.CharField(max_length=64, null=True, blank=True)
     removed_reason = models.CharField(max_length=255, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -89,6 +91,11 @@ class Purchase(models.Model):
     quantity = models.IntegerField(default=1)
     total_amount = models.FloatField(default=0)
     payment_method = models.CharField(max_length=32, default="cash")
+    delivery_method = models.CharField(max_length=32, default="self_pickup")
+    delivery_fee = models.FloatField(default=0)
+    subtotal = models.FloatField(default=0)
+    included_tax_amount = models.FloatField(default=0)
+    final_total = models.FloatField(default=0)
     status = models.CharField(max_length=32, default="completed")
     order_stage = models.CharField(max_length=32, default="payment_confirmed")
     purchased_at = models.DateTimeField(auto_now_add=True)
@@ -109,6 +116,30 @@ class AdminNotification(models.Model):
 
     class Meta:
         db_table = "admin_notifications"
+
+
+class Conversation(models.Model):
+    item_id = models.IntegerField(db_index=True)
+    buyer_id = models.IntegerField(db_index=True)
+    seller_id = models.IntegerField(db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "conversations"
+        unique_together = ("item_id", "buyer_id", "seller_id")
+
+
+class Message(models.Model):
+    conversation_id = models.IntegerField(db_index=True)
+    sender_id = models.IntegerField(db_index=True)
+    receiver_id = models.IntegerField(db_index=True)
+    body = models.CharField(max_length=1000)
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "messages"
 
 
 class UserReport(models.Model):

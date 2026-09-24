@@ -4,7 +4,7 @@ export const orderSteps = [
   { key: "order_placed", label: "Order Placed" },
   { key: "payment_confirmed", label: "Payment Confirmed" },
   { key: "preparing_item", label: "Preparing Item" },
-  { key: "ready_for_collection", label: "Ready for Collection" },
+  { key: "ready_for_collection", label: "On the Way" },
   { key: "item_received", label: "Item Received" },
   { key: "completed", label: "Completed" },
 ];

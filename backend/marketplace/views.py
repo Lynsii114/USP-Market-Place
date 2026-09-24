@@ -17,7 +17,10 @@ def run(action):
     except ApiError as exc:
         return handle_api_error(exc)
     except DatabaseError:
-        return api_response({"detail": "Database unavailable. Check that MySQL is running and DATABASE_URL is correct."}, status=503)
+        return api_response(
+            {"detail": "Marketplace database is temporarily unavailable. Start MySQL in XAMPP, then refresh the page."},
+            status=503,
+        )
 
 
 def health(request):
@@ -113,7 +116,16 @@ def purchase_item(request, item_id):
     if request.method != "POST":
         return method_not_allowed()
     data = json_body(request)
-    return run(lambda: (services.purchase_item(item_id, request.GET.get("buyer_id"), data.get("payment_method", "cash")), True))
+    return run(lambda: (services.purchase_item(
+        item_id,
+        request.GET.get("buyer_id"),
+        data.get("payment_method", "cash"),
+        data.get("delivery_method", "self_pickup"),
+        data.get("delivery_fee", 0),
+        data.get("subtotal"),
+        data.get("included_tax_amount"),
+        data.get("final_total"),
+    ), True))
 
 
 @csrf_exempt
@@ -140,6 +152,58 @@ def list_seller_orders(request, seller_id):
     if request.method != "GET":
         return method_not_allowed()
     return run(lambda: (services.list_seller_orders(seller_id), False))
+
+
+@csrf_exempt
+def item_conversation(request, item_id):
+    if request.method != "POST":
+        return method_not_allowed()
+    data = json_body(request)
+    return run(lambda: (services.open_item_conversation(item_id, data.get("buyer_id")), True))
+
+
+def user_conversations(request, user_id):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.list_conversations(user_id), False))
+
+
+def user_unread_messages(request, user_id):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.get_unread_message_count(user_id), True))
+
+
+@csrf_exempt
+def conversation_detail(request, conversation_id):
+    if request.method == "GET":
+        return run(lambda: (services.get_conversation(conversation_id, request.GET.get("user_id")), False))
+    if request.method == "POST":
+        data = json_body(request)
+        return run(lambda: (services.send_conversation_message(conversation_id, data.get("sender_id"), data.get("body")), True))
+    return method_not_allowed()
+
+
+def item_message_buyers(request, item_id):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.list_item_message_buyers(item_id, request.GET.get("seller_id")), False))
+
+
+@csrf_exempt
+def item_reservation(request, item_id):
+    if request.method != "POST":
+        return method_not_allowed()
+    data = json_body(request)
+    return run(lambda: (services.reserve_item(item_id, data.get("seller_id"), data.get("buyer_id")), True))
+
+
+@csrf_exempt
+def seller_item_status(request, item_id):
+    if request.method != "POST":
+        return method_not_allowed()
+    data = json_body(request)
+    return run(lambda: (services.update_item_seller_status(item_id, data.get("seller_id"), data.get("status")), True))
 
 
 @csrf_exempt

@@ -37,7 +37,11 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
   const parseResponse = async (response, fallbackMessage) => {
     const data = await response.json();
     if (!response.ok) {
-      throw new Error(data?.detail || fallbackMessage);
+      const detail = data?.detail || fallbackMessage;
+      if (response.status === 503 || /database unavailable/i.test(detail)) {
+        throw new Error("Marketplace database is unavailable. Start MySQL in XAMPP, then refresh the page.");
+      }
+      throw new Error(detail);
     }
     return data;
   };
