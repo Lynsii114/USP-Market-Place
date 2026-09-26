@@ -30,6 +30,8 @@ const API_URL = "http://localhost:8000/api";
 function Home() {
   const [authMode, setAuthMode] = useState("login");
   const [verificationEmail, setVerificationEmail] = useState("");
+  const [resendAvailableAt, setResendAvailableAt] = useState(0);
+  const [resendSecondsRemaining, setResendSecondsRemaining] = useState(0);
   const [authenticatorUserId, setAuthenticatorUserId] = useState(null);
   const [authenticatorSecret, setAuthenticatorSecret] = useState("");
   const [authenticatorUri, setAuthenticatorUri] = useState("");
@@ -116,6 +118,24 @@ function Home() {
     return () => window.clearTimeout(timeoutId);
   }, [toastMessage]);
 
+  useEffect(() => {
+    if (authMode !== "verify-email" || !resendAvailableAt) {
+      setResendSecondsRemaining(0);
+      return undefined;
+    }
+
+    const updateCountdown = () => {
+      setResendSecondsRemaining(Math.max(0, Math.ceil((resendAvailableAt - Date.now()) / 1000)));
+    };
+    updateCountdown();
+    const intervalId = window.setInterval(updateCountdown, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [authMode, resendAvailableAt]);
+
+  const startResendCountdown = () => {
+    setResendAvailableAt(Date.now() + 60_000);
+  };
+
   const parseResponse = async (response, fallbackMessage) => {
     let data;
 
@@ -174,6 +194,8 @@ function Home() {
   const resetAuth = () => {
     setAuthMode(null);
     setVerificationEmail("");
+    setResendAvailableAt(0);
+    setResendSecondsRemaining(0);
     setFormMessage("");
     setEmailError("");
     setAuthenticatorUserId(null);
@@ -207,8 +229,8 @@ function Home() {
       return true;
     }
 
-    const isValid = /^S\d+@student\.usp\.ac\.fj$/i.test(email.trim());
-    setEmailError(isValid ? "" : "Use your USP student email, for example S12345678@student.usp.ac.fj");
+    const isValid = /^S\d{8}@student\.usp\.ac\.fj$/i.test(email.trim());
+    setEmailError(isValid ? "" : "SXXXXXXXX@student.usp.ac.fj");
     return isValid;
   };
 
@@ -247,11 +269,13 @@ function Home() {
           setAuthenticatorQr(data.authenticator_qr);
           setAuthForm((previous) => ({ ...previous, verification_code: "", authenticator_code: "" }));
           setAuthMode("authenticator-setup");
+          setResendAvailableAt(0);
         } else {
           setCurrentUser(data.user);
           setAuthForm(EMPTY_AUTH_FORM);
           setAuthMode(null);
           setVerificationEmail("");
+          setResendAvailableAt(0);
           showToast(data.message || "Email verified successfully.");
         }
         return;
@@ -278,7 +302,7 @@ function Home() {
 
       if (authMode === "forgot-password") {
         if (!validateUSPEmail(authForm.email)) {
-          setFormMessage("Please enter your USP student email address");
+          setFormMessage("SXXXXXXXX@student.usp.ac.fj");
           return;
         }
         const response = await fetch(`${API_URL}/users/request-password-reset`, {
@@ -322,7 +346,7 @@ function Home() {
       }
 
       if (authMode === "signup" && !validateUSPEmail(authForm.email)) {
-        setFormMessage("Please enter your USP student email address");
+        setFormMessage("SXXXXXXXX@student.usp.ac.fj");
         return;
       }
 
@@ -361,7 +385,8 @@ function Home() {
         setVerificationEmail(authForm.email.trim());
         setAuthForm((previous) => ({ ...previous, verification_code: "" }));
         setAuthMode("verify-email");
-        showToast("Registration started. Check your USP email for the verification code.");
+        startResendCountdown();
+        showToast(data.message || "Verification code sent successfully");
         return;
       }
 
@@ -392,6 +417,7 @@ function Home() {
         body: JSON.stringify({ email: verificationEmail }),
       });
       const data = await parseResponse(response, "Unable to resend verification code");
+      startResendCountdown();
       showToast(data.message);
     } catch (error) {
       setFormMessage(error instanceof Error ? error.message : "Unable to resend verification code");
@@ -448,6 +474,7 @@ function Home() {
         formMessage={formMessage}
         isSubmitting={isSubmitting}
         verificationEmail={verificationEmail}
+        resendSecondsRemaining={resendSecondsRemaining}
         onClose={resetAuth}
         onSubmit={handleAuthSubmit}
         onFieldChange={handleAuthFieldChange}
@@ -1292,6 +1319,7 @@ function Home() {
             formMessage={formMessage}
             isSubmitting={isSubmitting}
             verificationEmail={verificationEmail}
+            resendSecondsRemaining={resendSecondsRemaining}
             onClose={resetAuth}
             onSubmit={handleAuthSubmit}
             onFieldChange={handleAuthFieldChange}
@@ -1335,6 +1363,7 @@ function Home() {
         formMessage={formMessage}
         isSubmitting={isSubmitting}
         verificationEmail={verificationEmail}
+        resendSecondsRemaining={resendSecondsRemaining}
         onClose={resetAuth}
         onSubmit={handleAuthSubmit}
         onFieldChange={handleAuthFieldChange}

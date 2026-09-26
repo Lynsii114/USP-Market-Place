@@ -737,6 +737,60 @@
   outline: none;
 }
 
+.password-strength {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: -8px;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.password-strength-bars {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(28px, 1fr));
+  gap: 5px;
+  width: min(160px, 100%);
+}
+
+.password-strength-bars span {
+  height: 6px;
+  border-radius: 999px;
+  background: #d8dee8;
+}
+
+.password-strength-1 {
+  color: #b91c1c;
+}
+
+.password-strength-2 {
+  color: #b45309;
+}
+
+.password-strength-3 {
+  color: #047857;
+}
+
+.password-strength-4 {
+  color: #166534;
+}
+
+.password-strength-1 .password-strength-bars span.active {
+  background: #dc2626;
+}
+
+.password-strength-2 .password-strength-bars span.active {
+  background: #f59e0b;
+}
+
+.password-strength-3 .password-strength-bars span.active {
+  background: #10b981;
+}
+
+.password-strength-4 .password-strength-bars span.active {
+  background: #16a34a;
+}
+
 .auth-form input:focus {
   border-color: var(--usp-blue);
   box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.12);

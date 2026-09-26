@@ -2,6 +2,9 @@ import hashlib
 import base64
 from io import BytesIO
 import json
+import logging
+import math
+import smtplib
 import secrets
 import re
 import pyotp
@@ -11,7 +14,7 @@ from urllib.request import Request, urlopen
 from collections import defaultdict
 from datetime import date, timedelta
 
-from django.core.mail import send_mail
+from django.core.mail import BadHeaderError, send_mail
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Q
@@ -27,6 +30,11 @@ from .models import AdminNotification, Conversation, EmailVerification, Item, Me
 from .queries import find_student, find_user_by_login, item_status, public_items, visible_items, visible_purchases
 from .serializers import serialize_conversation, serialize_item, serialize_message, serialize_notification, serialize_purchase, serialize_rating_review, serialize_user, serialize_user_report
 from .validators import validate_item_payload, validate_signup
+
+
+email_logger = logging.getLogger("marketplace.email")
+VERIFICATION_CODE_TTL = timedelta(minutes=10)
+VERIFICATION_RESEND_COOLDOWN = timedelta(minutes=1)
 
 
 def hash_password(password):
@@ -142,9 +150,75 @@ def authenticator_setup(secret, email):
     }
 
 
-def send_email(subject, message, recipient):
+def verification_email_message(code):
+    return (
+        "Hello,\n\n"
+        "USP Marketplace received a request to register an account with this email address.\n\n"
+        f"Your 6-digit verification code is: {code}\n\n"
+        "This code expires in 10 minutes.\n\n"
+        "If you did not request this code, you can ignore this email.\n\n"
+        "USP Marketplace System"
+    )
+
+
+def describe_email_exception(exc):
+    if isinstance(exc, smtplib.SMTPAuthenticationError):
+        smtp_message = exc.smtp_error.decode("utf-8", errors="replace") if isinstance(exc.smtp_error, bytes) else str(exc.smtp_error)
+        return f"SMTP authentication failed ({exc.smtp_code}): {smtp_message}. Check EMAIL_HOST_USER and EMAIL_HOST_PASSWORD. Gmail requires a 16-character App Password with 2-Step Verification enabled."
+    if isinstance(exc, smtplib.SMTPConnectError):
+        return f"SMTP connection failed ({exc.smtp_code}): {exc.smtp_error}. Check EMAIL_HOST, EMAIL_PORT, and network/firewall access."
+    if isinstance(exc, smtplib.SMTPServerDisconnected):
+        return "SMTP server disconnected before accepting the message. Check TLS/SSL settings, host, and port."
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        return "SMTP provider refused the recipient address."
+    if isinstance(exc, smtplib.SMTPSenderRefused):
+        return f"SMTP provider refused DEFAULT_FROM_EMAIL: {exc.sender}. Make sure it matches or is allowed by the SMTP account."
+    if isinstance(exc, smtplib.SMTPException):
+        return f"SMTP error: {exc}"
+    if isinstance(exc, BadHeaderError):
+        return "Email subject or body contains an invalid header."
+    if isinstance(exc, TimeoutError):
+        return "SMTP connection timed out. Check host, port, TLS/SSL, and network access."
+    if isinstance(exc, OSError):
+        return f"Network error while contacting SMTP server: {exc}"
+    return str(exc) or exc.__class__.__name__
+
+
+def require_smtp_settings(failure_prefix):
+    if not settings.EMAIL_HOST_USER:
+        raise ApiError(f"{failure_prefix}: EMAIL_HOST_USER is not configured", 500)
+    if not settings.EMAIL_HOST_PASSWORD:
+        raise ApiError(f"{failure_prefix}: EMAIL_HOST_PASSWORD is not configured", 500)
+    if not settings.DEFAULT_FROM_EMAIL:
+        raise ApiError(f"{failure_prefix}: DEFAULT_FROM_EMAIL is not configured", 500)
+    if settings.EMAIL_USE_TLS and settings.EMAIL_USE_SSL:
+        raise ApiError(f"{failure_prefix}: EMAIL_USE_TLS and EMAIL_USE_SSL cannot both be enabled", 500)
+
+
+def send_email(subject, message, recipient, failure_prefix="Failed to send email"):
     if settings.EMAIL_HOST:
-        send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [recipient])
+        require_smtp_settings(failure_prefix)
+        email_logger.info(
+            "[email-debug] SMTP connection stage: host=%s port=%s tls=%s ssl=%s user=%s from=%s recipient=%s",
+            settings.EMAIL_HOST,
+            settings.EMAIL_PORT,
+            settings.EMAIL_USE_TLS,
+            settings.EMAIL_USE_SSL,
+            settings.EMAIL_HOST_USER,
+            settings.DEFAULT_FROM_EMAIL,
+            recipient,
+        )
+        try:
+            sent_count = send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [recipient], fail_silently=False)
+        except Exception as exc:
+            detail = describe_email_exception(exc)
+            email_logger.exception("[email-debug] SMTP/email sending failed for %s: %s", recipient, detail)
+            raise ApiError(f"{failure_prefix}: {detail}", 502) from exc
+        if sent_count != 1:
+            detail = "SMTP backend did not report a sent message. Check provider logs and sender verification."
+            email_logger.error("[email-debug] SMTP/email sending failed for %s: %s", recipient, detail)
+            raise ApiError(f"{failure_prefix}: {detail}", 502)
+        email_logger.info("[email-debug] Email sent successfully to %s", recipient)
         return
 
     if settings.RESEND_API_KEY:
@@ -163,9 +237,10 @@ def send_email(subject, message, recipient):
             method="POST",
         )
         try:
+            email_logger.info("[email-debug] Resend API sending stage: from=%s recipient=%s", settings.RESEND_FROM_EMAIL, recipient)
             with urlopen(request, timeout=15) as response:
                 if response.status not in range(200, 300):
-                    raise ApiError("Email provider rejected the message", 502)
+                    raise ApiError(f"{failure_prefix}: Email provider rejected the message", 502)
         except HTTPError as exc:
             raw_error = ""
             try:
@@ -175,25 +250,39 @@ def send_email(subject, message, recipient):
             except (ValueError, UnicodeDecodeError):
                 provider_error = raw_error.strip() or None
             detail = provider_error or f"HTTP {exc.code} from email provider"
-            raise ApiError(f"Resend error: {detail}", 502) from exc
+            email_logger.exception("[email-debug] Resend/email sending failed for %s: %s", recipient, detail)
+            raise ApiError(f"{failure_prefix}: Resend error: {detail}", 502) from exc
         except (URLError, TimeoutError) as exc:
-            raise ApiError("Unable to connect to Resend. Check your network connection.", 502) from exc
+            email_logger.exception("[email-debug] Resend/email sending failed for %s", recipient)
+            raise ApiError(f"{failure_prefix}: Unable to connect to Resend. Check your network connection.", 502) from exc
+        email_logger.info("[email-debug] Email sent successfully to %s", recipient)
         return
 
-    send_mail(subject, message, None, [recipient])
+    email_logger.error("[email-debug] No SMTP provider configured for %s", recipient)
+    raise ApiError(f"{failure_prefix}: SMTP is not configured. Set EMAIL_HOST, EMAIL_HOST_USER, EMAIL_HOST_PASSWORD, and DEFAULT_FROM_EMAIL in backend/.env.", 500)
 
 
 def send_verification_code(registration):
+    email_logger.info("[email-debug] Registration -> code generation stage for %s", registration.email)
     code = f"{secrets.randbelow(1_000_000):06d}"
     registration.code_hash = hash_verification_code(code)
-    registration.expires_at = timezone.now() + timedelta(minutes=10)
+    registration.expires_at = timezone.now() + VERIFICATION_CODE_TTL
     registration.attempts = 0
+    email_logger.info("[email-debug] Database save stage for verification code hash: registration_id=%s email=%s", registration.id, registration.email)
     registration.save(update_fields=["code_hash", "expires_at", "attempts"])
+    email_logger.info("[email-debug] Database save complete for verification code hash: registration_id=%s email=%s", registration.id, registration.email)
     send_email(
         "Verify your USP Marketplace account",
-        f"Your USP Marketplace verification code is {code}. It expires in 10 minutes.",
+        verification_email_message(code),
         registration.email,
+        "Failed to send verification email",
     )
+
+
+def verification_resend_seconds_remaining(registration):
+    sent_at = registration.expires_at - VERIFICATION_CODE_TTL
+    resend_at = sent_at + VERIFICATION_RESEND_COOLDOWN
+    return max(0, math.ceil((resend_at - timezone.now()).total_seconds()))
 
 
 def signup_user(data):
@@ -228,13 +317,14 @@ def signup_user(data):
     try:
         send_verification_code(registration)
     except Exception:
+        email_logger.exception("[email-debug] Registration email failed; deleting pending registration id=%s email=%s so the user can retry", registration.id, registration.email)
         registration.delete()
         raise
     return {
         "user": None,
         "email": email,
         "verification_required": True,
-        "message": "Verification code sent to your personal email.",
+        "message": "Verification code sent successfully",
     }
 
 
@@ -287,8 +377,11 @@ def resend_verification(data):
     registration = PendingRegistration.objects.filter(email__iexact=email).first()
     if not registration:
         raise ApiError("Verification request not found", 404)
+    seconds_remaining = verification_resend_seconds_remaining(registration)
+    if seconds_remaining > 0:
+        raise ApiError(f"Resend code available in {seconds_remaining} seconds", 429)
     send_verification_code(registration)
-    return {"message": "A new verification code was sent to your USP email."}
+    return {"message": "Verification code sent successfully"}
 
 
 def cancel_verification(data):

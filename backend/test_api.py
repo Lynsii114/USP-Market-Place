@@ -1,6 +1,7 @@
 import os
 import random
 import re
+from datetime import timedelta
 from unittest.mock import patch
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "usp_backend.settings")
@@ -8,11 +9,15 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "usp_backend.settings")
 import django
 import pytest
 from django.test import Client
+from django.test import override_settings
+from django.utils import timezone
 
 django.setup()
 
 from marketplace.models import Item, PasswordReset, PendingRegistration, User
+from marketplace.exceptions import ApiError
 from marketplace.schema import ensure_schema
+from marketplace.services import VERIFICATION_CODE_TTL, send_email
 
 ensure_schema()
 
@@ -56,6 +61,8 @@ def test_signup_login_and_create_hidden_listing():
     assert PendingRegistration.objects.filter(email=payload["email"]).exists()
 
     code = re.search(r"\b\d{6}\b", verification_message).group()
+    assert f"Your 6-digit verification code is: {code}" in verification_message
+    assert "USP Marketplace System" in verification_message
     verification = client.post(
         "/api/users/verify-email",
         {"email": payload["email"], "code": code},
@@ -127,7 +134,68 @@ def test_signup_rejects_non_usp_email():
     response = client.post("/api/users/signup", payload, content_type="application/json")
 
     assert response.status_code == 422
-    assert "USP student email" in response.json()["detail"]
+    assert response.json()["detail"] == "SXXXXXXXX@student.usp.ac.fj"
+    assert not User.objects.filter(username=payload["username"]).exists()
+    assert not PendingRegistration.objects.filter(username=payload["username"]).exists()
+
+
+def test_signup_rejects_student_email_without_eight_digits():
+    payload = unique_student_payload()
+    payload["email"] = "S1234567@student.usp.ac.fj"
+
+    response = client.post("/api/users/signup", payload, content_type="application/json")
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "SXXXXXXXX@student.usp.ac.fj"
+    assert not User.objects.filter(username=payload["username"]).exists()
+    assert not PendingRegistration.objects.filter(username=payload["username"]).exists()
+
+
+def test_signup_returns_email_delivery_error_and_allows_retry():
+    payload = unique_student_payload()
+    with patch("marketplace.services.send_email", side_effect=ApiError("Failed to send verification email: SMTP authentication failed", 502)):
+        response = client.post("/api/users/signup", payload, content_type="application/json")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Failed to send verification email: SMTP authentication failed"
+    assert not User.objects.filter(email=payload["email"]).exists()
+    assert not PendingRegistration.objects.filter(email=payload["email"]).exists()
+
+
+@override_settings(EMAIL_HOST="", RESEND_API_KEY="")
+def test_send_email_requires_smtp_provider():
+    with pytest.raises(ApiError) as exc_info:
+        send_email("Subject", "Message", "S12345678@student.usp.ac.fj", "Failed to send verification email")
+
+    assert exc_info.value.status == 500
+    assert "SMTP is not configured" in exc_info.value.detail
+
+
+def test_resend_verification_waits_one_minute():
+    payload = unique_student_payload()
+    with patch("marketplace.services.send_email") as send_email:
+        signup = client.post("/api/users/signup", payload, content_type="application/json")
+        resend_too_soon = client.post(
+            "/api/users/resend-verification",
+            {"email": payload["email"]},
+            content_type="application/json",
+        )
+
+        registration = PendingRegistration.objects.get(email=payload["email"])
+        registration.expires_at = timezone.now() + VERIFICATION_CODE_TTL - timedelta(seconds=61)
+        registration.save(update_fields=["expires_at"])
+        resend_after_countdown = client.post(
+            "/api/users/resend-verification",
+            {"email": payload["email"]},
+            content_type="application/json",
+        )
+
+    assert signup.status_code == 200
+    assert resend_too_soon.status_code == 429
+    assert "Resend code available in" in resend_too_soon.json()["detail"]
+    assert resend_after_countdown.status_code == 200
+    assert resend_after_countdown.json()["message"] == "Verification code sent successfully"
+    assert send_email.call_count == 2
 
 
 def test_password_reset_code_changes_password_once():
