@@ -22,6 +22,43 @@ function PasswordField({ name, value, onChange, label, required = true }) {
   );
 }
 
+function passwordStrength(password) {
+  if (!password) {
+    return null;
+  }
+
+  let score = 0;
+  if (password.length >= 6) score += 1;
+  if (password.length >= 10) score += 1;
+  if (/[A-Z]/.test(password) && /[a-z]/.test(password)) score += 1;
+  if (/\d/.test(password)) score += 1;
+  if (/[^A-Za-z0-9]/.test(password)) score += 1;
+
+  if (score <= 1) return { label: "Weak", level: 1 };
+  if (score <= 3) return { label: "Fair", level: 2 };
+  if (score === 4) return { label: "Good", level: 3 };
+  return { label: "Strong", level: 4 };
+}
+
+function PasswordStrengthSign({ password }) {
+  const strength = passwordStrength(password);
+
+  if (!strength) {
+    return null;
+  }
+
+  return (
+    <div className={`password-strength password-strength-${strength.level}`} aria-live="polite">
+      <span className="password-strength-bars" aria-hidden="true">
+        {[1, 2, 3, 4].map((bar) => (
+          <span className={bar <= strength.level ? "active" : ""} key={bar} />
+        ))}
+      </span>
+      <span className="password-strength-label">{strength.label}</span>
+    </div>
+  );
+}
+
 function AuthModal({
   authMode,
   authForm,
@@ -29,6 +66,7 @@ function AuthModal({
   formMessage,
   isSubmitting,
   verificationEmail,
+  resendSecondsRemaining = 0,
   onClose,
   onSubmit,
   onFieldChange,
@@ -141,8 +179,13 @@ function AuthModal({
               </>
             )}
             {authMode === "verify-email" && (
-              <button type="button" className="auth-resend-button" onClick={onResendVerification} disabled={isSubmitting}>
-                Resend code
+              <button
+                type="button"
+                className="auth-resend-button"
+                onClick={onResendVerification}
+                disabled={isSubmitting || resendSecondsRemaining > 0}
+              >
+                {resendSecondsRemaining > 0 ? `Resend code (${resendSecondsRemaining}s)` : "Resend code"}
               </button>
             )}
           </>
@@ -178,7 +221,12 @@ function AuthModal({
               </>
             )}
 
-            {authMode !== "forgot-password" && <PasswordField name="password" value={authForm.password} onChange={onFieldChange} label="Password" />}
+            {authMode !== "forgot-password" && (
+              <>
+                <PasswordField name="password" value={authForm.password} onChange={onFieldChange} label="Password" />
+                {authMode === "signup" && <PasswordStrengthSign password={authForm.password} />}
+              </>
+            )}
 
             {authMode === "signup" && (
               <PasswordField

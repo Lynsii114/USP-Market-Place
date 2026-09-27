@@ -30,6 +30,9 @@ const API_URL = "http://localhost:8000/api";
 function Home() {
   const [authMode, setAuthMode] = useState("login");
   const [verificationEmail, setVerificationEmail] = useState("");
+  const [verificationToken, setVerificationToken] = useState("");
+  const [resendAvailableAt, setResendAvailableAt] = useState(0);
+  const [resendSecondsRemaining, setResendSecondsRemaining] = useState(0);
   const [authenticatorUserId, setAuthenticatorUserId] = useState(null);
   const [authenticatorSecret, setAuthenticatorSecret] = useState("");
   const [authenticatorUri, setAuthenticatorUri] = useState("");
@@ -116,6 +119,24 @@ function Home() {
     return () => window.clearTimeout(timeoutId);
   }, [toastMessage]);
 
+  useEffect(() => {
+    if (authMode !== "verify-email" || !resendAvailableAt) {
+      setResendSecondsRemaining(0);
+      return undefined;
+    }
+
+    const updateCountdown = () => {
+      setResendSecondsRemaining(Math.max(0, Math.ceil((resendAvailableAt - Date.now()) / 1000)));
+    };
+    updateCountdown();
+    const intervalId = window.setInterval(updateCountdown, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [authMode, resendAvailableAt]);
+
+  const startResendCountdown = () => {
+    setResendAvailableAt(Date.now() + 60_000);
+  };
+
   const parseResponse = async (response, fallbackMessage) => {
     let data;
 
@@ -174,6 +195,9 @@ function Home() {
   const resetAuth = () => {
     setAuthMode(null);
     setVerificationEmail("");
+    setVerificationToken("");
+    setResendAvailableAt(0);
+    setResendSecondsRemaining(0);
     setFormMessage("");
     setEmailError("");
     setAuthenticatorUserId(null);
@@ -184,6 +208,7 @@ function Home() {
 
   const cancelVerification = async () => {
     const email = verificationEmail;
+    const pendingToken = verificationToken;
     resetAuth();
 
     if (!email) {
@@ -194,7 +219,7 @@ function Home() {
       await fetch(`${API_URL}/users/cancel-verification`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, pending_token: pendingToken }),
       });
     } catch {
       // Closing the dialog should still work if the API is unavailable.
@@ -207,8 +232,8 @@ function Home() {
       return true;
     }
 
-    const isValid = /^S\d+@student\.usp\.ac\.fj$/i.test(email.trim());
-    setEmailError(isValid ? "" : "Use your USP student email, for example S12345678@student.usp.ac.fj");
+    const isValid = /^S\d{8}@student\.usp\.ac\.fj$/i.test(email.trim());
+    setEmailError(isValid ? "" : "SXXXXXXXX@student.usp.ac.fj");
     return isValid;
   };
 
@@ -237,7 +262,7 @@ function Home() {
         const response = await fetch(`${API_URL}/users/verify-email`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: verificationEmail, code: authForm.verification_code }),
+          body: JSON.stringify({ email: verificationEmail, code: authForm.verification_code, pending_token: verificationToken }),
         });
         const data = await parseResponse(response, "Email verification failed");
         if (data.authenticator_setup_required) {
@@ -247,11 +272,14 @@ function Home() {
           setAuthenticatorQr(data.authenticator_qr);
           setAuthForm((previous) => ({ ...previous, verification_code: "", authenticator_code: "" }));
           setAuthMode("authenticator-setup");
+          setResendAvailableAt(0);
         } else {
           setCurrentUser(data.user);
           setAuthForm(EMPTY_AUTH_FORM);
           setAuthMode(null);
           setVerificationEmail("");
+          setVerificationToken("");
+          setResendAvailableAt(0);
           showToast(data.message || "Email verified successfully.");
         }
         return;
@@ -268,6 +296,7 @@ function Home() {
         setAuthForm(EMPTY_AUTH_FORM);
         setAuthMode(null);
         setVerificationEmail("");
+        setVerificationToken("");
         setAuthenticatorUserId(null);
         setAuthenticatorSecret("");
         setAuthenticatorUri("");
@@ -278,7 +307,7 @@ function Home() {
 
       if (authMode === "forgot-password") {
         if (!validateUSPEmail(authForm.email)) {
-          setFormMessage("Please enter your USP student email address");
+          setFormMessage("SXXXXXXXX@student.usp.ac.fj");
           return;
         }
         const response = await fetch(`${API_URL}/users/request-password-reset`, {
@@ -322,7 +351,7 @@ function Home() {
       }
 
       if (authMode === "signup" && !validateUSPEmail(authForm.email)) {
-        setFormMessage("Please enter your USP student email address");
+        setFormMessage("SXXXXXXXX@student.usp.ac.fj");
         return;
       }
 
@@ -359,9 +388,11 @@ function Home() {
 
       if (authMode === "signup" && data.verification_required) {
         setVerificationEmail(authForm.email.trim());
+        setVerificationToken(data.pending_token || "");
         setAuthForm((previous) => ({ ...previous, verification_code: "" }));
         setAuthMode("verify-email");
-        showToast("Registration started. Check your USP email for the verification code.");
+        startResendCountdown();
+        showToast(data.message || "Verification code sent successfully");
         return;
       }
 
@@ -389,9 +420,10 @@ function Home() {
       const response = await fetch(`${API_URL}/users/resend-verification`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: verificationEmail }),
+        body: JSON.stringify({ email: verificationEmail, pending_token: verificationToken }),
       });
       const data = await parseResponse(response, "Unable to resend verification code");
+      startResendCountdown();
       showToast(data.message);
     } catch (error) {
       setFormMessage(error instanceof Error ? error.message : "Unable to resend verification code");
@@ -448,6 +480,7 @@ function Home() {
         formMessage={formMessage}
         isSubmitting={isSubmitting}
         verificationEmail={verificationEmail}
+        resendSecondsRemaining={resendSecondsRemaining}
         onClose={resetAuth}
         onSubmit={handleAuthSubmit}
         onFieldChange={handleAuthFieldChange}
@@ -1292,6 +1325,7 @@ function Home() {
             formMessage={formMessage}
             isSubmitting={isSubmitting}
             verificationEmail={verificationEmail}
+            resendSecondsRemaining={resendSecondsRemaining}
             onClose={resetAuth}
             onSubmit={handleAuthSubmit}
             onFieldChange={handleAuthFieldChange}
@@ -1335,6 +1369,7 @@ function Home() {
         formMessage={formMessage}
         isSubmitting={isSubmitting}
         verificationEmail={verificationEmail}
+        resendSecondsRemaining={resendSecondsRemaining}
         onClose={resetAuth}
         onSubmit={handleAuthSubmit}
         onFieldChange={handleAuthFieldChange}
