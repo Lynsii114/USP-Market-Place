@@ -35,6 +35,7 @@ from .validators import validate_item_payload, validate_signup
 email_logger = logging.getLogger("marketplace.email")
 VERIFICATION_CODE_TTL = timedelta(minutes=10)
 VERIFICATION_RESEND_COOLDOWN = timedelta(minutes=1)
+PENDING_REGISTRATIONS = {}
 
 
 def hash_password(password):
@@ -168,6 +169,8 @@ def describe_email_exception(exc):
     if isinstance(exc, smtplib.SMTPConnectError):
         return f"SMTP connection failed ({exc.smtp_code}): {exc.smtp_error}. Check EMAIL_HOST, EMAIL_PORT, and network/firewall access."
     if isinstance(exc, smtplib.SMTPServerDisconnected):
+        if settings.EMAIL_HOST == "smtp.gmail.com":
+            return "Gmail closed the SMTP authentication connection. Check that EMAIL_HOST_USER is an active Gmail/Google Workspace mailbox, 2-Step Verification is enabled, the App Password was generated for that exact mailbox, and Workspace allows App Passwords/SMTP access."
         return "SMTP server disconnected before accepting the message. Check TLS/SSL settings, host, and port."
     if isinstance(exc, smtplib.SMTPRecipientsRefused):
         return "SMTP provider refused the recipient address."
@@ -189,6 +192,8 @@ def require_smtp_settings(failure_prefix):
         raise ApiError(f"{failure_prefix}: EMAIL_HOST_USER is not configured", 500)
     if not settings.EMAIL_HOST_PASSWORD:
         raise ApiError(f"{failure_prefix}: EMAIL_HOST_PASSWORD is not configured", 500)
+    if settings.EMAIL_HOST == "smtp.gmail.com" and len(settings.EMAIL_HOST_PASSWORD) != 16:
+        raise ApiError(f"{failure_prefix}: EMAIL_HOST_PASSWORD must be a 16-character Gmail App Password for smtp.gmail.com", 500)
     if not settings.DEFAULT_FROM_EMAIL:
         raise ApiError(f"{failure_prefix}: DEFAULT_FROM_EMAIL is not configured", 500)
     if settings.EMAIL_USE_TLS and settings.EMAIL_USE_SSL:
@@ -262,25 +267,82 @@ def send_email(subject, message, recipient, failure_prefix="Failed to send email
     raise ApiError(f"{failure_prefix}: SMTP is not configured. Set EMAIL_HOST, EMAIL_HOST_USER, EMAIL_HOST_PASSWORD, and DEFAULT_FROM_EMAIL in backend/.env.", 500)
 
 
-def send_verification_code(registration):
-    email_logger.info("[email-debug] Registration -> code generation stage for %s", registration.email)
-    code = f"{secrets.randbelow(1_000_000):06d}"
-    registration.code_hash = hash_verification_code(code)
-    registration.expires_at = timezone.now() + VERIFICATION_CODE_TTL
-    registration.attempts = 0
-    email_logger.info("[email-debug] Database save stage for verification code hash: registration_id=%s email=%s", registration.id, registration.email)
+def pending_value(registration, key):
+    return registration[key] if isinstance(registration, dict) else getattr(registration, key)
+
+
+def set_pending_value(registration, key, value):
+    if isinstance(registration, dict):
+        registration[key] = value
+    else:
+        setattr(registration, key, value)
+
+
+def save_pending_verification(registration):
+    if isinstance(registration, dict):
+        return
     registration.save(update_fields=["code_hash", "expires_at", "attempts"])
-    email_logger.info("[email-debug] Database save complete for verification code hash: registration_id=%s email=%s", registration.id, registration.email)
+
+
+def cleanup_pending_registrations():
+    now = timezone.now()
+    expired_tokens = [
+        token
+        for token, registration in PENDING_REGISTRATIONS.items()
+        if registration["expires_at"] <= now
+    ]
+    for token in expired_tokens:
+        PENDING_REGISTRATIONS.pop(token, None)
+
+
+def delete_pending_registration(registration):
+    if isinstance(registration, dict):
+        PENDING_REGISTRATIONS.pop(registration["pending_token"], None)
+    else:
+        registration.delete()
+
+
+def find_pending_registration(email, pending_token=""):
+    cleanup_pending_registrations()
+    if pending_token:
+        registration = PENDING_REGISTRATIONS.get(pending_token)
+        if registration and registration["email"].lower() == email.lower():
+            return registration
+        return None
+    return PendingRegistration.objects.filter(email__iexact=email).first()
+
+
+def pending_exists_for_username(username):
+    cleanup_pending_registrations()
+    return any(registration["username"].lower() == username.lower() for registration in PENDING_REGISTRATIONS.values())
+
+
+def pending_exists_for_email(email):
+    cleanup_pending_registrations()
+    return any(registration["email"].lower() == email.lower() for registration in PENDING_REGISTRATIONS.values())
+
+
+def send_verification_code(registration):
+    email = pending_value(registration, "email")
+    registration_id = pending_value(registration, "pending_token") if isinstance(registration, dict) else registration.id
+    email_logger.info("[email-debug] Registration -> code generation stage for %s", email)
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    set_pending_value(registration, "code_hash", hash_verification_code(code))
+    set_pending_value(registration, "expires_at", timezone.now() + VERIFICATION_CODE_TTL)
+    set_pending_value(registration, "attempts", 0)
+    email_logger.info("[email-debug] Temporary verification save stage: registration_id=%s email=%s", registration_id, email)
+    save_pending_verification(registration)
+    email_logger.info("[email-debug] Temporary verification save complete: registration_id=%s email=%s", registration_id, email)
     send_email(
         "Verify your USP Marketplace account",
         verification_email_message(code),
-        registration.email,
+        email,
         "Failed to send verification email",
     )
 
 
 def verification_resend_seconds_remaining(registration):
-    sent_at = registration.expires_at - VERIFICATION_CODE_TTL
+    sent_at = pending_value(registration, "expires_at") - VERIFICATION_CODE_TTL
     resend_at = sent_at + VERIFICATION_RESEND_COOLDOWN
     return max(0, math.ceil((resend_at - timezone.now()).total_seconds()))
 
@@ -292,9 +354,9 @@ def signup_user(data):
     student_id = email.split("@", 1)[0]
 
     username_registered = User.objects.filter(username__iexact=username).exists()
-    username_pending = PendingRegistration.objects.filter(username__iexact=username).exists()
+    username_pending = pending_exists_for_username(username)
     email_registered = User.objects.filter(email__iexact=email).exists()
-    email_pending = PendingRegistration.objects.filter(email__iexact=email).exists()
+    email_pending = pending_exists_for_email(email)
     username_exists = username_registered or username_pending
     email_exists = email_registered or email_pending
     if username_exists and email_exists:
@@ -306,23 +368,29 @@ def signup_user(data):
     if email_pending:
         raise ApiError("A verification email has already been sent for these details", 400)
 
-    registration = PendingRegistration.objects.create(
-        username=username,
-        student_id=student_id,
-        email=email,
-        password_hash=hash_password(data["password"]),
-        code_hash="",
-        expires_at=timezone.now(),
-    )
+    pending_token = secrets.token_urlsafe(32)
+    registration = {
+        "pending_token": pending_token,
+        "username": username,
+        "student_id": student_id,
+        "email": email,
+        "password_hash": hash_password(data["password"]),
+        "code_hash": "",
+        "expires_at": timezone.now(),
+        "attempts": 0,
+        "created_at": timezone.now(),
+    }
+    PENDING_REGISTRATIONS[pending_token] = registration
     try:
         send_verification_code(registration)
     except Exception:
-        email_logger.exception("[email-debug] Registration email failed; deleting pending registration id=%s email=%s so the user can retry", registration.id, registration.email)
-        registration.delete()
+        email_logger.exception("[email-debug] Registration email failed; deleting temporary pending registration token=%s email=%s so the user can retry", pending_token, email)
+        delete_pending_registration(registration)
         raise
     return {
         "user": None,
         "email": email,
+        "pending_token": pending_token,
         "verification_required": True,
         "message": "Verification code sent successfully",
     }
@@ -331,38 +399,41 @@ def signup_user(data):
 def verify_email(data):
     email = str(data.get("email", "")).strip().lower()
     code = str(data.get("code", "")).strip()
+    pending_token = str(data.get("pending_token", "")).strip()
     if not email or not code.isdigit() or len(code) != 6:
         raise ApiError("Enter the six-digit verification code sent to your email", 422)
 
-    registration = PendingRegistration.objects.filter(email__iexact=email).first()
+    registration = find_pending_registration(email, pending_token)
     if not registration:
         user = User.objects.filter(email__iexact=email).first()
         if user and user.status == "active":
             return {"user": serialize_user(user), "message": "Email already verified."}
         raise ApiError("Verification request not found", 404)
-    if registration.expires_at <= timezone.now():
+    if pending_value(registration, "expires_at") <= timezone.now():
+        delete_pending_registration(registration)
         raise ApiError("That code has expired. Request a new code.", 400)
-    if registration.attempts >= 5:
+    if pending_value(registration, "attempts") >= 5:
         raise ApiError("Too many attempts. Request a new code.", 429)
 
-    if not secrets.compare_digest(registration.code_hash, hash_verification_code(code)):
-        registration.attempts += 1
-        registration.save(update_fields=["attempts"])
+    if not secrets.compare_digest(pending_value(registration, "code_hash"), hash_verification_code(code)):
+        set_pending_value(registration, "attempts", pending_value(registration, "attempts") + 1)
+        if not isinstance(registration, dict):
+            registration.save(update_fields=["attempts"])
         raise ApiError("Incorrect verification code", 400)
 
     with transaction.atomic():
         user = User.objects.create(
-            username=registration.username,
-            student_id=registration.student_id,
-            name=registration.username,
-            email=registration.email,
-            password_hash=registration.password_hash,
+            username=pending_value(registration, "username"),
+            student_id=pending_value(registration, "student_id"),
+            name=pending_value(registration, "username"),
+            email=pending_value(registration, "email"),
+            password_hash=pending_value(registration, "password_hash"),
             authenticator_secret=pyotp.random_base32(),
             role="student",
             status="active",
             verified=True,
         )
-        registration.delete()
+        delete_pending_registration(registration)
     return {
         "user": None,
         "authenticator_setup_required": True,
@@ -374,7 +445,8 @@ def verify_email(data):
 
 def resend_verification(data):
     email = str(data.get("email", "")).strip().lower()
-    registration = PendingRegistration.objects.filter(email__iexact=email).first()
+    pending_token = str(data.get("pending_token", "")).strip()
+    registration = find_pending_registration(email, pending_token)
     if not registration:
         raise ApiError("Verification request not found", 404)
     seconds_remaining = verification_resend_seconds_remaining(registration)
@@ -386,8 +458,13 @@ def resend_verification(data):
 
 def cancel_verification(data):
     email = str(data.get("email", "")).strip().lower()
+    pending_token = str(data.get("pending_token", "")).strip()
     if not email:
         raise ApiError("Email is required", 422)
+    registration = find_pending_registration(email, pending_token)
+    if registration:
+        delete_pending_registration(registration)
+        return {"message": "Verification cancelled.", "deleted": True}
     deleted, _ = PendingRegistration.objects.filter(email__iexact=email).delete()
     return {"message": "Verification cancelled.", "deleted": deleted > 0}
 

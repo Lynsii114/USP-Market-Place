@@ -30,6 +30,7 @@ const API_URL = "http://localhost:8000/api";
 function Home() {
   const [authMode, setAuthMode] = useState("login");
   const [verificationEmail, setVerificationEmail] = useState("");
+  const [verificationToken, setVerificationToken] = useState("");
   const [resendAvailableAt, setResendAvailableAt] = useState(0);
   const [resendSecondsRemaining, setResendSecondsRemaining] = useState(0);
   const [authenticatorUserId, setAuthenticatorUserId] = useState(null);
@@ -194,6 +195,7 @@ function Home() {
   const resetAuth = () => {
     setAuthMode(null);
     setVerificationEmail("");
+    setVerificationToken("");
     setResendAvailableAt(0);
     setResendSecondsRemaining(0);
     setFormMessage("");
@@ -206,6 +208,7 @@ function Home() {
 
   const cancelVerification = async () => {
     const email = verificationEmail;
+    const pendingToken = verificationToken;
     resetAuth();
 
     if (!email) {
@@ -216,7 +219,7 @@ function Home() {
       await fetch(`${API_URL}/users/cancel-verification`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, pending_token: pendingToken }),
       });
     } catch {
       // Closing the dialog should still work if the API is unavailable.
@@ -259,7 +262,7 @@ function Home() {
         const response = await fetch(`${API_URL}/users/verify-email`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: verificationEmail, code: authForm.verification_code }),
+          body: JSON.stringify({ email: verificationEmail, code: authForm.verification_code, pending_token: verificationToken }),
         });
         const data = await parseResponse(response, "Email verification failed");
         if (data.authenticator_setup_required) {
@@ -275,6 +278,7 @@ function Home() {
           setAuthForm(EMPTY_AUTH_FORM);
           setAuthMode(null);
           setVerificationEmail("");
+          setVerificationToken("");
           setResendAvailableAt(0);
           showToast(data.message || "Email verified successfully.");
         }
@@ -292,6 +296,7 @@ function Home() {
         setAuthForm(EMPTY_AUTH_FORM);
         setAuthMode(null);
         setVerificationEmail("");
+        setVerificationToken("");
         setAuthenticatorUserId(null);
         setAuthenticatorSecret("");
         setAuthenticatorUri("");
@@ -383,6 +388,7 @@ function Home() {
 
       if (authMode === "signup" && data.verification_required) {
         setVerificationEmail(authForm.email.trim());
+        setVerificationToken(data.pending_token || "");
         setAuthForm((previous) => ({ ...previous, verification_code: "" }));
         setAuthMode("verify-email");
         startResendCountdown();
@@ -414,7 +420,7 @@ function Home() {
       const response = await fetch(`${API_URL}/users/resend-verification`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: verificationEmail }),
+        body: JSON.stringify({ email: verificationEmail, pending_token: verificationToken }),
       });
       const data = await parseResponse(response, "Unable to resend verification code");
       startResendCountdown();
