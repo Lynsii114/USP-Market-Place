@@ -4,6 +4,10 @@ function CartPage({
   cartItems,
   cartTotal,
   receipt,
+  paymentMethod,
+  onPaymentMethodChange,
+  simulateFailure,
+  onSimulateFailureChange,
   onCheckout,
   onClearReceipt,
   onClose,
@@ -54,10 +58,11 @@ function CartPage({
             ))}
           </div>
 
-          <div className="receipt-total">
+                   <div className="receipt-total">
             <span>Total Paid</span>
             <strong>${Number(receipt.total).toFixed(2)}</strong>
           </div>
+          <p className="receipt-payment-note">Paid via {receipt.items[0]?.payment_method || "Simulated Payment"}</p>
 
           <button
             type="button"
@@ -99,10 +104,27 @@ function CartPage({
             ))}
           </div>
 
-          <div className="receipt-total">
+                    <div className="receipt-total">
             <span>Total</span>
             <strong>${confirmationTotal.toFixed(2)}</strong>
           </div>
+
+          <div className="feedback-block">
+            <strong>Payment Method (Simulated)</strong>
+            <select value={paymentMethod} onChange={(event) => onPaymentMethodChange(event.target.value)}>
+              <option value="Simulated Card Payment">Simulated Card Payment</option>
+              <option value="Simulated M-PAiSA">Simulated M-PAiSA</option>
+            </select>
+          </div>
+
+          <label className="authenticator-confirmation">
+            <input
+              type="checkbox"
+              checked={simulateFailure}
+              onChange={(event) => onSimulateFailureChange(event.target.checked)}
+            />
+            Simulate a failed payment (for testing)
+          </label>
 
           <div className="checkout-actions">
             <button type="button" className="secondary-button" onClick={() => setIsConfirmingCheckout(false)}>

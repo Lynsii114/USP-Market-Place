@@ -112,8 +112,7 @@ def item_detail(request, item_id):
 def purchase_item(request, item_id):
     if request.method != "POST":
         return method_not_allowed()
-    return run(lambda: (services.purchase_item(item_id, request.GET.get("buyer_id")), True))
-
+    return run(lambda: (services.purchase_item(item_id, request.GET.get("buyer_id"), json_body(request)), True))
 
 @csrf_exempt
 def report_user_activity(request):

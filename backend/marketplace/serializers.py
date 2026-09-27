@@ -45,6 +45,7 @@ def serialize_purchase(purchase):
         "seller_contact": purchase.seller_contact,
         "quantity": purchase.quantity,
         "total_amount": purchase.total_amount,
+        "payment_method": purchase.payment_method,
         "status": purchase.status,
         "purchased_at": purchase.purchased_at,
     }

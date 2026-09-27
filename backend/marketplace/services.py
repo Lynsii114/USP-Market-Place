@@ -523,9 +523,13 @@ def delete_item(item_id, seller_id):
     return {"message": "Listing removed successfully."}
 
 
-def purchase_item(item_id, buyer_id):
+def purchase_item(item_id, buyer_id, payment_data=None):
     if not buyer_id:
         raise ApiError("User not found", 404)
+
+    payment_data = payment_data or {}
+    payment_method = str(payment_data.get("payment_method") or "Simulated Card Payment").strip()
+    simulate_failure = bool(payment_data.get("simulate_failure"))
 
     buyer = require_active_user(buyer_id)
     item = Item.objects.filter(id=item_id).first()
@@ -539,10 +543,13 @@ def purchase_item(item_id, buyer_id):
         item.save()
         raise ApiError("Item is sold out", 400)
 
+    if simulate_failure:
+        raise ApiError(f"Simulated payment via {payment_method} failed. Please try again.", 402)
+
     item.stock -= 1
     item.status = item_status(item.stock)
     item.save()
-    Purchase.objects.create(
+    purchase = Purchase.objects.create(
         buyer_id=buyer.id,
         buyer_username=buyer.username,
         item_id=item.id,
@@ -554,15 +561,18 @@ def purchase_item(item_id, buyer_id):
         seller_contact=item.contact,
         quantity=1,
         total_amount=item.price,
+        payment_method=payment_method,
         status="completed",
     )
     notify_admin(
         "Checkout payment completed",
-        f"{buyer.username} purchased {item.name} from {item.seller_username} for ${item.price:.2f}.",
+        f"{buyer.username} purchased {item.name} from {item.seller_username} for ${item.price:.2f} via {payment_method}.",
         "checkout",
         buyer,
     )
-    return serialize_admin_item(item)
+    result = serialize_admin_item(item)
+    result["payment_method"] = purchase.payment_method
+    return result
 
 
 def list_buyer_purchases(buyer_id):

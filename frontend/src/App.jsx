@@ -57,6 +57,8 @@ function Home() {
   const [showCartPanel, setShowCartPanel] = useState(false);
   const [showPurchasesPage, setShowPurchasesPage] = useState(false);
   const [receipt, setReceipt] = useState(null);
+  const [paymentMethod, setPaymentMethod] = useState("Simulated Card Payment");
+  const [simulateFailure, setSimulateFailure] = useState(false);
   const [pendingReviewItems, setPendingReviewItems] = useState([]);
   const [checkoutReviewForm, setCheckoutReviewForm] = useState({ rating: "5", review: "" });
   const [purchaseHistory, setPurchaseHistory] = useState([]);
@@ -768,9 +770,14 @@ function Home() {
     try {
       const purchasedItems = [];
 
-      for (const item of availableItems) {
+            for (const item of availableItems) {
         const response = await fetch(`${API_URL}/items/${item.id}/purchase?buyer_id=${currentUser.id}`, {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            payment_method: paymentMethod,
+            simulate_failure: simulateFailure,
+          }),
         });
         const purchasedItem = await parseResponse(response, `Unable to purchase ${item.name}`);
         purchasedItems.push(purchasedItem);

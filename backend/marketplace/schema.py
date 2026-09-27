@@ -34,6 +34,7 @@ TABLE_COLUMNS = {
         "seller_contact": "VARCHAR(128) NOT NULL DEFAULT ''",
         "quantity": "INTEGER NOT NULL DEFAULT 1",
         "total_amount": "FLOAT NOT NULL DEFAULT 0",
+        "payment_method": "VARCHAR(32) NOT NULL DEFAULT 'Simulated Card Payment'",
         "status": "VARCHAR(32) NOT NULL DEFAULT 'completed'",
         "purchased_at": "DATETIME NULL",
     },

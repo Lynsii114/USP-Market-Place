@@ -88,6 +88,7 @@ class Purchase(models.Model):
     seller_contact = models.CharField(max_length=128, default="")
     quantity = models.IntegerField(default=1)
     total_amount = models.FloatField(default=0)
+    payment_method = models.CharField(max_length=32, default="Simulated Card Payment")
     status = models.CharField(max_length=32, default="completed")
     purchased_at = models.DateTimeField(auto_now_add=True)
 
