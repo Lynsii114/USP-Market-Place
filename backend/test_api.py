@@ -15,7 +15,7 @@ from django.utils import timezone
 
 django.setup()
 
-from marketplace.models import Item, PasswordReset, PendingRegistration, User
+from marketplace.models import AdminNotification, Item, PasswordReset, PendingRegistration, User, UserNotification
 from marketplace.exceptions import ApiError
 from marketplace.schema import ensure_schema
 from marketplace.services import PENDING_REGISTRATIONS, VERIFICATION_CODE_TTL, send_email
@@ -30,6 +30,8 @@ def cleanup_test_records():
     PENDING_REGISTRATIONS.clear()
     yield
     PENDING_REGISTRATIONS.clear()
+    AdminNotification.objects.filter(actor_username__startswith="__test_").delete()
+    UserNotification.objects.filter(actor_username__startswith="__test_").delete()
     Item.objects.filter(name__startswith="__test_").delete()
     User.objects.filter(username__startswith="__test_").delete()
     PendingRegistration.objects.filter(username__startswith="__test_").delete()
@@ -160,6 +162,127 @@ def test_public_items_show_listings_from_all_accounts():
         assert {item["id"] for item in created_items}.issubset(listed_item_ids)
     finally:
         Item.objects.filter(id__in=[item["id"] for item in created_items]).delete()
+
+
+def create_active_test_user(prefix, suffix):
+    return User.objects.create(
+        username=f"__test_{prefix}_{suffix}",
+        student_id=f"S{suffix}",
+        email=f"S{suffix}@student.usp.ac.fj",
+        password_hash="hash",
+        status="active",
+        verified=True,
+    )
+
+
+def create_test_item(seller, suffix, name=None):
+    return Item.objects.create(
+        name=name or f"__test_notification_item_{suffix}",
+        price=10,
+        description="Notification test listing",
+        category="Books",
+        contact="test",
+        stock=1,
+        status="available",
+        seller_id=seller.id,
+        seller_username=seller.username,
+    )
+
+
+def test_order_notifications_go_to_buyer_and_seller_not_admin():
+    suffix = random.randint(10_000_000, 99_999_999)
+    buyer = create_active_test_user("buyer", suffix)
+    seller = create_active_test_user("seller", suffix + 1)
+    item = create_test_item(seller, suffix)
+
+    response = client.post(f"/api/items/{item.id}/purchase?buyer_id={buyer.id}", {}, content_type="application/json")
+
+    assert response.status_code == 200
+    buyer_notifications = client.get(f"/api/users/{buyer.id}/notifications")
+    seller_notifications = client.get(f"/api/users/{seller.id}/notifications")
+    assert buyer_notifications.status_code == 200
+    assert seller_notifications.status_code == 200
+    assert any(notification["title"] == "Order confirmed" for notification in buyer_notifications.json())
+    assert any(notification["title"] == "New order placed" for notification in seller_notifications.json())
+    assert not AdminNotification.objects.filter(actor_username=buyer.username, category="checkout").exists()
+
+
+def test_cancel_order_notifies_buyer_and_seller_and_marks_read():
+    suffix = random.randint(10_000_000, 99_999_999)
+    buyer = create_active_test_user("cancel_buyer", suffix)
+    seller = create_active_test_user("cancel_seller", suffix + 1)
+    item = create_test_item(seller, suffix)
+    purchase_response = client.post(f"/api/items/{item.id}/purchase?buyer_id={buyer.id}", {}, content_type="application/json")
+    assert purchase_response.status_code == 200
+
+    from marketplace.models import Purchase
+
+    purchase = Purchase.objects.get(item_id=item.id, buyer_id=buyer.id)
+    cancel_response = client.post(
+        f"/api/orders/{purchase.id}/cancel",
+        {"user_id": buyer.id},
+        content_type="application/json",
+    )
+
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["order_stage"] == "cancelled"
+    buyer_notifications = client.get(f"/api/users/{buyer.id}/notifications").json()
+    seller_notifications = client.get(f"/api/users/{seller.id}/notifications").json()
+    buyer_cancel_notification = next(notification for notification in buyer_notifications if notification["title"] == "Order cancelled")
+    assert any(notification["title"] == "Order cancelled" for notification in seller_notifications)
+    assert buyer_cancel_notification["is_read"] is False
+
+    viewed_response = client.post(f"/api/users/{buyer.id}/notifications/{buyer_cancel_notification['id']}")
+
+    assert viewed_response.status_code == 200
+    assert viewed_response.json()["is_read"] is True
+
+
+def test_message_notification_goes_to_receiver():
+    suffix = random.randint(10_000_000, 99_999_999)
+    buyer = create_active_test_user("message_buyer", suffix)
+    seller = create_active_test_user("message_seller", suffix + 1)
+    item = create_test_item(seller, suffix)
+
+    conversation_response = client.post(
+        f"/api/items/{item.id}/conversation",
+        {"buyer_id": buyer.id},
+        content_type="application/json",
+    )
+    assert conversation_response.status_code == 200
+    conversation_id = conversation_response.json()["id"]
+
+    message_response = client.post(
+        f"/api/conversations/{conversation_id}",
+        {"sender_id": buyer.id, "body": "Is this still available?"},
+        content_type="application/json",
+    )
+
+    assert message_response.status_code == 200
+    notifications = client.get(f"/api/users/{seller.id}/notifications")
+    assert notifications.status_code == 200
+    assert any(notification["title"] == "New message" for notification in notifications.json())
+
+
+def test_reports_still_notify_admin():
+    suffix = random.randint(10_000_000, 99_999_999)
+    reporter = create_active_test_user("reporter", suffix)
+    seller = create_active_test_user("reported_seller", suffix + 1)
+    item = create_test_item(seller, suffix)
+
+    response = client.post(
+        "/api/reports",
+        {
+            "reporter_id": reporter.id,
+            "target_type": "listing",
+            "target_id": item.id,
+            "reason": "Suspicious listing details",
+        },
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    assert AdminNotification.objects.filter(actor_username=reporter.username, category="report").exists()
 
 
 def test_cancel_verification_removes_pending_registration():

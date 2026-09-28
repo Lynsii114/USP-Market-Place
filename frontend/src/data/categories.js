@@ -1,6 +1,7 @@
 import bookyImage from "../../Booky.jfif";
 import clothesImage from "../../Clothes.jfif";
 import electronicsImage from "../../Electronics.webp";
+import footwaresImage from "../../footwares.jfif";
 import homeLivingImage from "../../Home and LIving.jpg";
 
 export const categories = [
@@ -8,5 +9,6 @@ export const categories = [
   { id: 2, name: "Electronics", icon: "Tech", image: electronicsImage },
   { id: 3, name: "Clothing", icon: "Wear", image: clothesImage },
   { id: 4, name: "Furniture", icon: "Home", image: homeLivingImage },
-  { id: 5, name: "Other", icon: "More" },
+  { id: 5, name: "Footwares", icon: "Shoes", image: footwaresImage },
+  { id: 6, name: "Other", icon: "More" },
 ];

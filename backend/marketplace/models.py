@@ -118,6 +118,20 @@ class AdminNotification(models.Model):
         db_table = "admin_notifications"
 
 
+class UserNotification(models.Model):
+    user_id = models.IntegerField(db_index=True)
+    title = models.CharField(max_length=128)
+    message = models.CharField(max_length=1000)
+    category = models.CharField(max_length=40, default="activity")
+    actor_id = models.IntegerField(null=True, blank=True)
+    actor_username = models.CharField(max_length=64, null=True, blank=True)
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "user_notifications"
+
+
 class Conversation(models.Model):
     item_id = models.IntegerField(db_index=True)
     buyer_id = models.IntegerField(db_index=True)

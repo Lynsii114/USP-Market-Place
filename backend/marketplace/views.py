@@ -175,6 +175,22 @@ def user_unread_messages(request, user_id):
 
 
 @csrf_exempt
+def user_notifications(request, user_id):
+    if request.method == "GET":
+        return run(lambda: (services.list_user_notifications(user_id), False))
+    return method_not_allowed()
+
+
+@csrf_exempt
+def user_notification_detail(request, user_id, notification_id):
+    if request.method == "POST":
+        return run(lambda: (services.mark_user_notification_viewed(user_id, notification_id), True))
+    if request.method == "DELETE":
+        return run(lambda: (services.delete_user_notification(user_id, notification_id), True))
+    return method_not_allowed()
+
+
+@csrf_exempt
 def conversation_detail(request, conversation_id):
     if request.method == "GET":
         return run(lambda: (services.get_conversation(conversation_id, request.GET.get("user_id")), False))
@@ -212,6 +228,14 @@ def seller_order_stage(request, purchase_id):
         return method_not_allowed()
     data = json_body(request)
     return run(lambda: (services.update_seller_order_stage(purchase_id, data.get("seller_id"), data.get("stage")), True))
+
+
+@csrf_exempt
+def order_cancel(request, purchase_id):
+    if request.method != "POST":
+        return method_not_allowed()
+    data = json_body(request)
+    return run(lambda: (services.cancel_order(purchase_id, data.get("user_id")), True))
 
 
 @csrf_exempt

@@ -1,13 +1,9 @@
 import React, { useState } from "react";
-import OrderProgressTracker from "./OrderProgressTracker";
 
-function PastPurchasesPage({ currentUser, purchases, initialTab = "track", onBack, onLogin, onConfirmReceived, onSubmitReview, isSubmitting }) {
+function PastPurchasesPage({ currentUser, purchases, onBack, onLogin, onSubmitReview, isSubmitting }) {
   const [reviewingPurchase, setReviewingPurchase] = useState(null);
   const [reviewForm, setReviewForm] = useState({ rating: "5", review: "" });
-  const isActiveOrder = (purchase) => !["completed", "cancelled", "canceled"].includes(purchase.order_stage || purchase.status);
-  const activeOrders = purchases.filter(isActiveOrder);
-  const orderHistory = purchases.filter((purchase) => !isActiveOrder(purchase));
-  const activeOrdersTotal = activeOrders.reduce((total, purchase) => total + Number(purchase.total_amount || purchase.price), 0);
+  const orderHistory = purchases;
   const orderHistoryTotal = orderHistory.reduce((total, purchase) => total + Number(purchase.total_amount || purchase.price), 0);
   const deliveryMethodLabel = (method) => (method === "delivery" ? "Delivery" : "Self Pickup");
 
@@ -34,59 +30,6 @@ function PastPurchasesPage({ currentUser, purchases, initialTab = "track", onBac
       {currentUser ? (
         purchases.length ? (
           <>
-            {initialTab === "track" && (
-              <div className="orders-section">
-              <div className="orders-section-header">
-                <h3>Track Orders</h3>
-                <span>{activeOrders.length} active</span>
-              </div>
-              {activeOrders.length ? (
-                <div className="purchase-report-list">
-                  {activeOrders.map((purchase) => (
-                    <div className="purchase-report-item" key={purchase.id}>
-                      <div>
-                        <strong>{purchase.item_name}</strong>
-                        <small>{purchase.category}</small>
-                      </div>
-                      <div>
-                        <span>${Number(purchase.total_amount || purchase.price).toFixed(2)}</span>
-                        <small>
-                          {deliveryMethodLabel(purchase.delivery_method)}
-                          {Number(purchase.delivery_fee || 0) > 0 ? ` + $${Number(purchase.delivery_fee).toFixed(2)} delivery` : " - FREE"}
-                        </small>
-                      </div>
-                      <time dateTime={purchase.purchased_at}>{formatPurchaseDate(purchase.purchased_at)}</time>
-                      <div className="purchase-order-progress">
-                        <OrderProgressTracker stage={purchase.order_stage} />
-                        <div className="purchase-order-actions">
-                          {purchase.order_stage === "ready_for_collection" && (
-                            <button
-                              type="button"
-                              className="auth-submit"
-                              onClick={() => onConfirmReceived(purchase)}
-                              disabled={isSubmitting}
-                            >
-                              Confirm Item Received
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="empty-state">No active orders to track.</p>
-              )}
-              <div className="purchase-total-card">
-                <div>
-                  <span>Active Orders Total</span>
-                  <strong>${activeOrdersTotal.toFixed(2)}</strong>
-                </div>
-              </div>
-              </div>
-            )}
-
-            {initialTab === "history" && (
               <div className="orders-section">
               <div className="orders-section-header">
                 <h3>My Purchases</h3>
@@ -115,7 +58,7 @@ function PastPurchasesPage({ currentUser, purchases, initialTab = "track", onBac
                       <time dateTime={purchase.purchased_at}>{formatPurchaseDate(purchase.purchased_at)}</time>
                       <div className="purchase-order-progress">
                         <div className="purchase-order-actions">
-                          {purchase.order_stage === "completed" && !purchase.has_review && (
+                          {!["cancelled", "canceled"].includes(purchase.order_stage || purchase.status) && !purchase.has_review && (
                             <button
                               type="button"
                               className="secondary-button"
@@ -146,7 +89,6 @@ function PastPurchasesPage({ currentUser, purchases, initialTab = "track", onBac
                 </div>
               </div>
               </div>
-            )}
 
             {reviewingPurchase && (
               <div className="auth-modal-backdrop" onClick={() => setReviewingPurchase(null)}>

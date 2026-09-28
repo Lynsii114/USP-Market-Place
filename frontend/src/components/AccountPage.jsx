@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 
 function AccountPage({
   page,
@@ -14,11 +14,14 @@ function AccountPage({
   onSendMessage,
   onBack,
 }) {
+  const [salesFilter, setSalesFilter] = useState("active");
+
   if (!page || !currentUser) {
     return null;
   }
 
   const soldListings = myListings.filter((listing) => listing.status === "sold" || Number(listing.stock) <= 0);
+  const activeListings = myListings.filter((listing) => listing.status !== "sold" && Number(listing.stock) > 0);
 
   const content = {
     profile: {
@@ -33,8 +36,8 @@ function AccountPage({
       kicker: "Seller Report",
       title: "My Sales",
       rows: [
-        ["Active Listings", myListings.filter((listing) => listing.status !== "sold" && Number(listing.stock) > 0).length],
-        ["Sold Out Listings", soldListings.length],
+        ["Active Listings", activeListings.length, "active"],
+        ["Sold Out Listings", soldListings.length, "sold"],
       ],
     },
     settings: {
@@ -54,6 +57,15 @@ function AccountPage({
 
   const activeConversation =
     conversations.find((conversation) => conversation.id === activeConversationId) || conversations[0];
+  const selectedSalesListings = salesFilter === "sold" ? soldListings : activeListings;
+  const handleMessageKeyDown = (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      if (messageDraft.trim()) {
+        onSendMessage();
+      }
+    }
+  };
 
   if (page === "messages") {
     return (
@@ -139,6 +151,7 @@ function AccountPage({
                   <textarea
                     value={messageDraft}
                     onChange={(event) => onMessageDraftChange(event.target.value)}
+                    onKeyDown={handleMessageKeyDown}
                     placeholder="Write a message about this item"
                     rows="3"
                   />
@@ -170,13 +183,49 @@ function AccountPage({
       </div>
 
       <div className="account-info-card">
-        {pageContent.rows.map(([label, value]) => (
-          <div className="account-info-row" key={label}>
-            <span>{label}</span>
-            <strong>{value}</strong>
-          </div>
-        ))}
+        {pageContent.rows.map(([label, value, target]) =>
+          page === "sales" ? (
+            <button
+              type="button"
+              className={salesFilter === target ? "account-info-row account-info-button active" : "account-info-row account-info-button"}
+              onClick={() => setSalesFilter(target)}
+              key={label}
+            >
+              <span>{label}</span>
+              <strong>{value}</strong>
+            </button>
+          ) : (
+            <div className="account-info-row" key={label}>
+              <span>{label}</span>
+              <strong>{value}</strong>
+            </div>
+          )
+        )}
       </div>
+
+      {page === "sales" && (
+        <div className="sales-list-panel">
+          <h3>{salesFilter === "sold" ? "Sold Out Listings" : "Active Listings"}</h3>
+          {selectedSalesListings.length ? (
+            <div className="sales-list">
+              {selectedSalesListings.map((listing) => (
+                <button type="button" className="sales-list-item" onClick={() => onViewConversationListing(listing)} key={listing.id}>
+                  <div>
+                    <strong>{listing.name}</strong>
+                    <span>{listing.category}</span>
+                  </div>
+                  <div>
+                    <strong>${Number(listing.price).toFixed(2)}</strong>
+                    <span>{listing.status === "sold" || Number(listing.stock) <= 0 ? "Sold out" : `${listing.stock} in stock`}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="empty-state">No {salesFilter === "sold" ? "sold out" : "active"} listings found.</p>
+          )}
+        </div>
+      )}
     </section>
   );
 }

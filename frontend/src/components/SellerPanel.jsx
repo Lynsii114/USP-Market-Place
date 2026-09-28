@@ -28,8 +28,11 @@ function SellerPanel({
   onReserveListing,
   onUpdateListingStatus,
   onUpdateOrderStage,
+  onCancelOrder,
 }) {
-  const activeSellerOrders = sellerOrders.filter((order) => order.order_stage !== "completed" && order.status !== "completed");
+  const activeSellerOrders = sellerOrders.filter(
+    (order) => !["completed", "cancelled", "canceled"].includes(order.order_stage || order.status)
+  );
   const deliveryMethodLabel = (method) => (method === "delivery" ? "Delivery" : "Self Pickup");
   const [reservationListing, setReservationListing] = useState(null);
   const [reservationBuyers, setReservationBuyers] = useState([]);
@@ -139,7 +142,6 @@ function SellerPanel({
                   onChange={onFieldChange}
                   min="0"
                   step="0.01"
-                  placeholder="30.00"
                   required
                 />
               </label>
@@ -299,6 +301,14 @@ function SellerPanel({
                             disabled={order.order_stage !== "preparing_item"}
                           >
                             On the Way
+                          </button>
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() => onCancelOrder(order)}
+                            disabled={isSubmitting}
+                          >
+                            Cancel Order
                           </button>
                         </div>
                       </div>

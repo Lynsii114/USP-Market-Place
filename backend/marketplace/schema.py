@@ -2,7 +2,7 @@ import logging
 
 from django.db import DatabaseError, OperationalError, connection
 
-from .models import AdminNotification, Conversation, EmailVerification, Item, Message, PasswordReset, PendingRegistration, Purchase, RatingReview, User, UserReport
+from .models import AdminNotification, Conversation, EmailVerification, Item, Message, PasswordReset, PendingRegistration, Purchase, RatingReview, User, UserNotification, UserReport
 
 
 TABLE_COLUMNS = {
@@ -54,6 +54,14 @@ TABLE_COLUMNS = {
         "is_read": "BOOLEAN NOT NULL DEFAULT 0",
         "created_at": "DATETIME NULL",
     },
+    "user_notifications": {
+        "user_id": "INTEGER NOT NULL DEFAULT 0",
+        "category": "VARCHAR(40) NOT NULL DEFAULT 'activity'",
+        "actor_id": "INTEGER NULL",
+        "actor_username": "VARCHAR(64) NULL",
+        "is_read": "BOOLEAN NOT NULL DEFAULT 0",
+        "created_at": "DATETIME NULL",
+    },
     "user_reports": {
         "status": "VARCHAR(32) NOT NULL DEFAULT 'open'",
         "created_at": "DATETIME NULL",
@@ -99,7 +107,7 @@ logger = logging.getLogger(__name__)
 
 
 def ensure_schema():
-    models = [User, EmailVerification, PasswordReset, PendingRegistration, Item, Purchase, AdminNotification, Conversation, Message, UserReport, RatingReview]
+    models = [User, EmailVerification, PasswordReset, PendingRegistration, Item, Purchase, AdminNotification, UserNotification, Conversation, Message, UserReport, RatingReview]
 
     for model in models:
         try:

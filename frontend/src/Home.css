@@ -277,6 +277,74 @@
   min-width: 190px;
 }
 
+.notification-dropdown .notification-menu {
+  right: 0;
+  left: auto;
+  width: min(360px, calc(100vw - 32px));
+}
+
+.notification-menu {
+  display: none;
+  gap: 8px;
+}
+
+.notification-dropdown:hover .notification-menu,
+.notification-dropdown:focus-within .notification-menu {
+  display: grid;
+}
+
+.notification-menu .notification-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  gap: 8px;
+  align-items: start;
+  border: 1px solid var(--usp-border);
+  border-radius: 8px;
+  padding: 6px;
+  background: #ffffff;
+}
+
+.notification-menu .notification-row.unread {
+  border-color: #bfdbfe;
+  background: #f8fbff;
+}
+
+.notification-menu .notification-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  padding: 6px;
+}
+
+.notification-menu .notification-item span {
+  color: var(--usp-navy);
+  font-weight: 900;
+}
+
+.notification-menu .notification-item small {
+  color: #64748b;
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.notification-menu .notification-row.unread small {
+  color: #dc2626;
+}
+
+.notification-menu .notification-item p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--usp-muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.notification-menu .notification-remove-button {
+  justify-content: center;
+  padding: 6px;
+}
+
 .notification-popover-anchor {
   position: relative;
 }
@@ -1211,7 +1279,7 @@
 }
 
 .orders-grid {
-  grid-template-columns: 85px 1fr 1fr 1.25fr 58px 90px 150px 105px;
+  grid-template-columns: 85px 1fr 1fr 1.25fr 58px 90px 150px;
 }
 
 .reports-grid {
@@ -1219,7 +1287,7 @@
 }
 
 .report-orders-grid {
-  grid-template-columns: 110px minmax(190px, 1.4fr) minmax(120px, 1fr) minmax(120px, 1fr) 110px 100px;
+  grid-template-columns: 110px minmax(190px, 1.4fr) minmax(120px, 1fr) minmax(120px, 1fr) 100px;
 }
 
 .user-reports-grid {
@@ -2105,6 +2173,90 @@
 .account-info-row strong {
   color: var(--usp-navy);
   text-align: right;
+}
+
+.account-info-button {
+  width: 100%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.account-info-button:hover,
+.account-info-button:focus,
+.account-info-button.active {
+  color: var(--usp-blue);
+  outline: none;
+}
+
+.account-info-button.active span,
+.account-info-button.active strong {
+  color: var(--usp-blue);
+}
+
+.sales-list-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 20px;
+  background: #ffffff;
+  border: 1px solid var(--usp-border);
+  border-radius: 8px;
+  box-shadow: 0 18px 34px rgba(15, 23, 42, 0.06);
+}
+
+.sales-list-panel h3 {
+  margin: 0;
+  color: var(--usp-navy);
+}
+
+.sales-list {
+  display: grid;
+  gap: 10px;
+}
+
+.sales-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  width: 100%;
+  border: 1px solid var(--usp-border);
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fbff;
+  color: var(--usp-text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.sales-list-item:hover,
+.sales-list-item:focus {
+  border-color: #bfdbfe;
+  background: #edf3ff;
+  outline: none;
+}
+
+.sales-list-item div {
+  display: grid;
+  gap: 4px;
+}
+
+.sales-list-item div:last-child {
+  text-align: right;
+}
+
+.sales-list-item strong {
+  color: var(--usp-navy);
+}
+
+.sales-list-item span {
+  color: var(--usp-muted);
+  font-size: 0.84rem;
+  font-weight: 800;
 }
 
 .messages-layout {

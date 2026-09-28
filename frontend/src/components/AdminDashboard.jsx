@@ -12,7 +12,6 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
   const [studentSearch, setStudentSearch] = useState("");
   const [listingSearch, setListingSearch] = useState("");
   const [orderSearch, setOrderSearch] = useState("");
-  const [orderStatus, setOrderStatus] = useState("");
   const [orderDate, setOrderDate] = useState("");
   const [reportPeriod, setReportPeriod] = useState("daily");
   const [reportFromDate, setReportFromDate] = useState("");
@@ -70,7 +69,6 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
   const loadOrders = async () => {
     const params = new URLSearchParams({
       search: orderSearch,
-      status: orderStatus,
       order_date: orderDate,
     });
     const data = await fetchAdmin(`/admin/orders?${params.toString()}`, "Unable to load orders");
@@ -184,15 +182,6 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
     };
   }, [filteredReportOrders, report, reportFromDate, reportOrders.length, reportToDate]);
 
-  const orderStatusSummary = useMemo(
-    () => ({
-      completed: filteredReportOrders.filter((order) => order.status === "completed").length,
-      pending: filteredReportOrders.filter((order) => order.status === "pending").length,
-      cancelled: filteredReportOrders.filter((order) => ["cancelled", "canceled"].includes(order.status)).length,
-    }),
-    [filteredReportOrders]
-  );
-
   const listingSummary = useMemo(
     () => ({
       active: reportListings.filter((listing) => listing.status === "available").length,
@@ -223,8 +212,34 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
 
   const unreadNotifications = notifications.filter((notification) => !notification.is_read);
 
+  const notificationDestination = (notification) => {
+    if (notification.category === "report") {
+      return "Flags";
+    }
+    if (notification.category === "listing") {
+      return "Listings";
+    }
+    if (notification.category === "account") {
+      return "Students";
+    }
+    if (notification.category === "checkout" || notification.category === "order") {
+      return "Orders";
+    }
+    if (notification.category === "review") {
+      return "Reviews";
+    }
+    return null;
+  };
+
   const openNotification = async (notification) => {
-    setSelectedNotification(notification);
+    const destination = notificationDestination(notification);
+    if (destination) {
+      setActiveTab(destination);
+      setSelectedNotification(null);
+    } else {
+      setSelectedNotification(notification);
+    }
+
     if (notification.is_read) {
       return;
     }
@@ -241,7 +256,9 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
       const updatedNotification = await fetchAdmin(`/admin/notifications/${notification.id}/view`, "Unable to mark notification as viewed", {
         method: "POST",
       });
-      setSelectedNotification(updatedNotification);
+      if (!destination) {
+        setSelectedNotification(updatedNotification);
+      }
       setNotifications((currentNotifications) =>
         currentNotifications.map((currentNotification) =>
           currentNotification.id === updatedNotification.id ? updatedNotification : currentNotification
@@ -748,10 +765,6 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
             <div className="admin-filters">
               <input value={orderSearch} onChange={(event) => setOrderSearch(event.target.value)} placeholder="Order ID, buyer, seller, or item" />
               <input type="date" value={orderDate} onChange={(event) => setOrderDate(event.target.value)} />
-              <select value={orderStatus} onChange={(event) => setOrderStatus(event.target.value)}>
-                <option value="">All statuses</option>
-                <option value="completed">Completed</option>
-              </select>
               <button type="button" className="auth-submit" onClick={loadOrders}>
                 Search
               </button>
@@ -815,22 +828,6 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
             </div>
 
             <div className="report-sections">
-              <div className="report-box">
-                <h3>Order Summary</h3>
-                <div className="status-row">
-                  <span>Completed</span>
-                  <strong>{orderStatusSummary.completed}</strong>
-                </div>
-                <div className="status-row">
-                  <span>Pending</span>
-                  <strong>{orderStatusSummary.pending}</strong>
-                </div>
-                <div className="status-row">
-                  <span>Cancelled</span>
-                  <strong>{orderStatusSummary.cancelled}</strong>
-                </div>
-              </div>
-
               <div className="report-box">
                 <h3>Listings</h3>
                 <div className="status-row">
@@ -1127,7 +1124,6 @@ function AdminOrdersTable({ orders, formatDate, onViewProfile }) {
         <span>Qty</span>
         <span>Total</span>
         <span>Date</span>
-        <span>Status</span>
       </div>
       {orders.map((order) => (
         <div className="admin-table-row orders-grid" key={order.id}>
@@ -1142,7 +1138,6 @@ function AdminOrdersTable({ orders, formatDate, onViewProfile }) {
           <span>{order.quantity}</span>
           <span>${Number(order.total_amount || order.price).toFixed(2)}</span>
           <span>{formatDate(order.purchased_at)}</span>
-          <span className={`status-pill ${order.status}`}>{order.status}</span>
         </div>
       ))}
     </div>
@@ -1161,7 +1156,6 @@ function AdminReportTable({ orders, onViewProfile }) {
         <span>Item</span>
         <span>Seller</span>
         <span>Buyer</span>
-        <span>Status</span>
         <span>Amount</span>
       </div>
       {orders.map((order) => (
@@ -1174,7 +1168,6 @@ function AdminReportTable({ orders, onViewProfile }) {
           <button type="button" className="profile-name-button" onClick={() => onViewProfile(order.buyer)}>
             {order.buyer_username}
           </button>
-          <span className={`status-pill ${order.status}`}>{order.status}</span>
           <span>${Number(order.total_amount || order.price).toFixed(2)}</span>
         </div>
       ))}

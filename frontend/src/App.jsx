@@ -69,13 +69,13 @@ function Home() {
   const [checkoutReviewForm, setCheckoutReviewForm] = useState({ rating: "5", review: "" });
   const [purchaseHistory, setPurchaseHistory] = useState([]);
   const [sellerOrders, setSellerOrders] = useState([]);
-  const [ordersInitialTab, setOrdersInitialTab] = useState("track");
   const [activeLegalPage, setActiveLegalPage] = useState(null);
   const [activeAccountPage, setActiveAccountPage] = useState(null);
   const [conversations, setConversations] = useState([]);
   const [activeConversationId, setActiveConversationId] = useState(null);
   const [messageDraft, setMessageDraft] = useState("");
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
+  const [userNotifications, setUserNotifications] = useState([]);
   const [showAdminDashboard, setShowAdminDashboard] = useState(() =>
     window.location.pathname.startsWith("/admin")
   );
@@ -100,6 +100,7 @@ function Home() {
       loadSellerOrders(currentUser.id);
       loadConversations(currentUser.id);
       loadUnreadMessageCount(currentUser.id);
+      loadUserNotifications(currentUser.id);
     } else {
       setSellerListings([]);
       setPurchaseHistory([]);
@@ -107,6 +108,7 @@ function Home() {
       setConversations([]);
       setActiveConversationId(null);
       setUnreadMessageCount(0);
+      setUserNotifications([]);
     }
   }, [currentUser]);
 
@@ -190,8 +192,10 @@ function Home() {
       const response = await fetch(`${API_URL}/users/${buyerId}/purchases`);
       const data = await parseResponse(response, "Unable to load purchase history");
       setPurchaseHistory(data);
+      return data;
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to load purchase history", "error");
+      return [];
     }
   };
 
@@ -637,8 +641,10 @@ function Home() {
       if (!activeId && data.length) {
         setActiveConversationId(data[0].id);
       }
+      return data;
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to load messages", "error");
+      return [];
     }
   };
 
@@ -649,6 +655,122 @@ function Home() {
       setUnreadMessageCount(data.unread_count || 0);
     } catch {
       setUnreadMessageCount(0);
+    }
+  };
+
+  const loadUserNotifications = async (userId) => {
+    try {
+      const response = await fetch(`${API_URL}/users/${userId}/notifications`);
+      const data = await parseResponse(response, "Unable to load notifications");
+      setUserNotifications(data);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to load notifications", "error");
+    }
+  };
+
+  const markUserNotificationViewed = async (notificationId) => {
+    if (!currentUser) {
+      return null;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/users/${currentUser.id}/notifications/${notificationId}`, {
+        method: "POST",
+      });
+      const updatedNotification = await parseResponse(response, "Unable to update notification");
+      setUserNotifications((currentNotifications) =>
+        currentNotifications.map((notification) =>
+          notification.id === updatedNotification.id ? updatedNotification : notification
+        )
+      );
+      return updatedNotification;
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to update notification", "error");
+      return null;
+    }
+  };
+
+  const openUserNotification = async (notification) => {
+    if (!notification) {
+      return;
+    }
+
+    await markUserNotificationViewed(notification.id);
+
+    if (notification.category === "message") {
+      openAccountPage("messages");
+      const latestConversations = conversations.length ? conversations : await loadConversations(currentUser.id);
+      const unreadConversation = latestConversations.find((conversation) => conversation.unread_count > 0);
+      const targetConversation = unreadConversation || latestConversations[0];
+      if (targetConversation) {
+        await openConversation(targetConversation.id);
+      } else {
+        await markUserNotificationsViewedByCategory("message");
+        await loadUnreadMessageCount(currentUser.id);
+      }
+      return;
+    }
+
+    if (notification.category === "order") {
+      openPurchasesPage();
+      await loadUserNotifications(currentUser.id);
+      return;
+    }
+
+    if (notification.category === "listing" || /^Listing /i.test(notification.title || "")) {
+      openSellerTab("my-listings");
+      await loadUserNotifications(currentUser.id);
+      return;
+    }
+
+    if (notification.category === "administration") {
+      openAccountPage("profile");
+      await loadUserNotifications(currentUser.id);
+      return;
+    }
+  };
+
+  const markUserNotificationsViewedByCategory = async (category) => {
+    if (!currentUser) {
+      return;
+    }
+
+    const unreadMatchingNotifications = userNotifications.filter(
+      (notification) => notification.category === category && !notification.is_read
+    );
+    if (!unreadMatchingNotifications.length) {
+      return;
+    }
+
+    await Promise.all(
+      unreadMatchingNotifications.map((notification) =>
+        fetch(`${API_URL}/users/${currentUser.id}/notifications/${notification.id}`, {
+          method: "POST",
+        }).then((response) => parseResponse(response, "Unable to update notification"))
+      )
+    );
+    setUserNotifications((currentNotifications) =>
+      currentNotifications.map((notification) =>
+        notification.category === category ? { ...notification, is_read: true } : notification
+      )
+    );
+  };
+
+  const removeUserNotification = async (notificationId) => {
+    if (!currentUser) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/users/${currentUser.id}/notifications/${notificationId}`, {
+        method: "DELETE",
+      });
+      await parseResponse(response, "Unable to remove notification");
+      setUserNotifications((currentNotifications) =>
+        currentNotifications.filter((notification) => notification.id !== notificationId)
+      );
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to remove notification", "error");
     }
   };
 
@@ -822,7 +944,7 @@ function Home() {
     }, 0);
   };
 
-  const openPurchasesPage = (tabName = "track") => {
+  const openPurchasesPage = () => {
     setShowAdminDashboard(false);
     setShowSellerPanel(false);
     setShowShopPage(false);
@@ -830,7 +952,6 @@ function Home() {
     setActiveCategoryPage(null);
     setActiveLegalPage(null);
     setActiveAccountPage(null);
-    setOrdersInitialTab(tabName);
     setShowPurchasesPage(true);
     if (!currentUser) {
       openAuth("login");
@@ -933,7 +1054,6 @@ function Home() {
       for (const [index, item] of availableItems.entries()) {
         const itemSubtotal = Number(item.price);
         const itemDeliveryFee = (baseFeeShareInCents + (index < feeRemainderInCents ? 1 : 0)) / 100;
-        const itemIncludedTaxAmount = itemSubtotal * 12 / 112;
         const itemFinalTotal = itemSubtotal + itemDeliveryFee;
         const response = await fetch(`${API_URL}/items/${item.id}/purchase?buyer_id=${currentUser.id}`, {
           method: "POST",
@@ -943,7 +1063,6 @@ function Home() {
             delivery_method: deliveryMethod,
             delivery_fee: itemDeliveryFee,
             subtotal: itemSubtotal,
-            included_tax_amount: itemIncludedTaxAmount,
             final_total: itemFinalTotal,
           }),
         });
@@ -956,22 +1075,33 @@ function Home() {
       setListings((currentListings) =>
         currentListings.map((listing) => purchasedItems.find((item) => item.id === listing.id) || listing)
       );
-      await loadPurchaseHistory(currentUser.id);
+      const updatedPurchaseHistory = await loadPurchaseHistory(currentUser.id);
+      const purchasedListingsById = new Map(availableItems.map((item) => [item.id, item]));
+      const reviewItems = updatedPurchaseHistory
+        .filter((purchase) => purchasedIds.includes(purchase.item_id) && !purchase.has_review)
+        .map((purchase) => {
+          const listing = purchasedListingsById.get(purchase.item_id);
+          return {
+            ...purchase,
+            name: purchase.item_name,
+            photo: listing?.photo || "",
+            seller_username: purchase.seller_username,
+          };
+        });
       setReceipt(null);
       setShowAdminDashboard(false);
       setShowSellerPanel(false);
       setShowShopPage(false);
       setShowCartPanel(false);
+      setShowPurchasesPage(false);
       setActiveCategoryPage(null);
       setActiveLegalPage(null);
       setActiveAccountPage(null);
-      setOrdersInitialTab("track");
-      setShowPurchasesPage(true);
+      setPendingReviewItems(reviewItems);
+      setCheckoutReviewForm({ rating: "5", review: "" });
       await loadSellerOrders(currentUser.id);
-      showToast("Checkout successful.");
-      window.setTimeout(() => {
-        document.getElementById("past-purchases")?.scrollIntoView({ behavior: "smooth" });
-      }, 0);
+      await loadUserNotifications(currentUser.id);
+      showToast("Checkout successful. Please rate your item.");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to checkout", "error");
       await loadListings();
@@ -1045,23 +1175,31 @@ function Home() {
     }
   };
 
-  const confirmOrderReceived = async (purchase) => {
+  const cancelOrder = async (order) => {
     if (!currentUser) {
       openAuth("login");
       return;
     }
 
+    if (!window.confirm(`Cancel order for ${order.item_name}?`)) {
+      return;
+    }
+
     setIsSubmitting(true);
     try {
-      await fetch(`${API_URL}/orders/${purchase.id}/received`, {
+      await fetch(`${API_URL}/orders/${order.id}/cancel`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ buyer_id: currentUser.id }),
-      }).then((response) => parseResponse(response, "Unable to confirm item received"));
+        body: JSON.stringify({ user_id: currentUser.id }),
+      }).then((response) => parseResponse(response, "Unable to cancel order"));
       await loadPurchaseHistory(currentUser.id);
-      showToast("Order completed. You can now rate and review.");
+      await loadSellerOrders(currentUser.id);
+      await loadListings();
+      await loadSellerListings(currentUser.id);
+      await loadUserNotifications(currentUser.id);
+      showToast("Order cancelled.");
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "Unable to confirm item received", "error");
+      showToast(error instanceof Error ? error.message : "Unable to cancel order", "error");
     } finally {
       setIsSubmitting(false);
     }
@@ -1139,6 +1277,7 @@ function Home() {
       );
       setActiveConversationId(conversation.id);
       await loadUnreadMessageCount(currentUser.id);
+      await markUserNotificationsViewedByCategory("message");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to open conversation", "error");
     }
@@ -1366,6 +1505,7 @@ function Home() {
         currentUser={currentUser}
         cartCount={cartItems.length}
         unreadMessageCount={unreadMessageCount}
+        notifications={userNotifications}
         activePage={activeNavPage}
         onHome={hideActivePages}
         onBrowse={handleBrowse}
@@ -1375,6 +1515,8 @@ function Home() {
         onOpenAccountPage={openAccountPage}
         onOpenAuth={openAuth}
         onLogout={handleLogout}
+        onNotificationView={openUserNotification}
+        onNotificationRemove={removeUserNotification}
       />
 
       <Toast message={toastMessage} type={toastType} />
@@ -1420,9 +1562,7 @@ function Home() {
         <PastPurchasesPage
           currentUser={currentUser}
           purchases={purchaseHistory}
-          initialTab={ordersInitialTab}
           onBack={hideActivePages}
-          onConfirmReceived={confirmOrderReceived}
           onLogin={() => openAuth("login")}
           onSubmitReview={submitRatingReview}
           isSubmitting={isSubmitting}
@@ -1510,6 +1650,7 @@ function Home() {
               onResetForm={resetListingForm}
               onSubmit={handleListingSubmit}
               onUpdateOrderStage={updateSellerOrderStage}
+              onCancelOrder={cancelOrder}
             />
           )}
 
@@ -1588,12 +1729,12 @@ function Home() {
             </div>
             <div className="review-item-summary">
               {pendingReviewItems[0].photo ? (
-                <img src={pendingReviewItems[0].photo} alt={pendingReviewItems[0].name} />
+                <img src={pendingReviewItems[0].photo} alt={pendingReviewItems[0].name || pendingReviewItems[0].item_name} />
               ) : (
                 <span>{pendingReviewItems[0].category?.charAt(0) || "I"}</span>
               )}
               <div>
-                <strong>{pendingReviewItems[0].name}</strong>
+                <strong>{pendingReviewItems[0].name || pendingReviewItems[0].item_name}</strong>
                 <small>Seller: {pendingReviewItems[0].seller_username}</small>
               </div>
             </div>

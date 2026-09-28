@@ -61,7 +61,7 @@ def serialize_purchase(purchase):
 
 
 def serialize_notification(notification):
-    return {
+    data = {
         "id": notification.id,
         "title": notification.title,
         "message": notification.message,
@@ -71,6 +71,9 @@ def serialize_notification(notification):
         "is_read": notification.is_read,
         "created_at": notification.created_at,
     }
+    if hasattr(notification, "user_id"):
+        data["user_id"] = notification.user_id
+    return data
 
 
 def serialize_message(message):

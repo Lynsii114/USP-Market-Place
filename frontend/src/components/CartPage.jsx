@@ -35,13 +35,11 @@ function CartPage({
   const itemsSubtotal = availableItems.reduce((total, item) => total + Number(item.price), 0);
   const selectedDeliveryOption = deliveryOptions.find((option) => option.value === deliveryMethod);
   const deliveryFee = selectedDeliveryOption?.fee ?? 0;
-  const includedTaxAmount = itemsSubtotal * 12 / 112;
   const finalTotal = itemsSubtotal + deliveryFee;
   const checkoutSummary = {
     delivery_method: deliveryMethod,
     delivery_fee: deliveryFee,
     subtotal: itemsSubtotal,
-    included_tax_amount: includedTaxAmount,
     final_total: finalTotal,
     item_count: availableItems.length,
   };
@@ -158,7 +156,6 @@ function CartPage({
             <div>
               <span className="section-kicker">Confirm Checkout</span>
               <h3>Review Costs Before Payment</h3>
-              <p>Prices include 12% tax.</p>
             </div>
             <span>
               {availableItems.length} {availableItems.length === 1 ? "item" : "items"}
@@ -187,10 +184,6 @@ function CartPage({
           <div className="receipt-total">
             <span>Items Subtotal</span>
             <strong>${itemsSubtotal.toFixed(2)}</strong>
-          </div>
-          <div className="receipt-total subtle-total">
-            <span>12% Tax Included in Item Prices</span>
-            <strong>${includedTaxAmount.toFixed(2)}</strong>
           </div>
           <div className="receipt-total subtle-total">
             <span>Selected Delivery Method</span>

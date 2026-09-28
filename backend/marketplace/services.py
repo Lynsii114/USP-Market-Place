@@ -26,7 +26,7 @@ from django.utils.dateparse import parse_date
 
 from .constants import ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_USERNAME
 from .exceptions import ApiError
-from .models import AdminNotification, Conversation, EmailVerification, Item, Message, PasswordReset, PendingRegistration, Purchase, RatingReview, User, UserReport
+from .models import AdminNotification, Conversation, EmailVerification, Item, Message, PasswordReset, PendingRegistration, Purchase, RatingReview, User, UserNotification, UserReport
 from .queries import find_student, find_user_by_login, item_status, public_items, visible_items, visible_purchases
 from .serializers import serialize_conversation, serialize_item, serialize_message, serialize_notification, serialize_purchase, serialize_rating_review, serialize_user, serialize_user_report
 from .validators import validate_item_payload, validate_signup
@@ -94,6 +94,23 @@ def notify_admin(title, message, category="activity", actor=None):
         actor_id=actor.id if actor else None,
         actor_username=actor.username if actor else None,
     )
+
+
+def notify_user(user_id, title, message, category="activity", actor=None):
+    if not User.objects.filter(id=user_id).exists():
+        return None
+    return UserNotification.objects.create(
+        user_id=user_id,
+        title=title,
+        message=message,
+        category=category,
+        actor_id=actor.id if actor else None,
+        actor_username=actor.username if actor else None,
+    )
+
+
+def notify_order_user(purchase, user_id, title, message, actor=None):
+    return notify_user(user_id, title, message, "order", actor)
 
 
 def serialize_admin_item(item):
@@ -754,6 +771,14 @@ def send_conversation_message(conversation_id, sender_id, body):
         is_read=False,
     )
     conversation.save(update_fields=["updated_at"])
+    item = Item.objects.filter(id=conversation.item_id).first()
+    notify_user(
+        receiver_id,
+        "New message",
+        f"{sender.username} sent you a message about {item.name if item else 'a marketplace item'}.",
+        "message",
+        sender,
+    )
     return _conversation_payload(conversation, sender.id)
 
 
@@ -804,12 +829,12 @@ def reserve_item(item_id, seller_id, buyer_id):
             is_read=False,
         )
         conversation.save(update_fields=["updated_at"])
-    AdminNotification.objects.create(
-        title="Item reserved",
-        message=f"{seller.username} reserved {item.name} for {buyer.username}.",
-        category="reservation",
-        actor_id=seller.id,
-        actor_username=seller.username,
+    notify_user(
+        buyer.id,
+        "Listing reserved",
+        f"{seller.username} reserved {item.name} for you. You can now proceed with checkout.",
+        "listing",
+        seller,
     )
     return {"item": serialize_item(item), "message": f"{item.name} reserved for {buyer.username}."}
 
@@ -863,6 +888,7 @@ ORDER_STAGES = [
     "ready_for_collection",
     "item_received",
     "completed",
+    "cancelled",
 ]
 
 SELLER_ORDER_STAGES = {"preparing_item", "ready_for_collection"}
@@ -912,9 +938,9 @@ def purchase_item(
     item.save()
     item_subtotal = float(subtotal if subtotal is not None else item.price)
     item_delivery_fee = float(delivery_fee or 0)
-    item_tax_amount = float(included_tax_amount if included_tax_amount is not None else item_subtotal * 12 / 112)
+    item_tax_amount = float(included_tax_amount if included_tax_amount is not None else 0)
     item_final_total = float(final_total if final_total is not None else item_subtotal + item_delivery_fee)
-    Purchase.objects.create(
+    purchase = Purchase.objects.create(
         buyer_id=buyer.id,
         buyer_username=buyer.username,
         item_id=item.id,
@@ -935,10 +961,18 @@ def purchase_item(
         status="in_progress",
         order_stage="payment_confirmed",
     )
-    notify_admin(
-        "Checkout payment completed",
-        f"{buyer.username} purchased {item.name} from {item.seller_username} for ${item_final_total:.2f} using {PAYMENT_METHODS[payment_method_key]} with {DELIVERY_METHODS[delivery_method_key]}.",
-        "checkout",
+    notify_order_user(
+        purchase,
+        buyer.id,
+        "Order confirmed",
+        f"Your order for {item.name} is confirmed. Payment method: {PAYMENT_METHODS[payment_method_key]}.",
+        buyer,
+    )
+    notify_order_user(
+        purchase,
+        item.seller_id,
+        "New order placed",
+        f"{buyer.username} placed an order for {item.name}.",
         buyer,
     )
     return serialize_admin_item(item)
@@ -985,11 +1019,63 @@ def update_seller_order_stage(purchase_id, seller_id, stage):
     purchase.order_stage = stage
     purchase.status = "in_progress"
     purchase.save(update_fields=["order_stage", "status", "updated_at"])
-    notify_admin(
-        "Order progress updated",
-        f"{seller.username} marked order #{purchase.id} for {purchase.item_name} as {stage.replace('_', ' ')}.",
-        "checkout",
-        seller,
+    if stage == "ready_for_collection":
+        notify_order_user(
+            purchase,
+            purchase.buyer_id,
+            "Order ready for meetup",
+            f"{purchase.item_name} is ready for meetup or collection.",
+            seller,
+        )
+    elif stage == "preparing_item":
+        notify_order_user(
+            purchase,
+            purchase.buyer_id,
+            "Order confirmed by seller",
+            f"{seller.username} is preparing {purchase.item_name}.",
+            seller,
+        )
+    return enrich_purchase_order(purchase)
+
+
+def cancel_order(purchase_id, user_id):
+    user = require_active_user(user_id)
+    purchase = Purchase.objects.filter(id=purchase_id).first()
+    if not purchase:
+        raise ApiError("Order not found", 404)
+    if user.id not in {purchase.buyer_id, purchase.seller_id}:
+        raise ApiError("You can only cancel orders you are part of", 403)
+    if purchase.order_stage == "completed" or purchase.status == "completed":
+        raise ApiError("Completed orders cannot be cancelled", 400)
+    if purchase.order_stage in {"cancelled", "canceled"} or purchase.status in {"cancelled", "canceled"}:
+        return enrich_purchase_order(purchase)
+
+    purchase.order_stage = "cancelled"
+    purchase.status = "cancelled"
+    purchase.save(update_fields=["order_stage", "status", "updated_at"])
+
+    item = Item.objects.filter(id=purchase.item_id).first()
+    if item and item.status != "removed":
+        item.stock = max(0, item.stock) + (purchase.quantity or 1)
+        item.status = item_status(item.stock)
+        item.reserved_buyer_id = None
+        item.reserved_buyer_username = None
+        item.save(update_fields=["stock", "status", "reserved_buyer_id", "reserved_buyer_username"])
+
+    cancelled_by = "buyer" if user.id == purchase.buyer_id else "seller"
+    notify_order_user(
+        purchase,
+        purchase.buyer_id,
+        "Order cancelled",
+        f"Your order for {purchase.item_name} was cancelled by the {cancelled_by}.",
+        user,
+    )
+    notify_order_user(
+        purchase,
+        purchase.seller_id,
+        "Order cancelled",
+        f"Order #{purchase.id} for {purchase.item_name} was cancelled by {user.username}.",
+        user,
     )
     return enrich_purchase_order(purchase)
 
@@ -1007,10 +1093,18 @@ def confirm_order_received(purchase_id, buyer_id):
     purchase.order_stage = "completed"
     purchase.status = "completed"
     purchase.save(update_fields=["order_stage", "status", "updated_at"])
-    notify_admin(
+    notify_order_user(
+        purchase,
+        buyer.id,
         "Order completed",
-        f"{buyer.username} confirmed receiving {purchase.item_name}. Order #{purchase.id} is completed.",
-        "checkout",
+        f"Your order for {purchase.item_name} is complete.",
+        buyer,
+    )
+    notify_order_user(
+        purchase,
+        purchase.seller_id,
+        "Order completed",
+        f"{buyer.username} confirmed receiving {purchase.item_name}.",
         buyer,
     )
     return enrich_purchase_order(purchase)
@@ -1070,11 +1164,13 @@ def set_student_status(admin_id, student_id, status):
         notification = "Reactivation email sent to the student."
 
     send_email(subject, message, student.email)
-    notify_admin(
-        "Student account status changed",
-        f"{student.username} was {status}. {notification}",
-        "account",
-        student,
+    notify_user(
+        student.id,
+        "Account suspended" if status == "suspended" else "Account reactivated",
+        "Your USP Marketplace account has been suspended by an administrator."
+        if status == "suspended"
+        else "Your USP Marketplace account has been reactivated by an administrator.",
+        "administration",
     )
     return {
         "user": serialize_user(student),
@@ -1094,11 +1190,6 @@ def delete_student(admin_id, student_id):
     Item.objects.filter(seller_id=student.id).delete()
     PendingRegistration.objects.filter(email__iexact=email).delete()
     student.delete()
-    notify_admin(
-        "Student account deleted",
-        f"Admin permanently deleted student account '{username}' and removed that student's listings.",
-        "account",
-    )
     return {"message": f"{username} was permanently deleted."}
 
 
@@ -1121,6 +1212,36 @@ def mark_admin_notification_viewed(admin_id, notification_id):
 def delete_admin_notification(admin_id, notification_id):
     require_admin(admin_id)
     deleted, _ = AdminNotification.objects.filter(id=notification_id).delete()
+    if not deleted:
+        raise ApiError("Notification not found", 404)
+    return {"message": "Notification removed."}
+
+
+def list_user_notifications(user_id):
+    user = User.objects.filter(id=user_id).first()
+    if not user:
+        raise ApiError("User not found", 404)
+    notifications = UserNotification.objects.filter(user_id=user.id).order_by("-id")[:30]
+    return [serialize_notification(notification) for notification in notifications]
+
+
+def mark_user_notification_viewed(user_id, notification_id):
+    user = User.objects.filter(id=user_id).first()
+    if not user:
+        raise ApiError("User not found", 404)
+    notification = UserNotification.objects.filter(id=notification_id, user_id=user.id).first()
+    if not notification:
+        raise ApiError("Notification not found", 404)
+    notification.is_read = True
+    notification.save(update_fields=["is_read"])
+    return serialize_notification(notification)
+
+
+def delete_user_notification(user_id, notification_id):
+    user = User.objects.filter(id=user_id).first()
+    if not user:
+        raise ApiError("User not found", 404)
+    deleted, _ = UserNotification.objects.filter(id=notification_id, user_id=user.id).delete()
     if not deleted:
         raise ApiError("Notification not found", 404)
     return {"message": "Notification removed."}
@@ -1178,8 +1299,6 @@ def submit_rating_review(data):
             raise ApiError("Order not found", 404)
         if purchase.buyer_id != reviewer.id:
             raise ApiError("Only the buyer who purchased this item can review this order", 403)
-        if purchase.order_stage != "completed" or purchase.status != "completed":
-            raise ApiError("You can review this order after it is completed", 400)
         if RatingReview.objects.filter(purchase_id=purchase.id, reviewer_id=reviewer.id).exists():
             raise ApiError("You have already reviewed this order", 400)
         item_id = purchase.item_id
@@ -1219,12 +1338,6 @@ def submit_rating_review(data):
         seller_username=seller_username,
         rating=rating,
         review=review_text,
-    )
-    notify_admin(
-        "New rating and review",
-        f"{reviewer.username} rated {item_name} {rating}/5.",
-        "review",
-        reviewer,
     )
     return {"review": serialize_rating_review(review_record), "message": "Rating and review submitted."}
 
@@ -1277,10 +1390,11 @@ def hide_listing(admin_id, item_id, reason):
     item.status = "hidden"
     item.removed_reason = reason
     item.save()
-    notify_admin(
+    notify_user(
+        item.seller_id,
         "Listing hidden",
-        f"Admin hid listing '{item.name}'.",
-        "listing",
+        f"An administrator hid your listing '{item.name}'. Reason: {reason or 'No reason provided'}.",
+        "administration",
     )
     return serialize_admin_item(item)
 
@@ -1293,10 +1407,11 @@ def remove_listing(admin_id, item_id, reason):
     item.status = "removed"
     item.removed_reason = reason
     item.save()
-    notify_admin(
+    notify_user(
+        item.seller_id,
         "Listing removed",
-        f"Admin removed listing '{item.name}'.",
-        "listing",
+        f"An administrator removed your listing '{item.name}'. Reason: {reason or 'No reason provided'}.",
+        "administration",
     )
     return serialize_admin_item(item)
 
@@ -1309,6 +1424,12 @@ def restore_listing(admin_id, item_id):
     item.status = item_status(item.stock)
     item.removed_reason = None
     item.save()
+    notify_user(
+        item.seller_id,
+        "Listing restored",
+        f"An administrator restored your listing '{item.name}'.",
+        "administration",
+    )
     return serialize_admin_item(item)
 
 

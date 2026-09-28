@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 function Navbar({
   logo,
@@ -15,15 +15,13 @@ function Navbar({
   onOpenAccountPage,
   onOpenAuth,
   onLogout,
+  onNotificationView,
+  onNotificationRemove,
 }) {
-  const [dismissedNotifications, setDismissedNotifications] = useState([]);
   const [isNavHidden, setIsNavHidden] = useState(false);
   const lastScrollY = useRef(0);
   const ticking = useRef(false);
-  const visibleNotifications = useMemo(
-    () => notifications.filter((notification) => !dismissedNotifications.includes(notification.id)),
-    [dismissedNotifications, notifications]
-  );
+  const unreadNotifications = notifications.filter((notification) => !notification.is_read);
   const navClass = (page) => (activePage === page ? "nav-item active" : "nav-item");
 
   useEffect(() => {
@@ -85,13 +83,9 @@ function Navbar({
             <div className="nav-dropdown-menu activity-menu">
               <div className="activity-menu-group">
                 <strong>Buying</strong>
-                <button type="button" onClick={() => onOpenPurchases("history")}>
+                <button type="button" onClick={onOpenPurchases}>
                   <span aria-hidden="true">▤</span>
                   My Purchases
-                </button>
-                <button type="button" onClick={() => onOpenPurchases("track")}>
-                  <span aria-hidden="true">◉</span>
-                  Track Orders
                 </button>
               </div>
               <div className="activity-menu-group">
@@ -107,7 +101,7 @@ function Navbar({
               </div>
               <div className="activity-menu-group">
                 <strong>Other</strong>
-                <button type="button" onClick={() => onOpenPurchases("history")}>
+                <button type="button" onClick={onOpenPurchases}>
                   <span aria-hidden="true">★</span>
                   Reviews & Ratings
                 </button>
@@ -123,23 +117,26 @@ function Navbar({
           <div className="nav-dropdown notification-dropdown">
             <button type="button" className={activePage === "notifications" ? "nav-item nav-badge-button nav-symbol-button active" : "nav-item nav-badge-button nav-symbol-button"} aria-label="Notifications" title="Notifications">
               <span aria-hidden="true">&#128276;</span>
-              {visibleNotifications.length > 0 && <span className="notification-count">{visibleNotifications.length}</span>}
+              {unreadNotifications.length > 0 && <span className="notification-count">{unreadNotifications.length}</span>}
             </button>
             <div className="nav-dropdown-menu notification-menu">
               <strong>Notifications</strong>
-              {visibleNotifications.length ? (
-                visibleNotifications.slice(0, 4).map((notification) => (
-                  <div className="notification-row viewed" key={notification.id}>
-                    <p>{notification.message}</p>
+              {notifications.length ? (
+                notifications.slice(0, 4).map((notification) => (
+                  <div className={notification.is_read ? "notification-row viewed" : "notification-row unread"} key={notification.id}>
+                    <button
+                      type="button"
+                      className="notification-item"
+                      onClick={() => onNotificationView?.(notification)}
+                    >
+                      <span>{notification.title}</span>
+                      <small>{notification.is_read ? "Viewed" : "New"}</small>
+                      <p>{notification.message}</p>
+                    </button>
                     <button
                       type="button"
                       className="notification-remove-button"
-                      onClick={() =>
-                        setDismissedNotifications((currentNotifications) => [
-                          ...currentNotifications,
-                          notification.id,
-                        ])
-                      }
+                      onClick={() => onNotificationRemove?.(notification.id)}
                       aria-label="Remove notification"
                     >
                       x
@@ -193,5 +190,7 @@ function Navbar({
 }
 
 export default Navbar;
+
+
 
 
