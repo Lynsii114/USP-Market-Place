@@ -24,7 +24,7 @@ from django.utils.dateparse import parse_date
 # import jwt
 # from jwt import PyJWKClient
 
-from .constants import ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_USERNAME, HIDDEN_ITEM_NAMES
+from .constants import ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_USERNAME
 from .exceptions import ApiError
 from .models import AdminNotification, Conversation, EmailVerification, Item, Message, PasswordReset, PendingRegistration, Purchase, RatingReview, User, UserReport
 from .queries import find_student, find_user_by_login, item_status, public_items, visible_items, visible_purchases
@@ -629,7 +629,8 @@ def list_items():
 
 
 def list_seller_items(seller_id):
-    items = public_items().filter(seller_id=seller_id).order_by("-id")
+    seller = require_active_user(seller_id)
+    items = visible_items().filter(seller_id=seller.id).exclude(status="removed").order_by("-id")
     return [serialize_item(item) for item in items]
 
 
@@ -655,7 +656,7 @@ def create_item(data):
 
 def get_public_item(item_id):
     item = Item.objects.filter(id=item_id).first()
-    if not item or item.status == "removed" or item.name in HIDDEN_ITEM_NAMES or item.name.startswith("__test_"):
+    if not item or item.status == "removed" or item.name.startswith("__test_"):
         raise ApiError("Item not found", 404)
     return serialize_item(item)
 

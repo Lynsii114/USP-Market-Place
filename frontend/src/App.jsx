@@ -48,6 +48,7 @@ function Home() {
   const [listingForm, setListingForm] = useState(EMPTY_LISTING_FORM);
   const [pendingPhoto, setPendingPhoto] = useState(null);
   const [listings, setListings] = useState([]);
+  const [sellerListings, setSellerListings] = useState([]);
   const [editingListingId, setEditingListingId] = useState(null);
   const [isLoadingListings, setIsLoadingListings] = useState(false);
   const [activeSellerTab, setActiveSellerTab] = useState("my-listings");
@@ -94,11 +95,13 @@ function Home() {
 
   useEffect(() => {
     if (currentUser) {
+      loadSellerListings(currentUser.id);
       loadPurchaseHistory(currentUser.id);
       loadSellerOrders(currentUser.id);
       loadConversations(currentUser.id);
       loadUnreadMessageCount(currentUser.id);
     } else {
+      setSellerListings([]);
       setPurchaseHistory([]);
       setSellerOrders([]);
       setConversations([]);
@@ -189,6 +192,16 @@ function Home() {
       setPurchaseHistory(data);
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to load purchase history", "error");
+    }
+  };
+
+  const loadSellerListings = async (sellerId) => {
+    try {
+      const response = await fetch(`${API_URL}/users/${sellerId}/items`);
+      const data = await parseResponse(response, "Unable to load your listings");
+      setSellerListings(data);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to load your listings", "error");
     }
   };
 
@@ -583,6 +596,7 @@ function Home() {
       await parseResponse(response, editingListingId ? "Unable to update listing" : "Unable to create listing");
       resetListingForm();
       await loadListings();
+      await loadSellerListings(currentUser.id);
       setActiveSellerTab("my-listings");
       setOpenListingMenuId(null);
       showToast(editingListingId ? "Listing updated successfully." : "Listing created successfully.");
@@ -670,6 +684,7 @@ function Home() {
 
       const data = await parseResponse(response, "Unable to remove listing");
       await loadListings();
+      await loadSellerListings(currentUser.id);
       setOpenListingMenuId(null);
       showToast(data.message || "Listing removed successfully.");
     } catch (error) {
@@ -679,7 +694,7 @@ function Home() {
     }
   };
 
-  const myListings = currentUser ? listings.filter((listing) => listing.seller_id === currentUser.id) : [];
+  const myListings = currentUser ? sellerListings : [];
   const normalizedSearch = searchQuery.trim().toLowerCase();
   const filteredListings = listings
     .filter((listing) => {
@@ -1185,6 +1200,7 @@ function Home() {
       });
       const data = await parseResponse(response, "Unable to reserve listing");
       await loadListings();
+      await loadSellerListings(currentUser.id);
       await loadConversations(currentUser.id);
       await loadUnreadMessageCount(currentUser.id);
       setOpenListingMenuId(null);
@@ -1222,6 +1238,7 @@ function Home() {
       });
       const data = await parseResponse(response, "Unable to update listing status");
       await loadListings();
+      await loadSellerListings(currentUser.id);
       setOpenListingMenuId(null);
       showToast(data.message || "Listing updated.");
     } catch (error) {

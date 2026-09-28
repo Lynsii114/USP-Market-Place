@@ -112,6 +112,56 @@ def test_signup_login_and_create_hidden_listing():
     assert listing.json()["status"] == "available"
 
 
+def test_public_items_show_listings_from_all_accounts():
+    suffix = random.randint(10_000_000, 99_999_999)
+    first_user = User.objects.create(
+        username=f"__test_seller_one_{suffix}",
+        student_id=f"S{suffix}",
+        email=f"S{suffix}@student.usp.ac.fj",
+        password_hash="hash",
+        status="active",
+        verified=True,
+    )
+    second_user = User.objects.create(
+        username=f"__test_seller_two_{suffix}",
+        student_id=f"S{suffix + 1}",
+        email=f"S{suffix + 1}@student.usp.ac.fj",
+        password_hash="hash",
+        status="active",
+        verified=True,
+    )
+    created_items = []
+
+    try:
+        for seller, name in [
+            (first_user, "Scientific Calculator"),
+            (second_user, f"Cross Account Textbook {suffix}"),
+        ]:
+            response = client.post(
+                "/api/items",
+                {
+                    "name": name,
+                    "price": 10,
+                    "description": "Cross-account visibility test listing",
+                    "category": "Books",
+                    "contact": "test",
+                    "stock": 1,
+                    "seller_id": seller.id,
+                },
+                content_type="application/json",
+            )
+            assert response.status_code == 200
+            created_items.append(response.json())
+
+        items = client.get("/api/items")
+
+        assert items.status_code == 200
+        listed_item_ids = {item["id"] for item in items.json()}
+        assert {item["id"] for item in created_items}.issubset(listed_item_ids)
+    finally:
+        Item.objects.filter(id__in=[item["id"] for item in created_items]).delete()
+
+
 def test_cancel_verification_removes_pending_registration():
     payload = unique_student_payload()
     with patch("marketplace.services.send_email"):
