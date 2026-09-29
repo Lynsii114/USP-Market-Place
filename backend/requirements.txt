@@ -5,3 +5,4 @@ pytest
 PyJWT[crypto]
 pyotp
 qrcode[pil]
+reportlab
