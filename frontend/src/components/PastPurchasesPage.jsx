@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 
-function PastPurchasesPage({ currentUser, purchases, onBack, onLogin, onSubmitReview, isSubmitting }) {
+function PastPurchasesPage({ currentUser, purchases, onBack, onLogin, onSubmitReview, onViewSeller, isSubmitting }) {
   const [reviewingPurchase, setReviewingPurchase] = useState(null);
   const [reviewForm, setReviewForm] = useState({ rating: "5", review: "" });
   const orderHistory = purchases;
@@ -46,7 +46,12 @@ function PastPurchasesPage({ currentUser, purchases, onBack, onLogin, onSubmitRe
                     <div className="purchase-report-item" key={purchase.id}>
                       <div>
                         <strong>{purchase.item_name}</strong>
-                        <small>{purchase.category}</small>
+                        <small>
+                          {purchase.category} - Seller:{" "}
+                          <button type="button" className="seller-inline-link" onClick={() => onViewSeller?.(purchase)}>
+                            {purchase.seller_username}
+                          </button>
+                        </small>
                       </div>
                       <div>
                         <span>${Number(purchase.total_amount || purchase.price).toFixed(2)}</span>

@@ -58,6 +58,8 @@ function Home() {
   const [sortOption, setSortOption] = useState("newest");
   const [selectedListing, setSelectedListing] = useState(null);
   const [selectedSeller, setSelectedSeller] = useState(null);
+  const [selectedSellerReviews, setSelectedSellerReviews] = useState(null);
+  const [isLoadingSellerReviews, setIsLoadingSellerReviews] = useState(false);
   const [showSellerPanel, setShowSellerPanel] = useState(false);
   const [showShopPage, setShowShopPage] = useState(false);
   const [activeCategoryPage, setActiveCategoryPage] = useState(null);
@@ -71,6 +73,7 @@ function Home() {
   const [sellerOrders, setSellerOrders] = useState([]);
   const [activeLegalPage, setActiveLegalPage] = useState(null);
   const [activeAccountPage, setActiveAccountPage] = useState(null);
+  const [activeSalesView, setActiveSalesView] = useState("active");
   const [conversations, setConversations] = useState([]);
   const [activeConversationId, setActiveConversationId] = useState(null);
   const [messageDraft, setMessageDraft] = useState("");
@@ -110,6 +113,18 @@ function Home() {
       setUnreadMessageCount(0);
       setUserNotifications([]);
     }
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      loadUserNotifications(currentUser.id, { silent: true });
+    }, 15000);
+
+    return () => window.clearInterval(intervalId);
   }, [currentUser]);
 
   useEffect(() => {
@@ -335,6 +350,22 @@ function Home() {
         const data = await parseResponse(response, "Unable to request a password reset");
         setVerificationEmail(authForm.email.trim());
         setAuthForm((previous) => ({ ...previous, reset_code: "", new_password: "", new_password_confirmation: "" }));
+        setAuthMode("verify-reset-code");
+        showToast(data.message);
+        return;
+      }
+
+      if (authMode === "verify-reset-code") {
+        const response = await fetch(`${API_URL}/users/verify-password-reset`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: verificationEmail,
+            code: authForm.reset_code,
+          }),
+        });
+        const data = await parseResponse(response, "Unable to verify your reset code");
+        setAuthForm((previous) => ({ ...previous, new_password: "", new_password_confirmation: "" }));
         setAuthMode("reset-password");
         showToast(data.message);
         return;
@@ -658,13 +689,15 @@ function Home() {
     }
   };
 
-  const loadUserNotifications = async (userId) => {
+  const loadUserNotifications = async (userId, options = {}) => {
     try {
       const response = await fetch(`${API_URL}/users/${userId}/notifications`);
       const data = await parseResponse(response, "Unable to load notifications");
       setUserNotifications(data);
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "Unable to load notifications", "error");
+      if (!options.silent) {
+        showToast(error instanceof Error ? error.message : "Unable to load notifications", "error");
+      }
     }
   };
 
@@ -708,6 +741,16 @@ function Home() {
         await markUserNotificationsViewedByCategory("message");
         await loadUnreadMessageCount(currentUser.id);
       }
+      return;
+    }
+
+    if (
+      notification.category === "sale" ||
+      (notification.category === "order" && /new order|placed an order/i.test(`${notification.title || ""} ${notification.message || ""}`))
+    ) {
+      await loadSellerOrders(currentUser.id);
+      openAccountPage("sales", "history");
+      await loadUserNotifications(currentUser.id);
       return;
     }
 
@@ -784,12 +827,30 @@ function Home() {
     }
   };
 
-  const handleViewSellerListings = (listing) => {
+  const handleViewSellerListings = async (sellerRef) => {
+    if (!sellerRef) {
+      return;
+    }
+
+    const sellerId = sellerRef.seller_id ?? sellerRef.id;
+    const sellerUsername = sellerRef.seller_username ?? sellerRef.username;
     setSelectedSeller({
-      id: listing.seller_id,
-      username: listing.seller_username,
+      id: sellerId,
+      username: sellerUsername,
     });
+    setSelectedSellerReviews(null);
     setSelectedListing(null);
+    setIsLoadingSellerReviews(true);
+
+    try {
+      const response = await fetch(`${API_URL}/users/${sellerId}/reviews`);
+      const data = await parseResponse(response, "Unable to load seller reviews");
+      setSelectedSellerReviews(data);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to load seller reviews", "error");
+    } finally {
+      setIsLoadingSellerReviews(false);
+    }
   };
 
   const handleDeleteListing = async (listingId) => {
@@ -870,18 +931,19 @@ function Home() {
         )
         .slice(0, 5)
     : [];
-  const cartTotal = cartItems.reduce((total, item) => total + Number(item.price), 0);
+  const cartTotal = cartItems.reduce((total, item) => total + Number(item.price) * Number(item.quantity || 1), 0);
+  const cartQuantityCount = cartItems.reduce((total, item) => total + Number(item.quantity || 1), 0);
 
   const handleSearchSubmit = (event) => {
     event.preventDefault();
     hideActivePages();
-    document.getElementById("listings")?.scrollIntoView({ behavior: "smooth" });
+    setShowShopPage(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const chooseCategory = (categoryName) => {
     setShowAdminDashboard(false);
     setShowSellerPanel(false);
-    setShowShopPage(false);
     setShowCartPanel(false);
     setShowPurchasesPage(false);
     setActiveAccountPage(null);
@@ -995,10 +1057,25 @@ function Home() {
       return;
     }
 
-    setCartItems((currentItems) => [...currentItems, listing]);
+    setCartItems((currentItems) => [...currentItems, { ...listing, quantity: 1 }]);
     setReceipt(null);
     setSelectedListing(null);
     showToast("Item successfully added to cart.");
+  };
+
+  const updateCartQuantity = (listingId, nextQuantity) => {
+    setCartItems((currentItems) =>
+      currentItems.map((item) => {
+        if (item.id !== listingId) {
+          return item;
+        }
+
+        const stock = Math.max(1, Number(item.stock) || 1);
+        const quantity = Math.min(stock, Math.max(1, Number(nextQuantity) || 1));
+        return { ...item, quantity };
+      })
+    );
+    setReceipt(null);
   };
 
   const paymentMethodLabels = {
@@ -1052,7 +1129,8 @@ function Home() {
       const feeRemainderInCents = deliveryFeeInCents - baseFeeShareInCents * availableItems.length;
 
       for (const [index, item] of availableItems.entries()) {
-        const itemSubtotal = Number(item.price);
+        const itemQuantity = Number(item.quantity || 1);
+        const itemSubtotal = Number(item.price) * itemQuantity;
         const itemDeliveryFee = (baseFeeShareInCents + (index < feeRemainderInCents ? 1 : 0)) / 100;
         const itemFinalTotal = itemSubtotal + itemDeliveryFee;
         const response = await fetch(`${API_URL}/items/${item.id}/purchase?buyer_id=${currentUser.id}`, {
@@ -1061,6 +1139,7 @@ function Home() {
           body: JSON.stringify({
             payment_method: paymentMethod,
             delivery_method: deliveryMethod,
+            quantity: itemQuantity,
             delivery_fee: itemDeliveryFee,
             subtotal: itemSubtotal,
             final_total: itemFinalTotal,
@@ -1415,7 +1494,9 @@ function Home() {
 
   const handleSuggestionSelect = (listing) => {
     setSearchQuery(listing.name);
-    document.getElementById("listings")?.scrollIntoView({ behavior: "smooth" });
+    hideActivePages();
+    setShowShopPage(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const clearFilters = () => {
@@ -1436,10 +1517,16 @@ function Home() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const openAccountPage = (page) => {
+  const openAccountPage = (page, salesView = "active") => {
     if (!currentUser) {
       openAuth("login");
       return;
+    }
+
+    if (page === "sales") {
+      setActiveSalesView(salesView);
+      loadSellerOrders(currentUser.id);
+      loadSellerListings(currentUser.id);
     }
 
     setShowAdminDashboard(false);
@@ -1503,7 +1590,7 @@ function Home() {
       <Navbar
         logo={logo}
         currentUser={currentUser}
-        cartCount={cartItems.length}
+        cartCount={cartQuantityCount}
         unreadMessageCount={unreadMessageCount}
         notifications={userNotifications}
         activePage={activeNavPage}
@@ -1554,6 +1641,8 @@ function Home() {
           onCheckout={checkoutCart}
           onClearReceipt={() => setReceipt(null)}
           onRemove={removeFromCart}
+          onQuantityChange={updateCartQuantity}
+          onViewSeller={handleViewSellerListings}
           isSubmitting={isSubmitting}
         />
       )}
@@ -1565,6 +1654,7 @@ function Home() {
           onBack={hideActivePages}
           onLogin={() => openAuth("login")}
           onSubmitReview={submitRatingReview}
+          onViewSeller={handleViewSellerListings}
           isSubmitting={isSubmitting}
         />
       )}
@@ -1574,6 +1664,8 @@ function Home() {
         currentUser={currentUser}
         myListings={myListings}
         purchaseHistory={purchaseHistory}
+        sellerOrders={sellerOrders}
+        activeSalesView={activeSalesView}
         conversations={conversations}
         activeConversationId={activeConversationId}
         messageDraft={messageDraft}
@@ -1586,7 +1678,7 @@ function Home() {
 
       <LegalPage page={activeLegalPage} onBack={hideActivePages} />
 
-      {showShopPage && !activeCategoryPage && !showCartPanel && !showPurchasesPage && !activeLegalPage && !activeAccountPage && (
+      {showShopPage && !activeCategoryPage && !showCartPanel && !showPurchasesPage && !activeLegalPage && !activeAccountPage && !showSellerPanel && (
         <ListingsSection
           categories={categories}
           filteredListings={filteredListings}
@@ -1604,7 +1696,41 @@ function Home() {
         />
       )}
 
-      {!showShopPage && !activeCategoryPage && !showCartPanel && !showPurchasesPage && !activeLegalPage && !activeAccountPage && (
+      {showSellerPanel && !showShopPage && !activeCategoryPage && !showCartPanel && !showPurchasesPage && !activeLegalPage && !activeAccountPage && (
+        <SellerPanel
+          activeSellerTab={activeSellerTab}
+          categories={categories}
+          currentUser={currentUser}
+          editingListingId={editingListingId}
+          isSubmitting={isSubmitting}
+          listingForm={listingForm}
+          myListings={myListings}
+          openListingMenuId={openListingMenuId}
+          pendingPhoto={pendingPhoto}
+          sellerOrders={sellerOrders}
+          onLoadReservationBuyers={loadReservationBuyers}
+          onReserveListing={reserveListingForBuyer}
+          onUpdateListingStatus={updateListingSellerStatus}
+          onClose={hideActivePages}
+          onDeleteListing={handleDeleteListing}
+          onEditListing={handleEditListing}
+          onFieldChange={handleListingFieldChange}
+          onLogin={() => openAuth("login")}
+          onMenuToggle={(listingId) =>
+            setOpenListingMenuId((currentId) => (currentId === listingId ? null : listingId))
+          }
+          onViewListing={handleViewOwnListing}
+          onPhotoChange={handlePhotoChange}
+          onPhotoConfirm={confirmPhoto}
+          onPhotoRemove={removePhoto}
+          onResetForm={resetListingForm}
+          onSubmit={handleListingSubmit}
+          onUpdateOrderStage={updateSellerOrderStage}
+          onCancelOrder={cancelOrder}
+        />
+      )}
+
+      {!showShopPage && !showSellerPanel && !activeCategoryPage && !showCartPanel && !showPurchasesPage && !activeLegalPage && !activeAccountPage && (
         <>
           <HeroSection
             searchQuery={searchQuery}
@@ -1619,40 +1745,6 @@ function Home() {
             selectedCategory={selectedCategory}
             onChooseCategory={chooseCategory}
           />
-
-          {showSellerPanel && (
-            <SellerPanel
-              activeSellerTab={activeSellerTab}
-              categories={categories}
-              currentUser={currentUser}
-              editingListingId={editingListingId}
-              isSubmitting={isSubmitting}
-              listingForm={listingForm}
-              myListings={myListings}
-              openListingMenuId={openListingMenuId}
-              pendingPhoto={pendingPhoto}
-              sellerOrders={sellerOrders}
-              onLoadReservationBuyers={loadReservationBuyers}
-              onReserveListing={reserveListingForBuyer}
-              onUpdateListingStatus={updateListingSellerStatus}
-              onClose={hideActivePages}
-              onDeleteListing={handleDeleteListing}
-              onEditListing={handleEditListing}
-              onFieldChange={handleListingFieldChange}
-              onLogin={() => openAuth("login")}
-              onMenuToggle={(listingId) =>
-                setOpenListingMenuId((currentId) => (currentId === listingId ? null : listingId))
-              }
-              onViewListing={handleViewOwnListing}
-              onPhotoChange={handlePhotoChange}
-              onPhotoConfirm={confirmPhoto}
-              onPhotoRemove={removePhoto}
-              onResetForm={resetListingForm}
-              onSubmit={handleListingSubmit}
-              onUpdateOrderStage={updateSellerOrderStage}
-              onCancelOrder={cancelOrder}
-            />
-          )}
 
           <ListingsSection
             categories={categories}
@@ -1687,30 +1779,74 @@ function Home() {
           <div className="seller-products-modal" onClick={(event) => event.stopPropagation()}>
             <div className="auth-header">
               <div>
-                <span className="section-kicker">Seller listings</span>
+                <span className="section-kicker">Seller profile</span>
                 <h3>{selectedSeller.username}</h3>
               </div>
               <button type="button" className="close-button" onClick={() => setSelectedSeller(null)} aria-label="Close">
                 x
               </button>
             </div>
+            <div className="seller-profile-summary">
+              <div>
+                <span>Rating</span>
+                <strong>
+                  {isLoadingSellerReviews
+                    ? "Loading..."
+                    : selectedSellerReviews?.review_count
+                      ? `${selectedSellerReviews.average_rating} / 5`
+                      : "No ratings yet"}
+                </strong>
+              </div>
+              <div>
+                <span>Reviews</span>
+                <strong>{selectedSellerReviews?.review_count ?? 0}</strong>
+              </div>
+              <div>
+                <span>Listed Items</span>
+                <strong>{selectedSellerListings.length}</strong>
+              </div>
+            </div>
             {selectedSellerListings.length ? (
-              <div className="seller-products-grid">
-                {selectedSellerListings.map((listing) => (
-                  <ProductCard
-                    listing={listing}
-                    showPrice
-                    onSelect={(selectedProduct) => {
-                      setSelectedSeller(null);
-                      setSelectedListing(selectedProduct);
-                    }}
-                    key={listing.id}
-                  />
-                ))}
+              <div className="seller-profile-section">
+                <h4>Listed Items</h4>
+                <div className="seller-products-grid">
+                  {selectedSellerListings.map((listing) => (
+                    <ProductCard
+                      listing={listing}
+                      showPrice
+                      onSelect={(selectedProduct) => {
+                        setSelectedSeller(null);
+                        setSelectedListing(selectedProduct);
+                      }}
+                      key={listing.id}
+                    />
+                  ))}
+                </div>
               </div>
             ) : (
               <p className="empty-state">This seller has no other available listings.</p>
             )}
+            <div className="seller-profile-section">
+              <h4>Reviews</h4>
+              {isLoadingSellerReviews ? (
+                <p className="empty-state">Loading reviews...</p>
+              ) : selectedSellerReviews?.reviews?.length ? (
+                <div className="seller-review-list">
+                  {selectedSellerReviews.reviews.map((review) => (
+                    <div className="seller-review-item" key={review.id}>
+                      <div>
+                        <strong>{review.reviewer_username}</strong>
+                        <span>{"★".repeat(review.rating)}{"☆".repeat(5 - review.rating)}</span>
+                      </div>
+                      <p>{review.review}</p>
+                      <small>{review.item_name}</small>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="empty-state">No reviews for this seller yet.</p>
+              )}
+            </div>
           </div>
         </div>
       )}

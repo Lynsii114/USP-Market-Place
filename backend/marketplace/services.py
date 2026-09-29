@@ -505,17 +505,16 @@ def request_password_reset(data):
     return {"message": "If that USP email is registered, a password reset code has been sent."}
 
 
-def reset_password(data):
-    email = str(data.get("email", "")).strip().lower()
-    code = str(data.get("code", "")).strip()
-    password = str(data.get("password", ""))
-    if len(password) < 6:
-        raise ApiError("Password must be at least 6 characters long", 422)
-    reset = PasswordReset.objects.filter(
+def find_active_password_reset(email):
+    return PasswordReset.objects.filter(
         user__email__iexact=email,
         used_at__isnull=True,
         expires_at__gt=timezone.now(),
     ).order_by("-created_at").first()
+
+
+def validate_password_reset_code(email, code):
+    reset = find_active_password_reset(email)
     if not reset:
         raise ApiError("That reset code is invalid or expired", 400)
     if reset.attempts >= 5:
@@ -524,6 +523,23 @@ def reset_password(data):
         reset.attempts += 1
         reset.save(update_fields=["attempts"])
         raise ApiError("That reset code is invalid or expired", 400)
+    return reset
+
+
+def verify_password_reset_code(data):
+    email = str(data.get("email", "")).strip().lower()
+    code = str(data.get("code", "")).strip()
+    validate_password_reset_code(email, code)
+    return {"message": "Reset code verified. Choose a new password."}
+
+
+def reset_password(data):
+    email = str(data.get("email", "")).strip().lower()
+    code = str(data.get("code", "")).strip()
+    password = str(data.get("password", ""))
+    if len(password) < 6:
+        raise ApiError("Password must be at least 6 characters long", 422)
+    reset = validate_password_reset_code(email, code)
     reset.user.password_hash = hash_password(password)
     reset.user.save(update_fields=["password_hash"])
     reset.used_at = timezone.now()
@@ -899,6 +915,7 @@ def purchase_item(
     buyer_id,
     payment_method="cash",
     delivery_method="self_pickup",
+    quantity=1,
     delivery_fee=0,
     subtotal=None,
     included_tax_amount=None,
@@ -914,6 +931,12 @@ def purchase_item(
     delivery_method_key = str(delivery_method or "").strip().lower()
     if delivery_method_key not in DELIVERY_METHODS:
         raise ApiError("Select a valid delivery method", 422)
+    try:
+        requested_quantity = int(quantity or 1)
+    except (TypeError, ValueError) as exc:
+        raise ApiError("Quantity must be a whole number", 422) from exc
+    if requested_quantity < 1:
+        raise ApiError("Quantity must be at least 1", 422)
 
     buyer = require_active_user(buyer_id)
     item = Item.objects.filter(id=item_id).first()
@@ -928,15 +951,17 @@ def purchase_item(
         item.status = "sold"
         item.save()
         raise ApiError("Item is sold out", 400)
+    if requested_quantity > item.stock:
+        raise ApiError(f"Only {item.stock} unit{' is' if item.stock == 1 else 's are'} available", 400)
 
     was_reserved = item.status == "reserved"
-    item.stock -= 1
+    item.stock -= requested_quantity
     item.status = "sold" if was_reserved or item.stock <= 0 else item_status(item.stock)
     if item.status == "sold":
         item.reserved_buyer_id = None
         item.reserved_buyer_username = None
     item.save()
-    item_subtotal = float(subtotal if subtotal is not None else item.price)
+    item_subtotal = float(subtotal if subtotal is not None else item.price * requested_quantity)
     item_delivery_fee = float(delivery_fee or 0)
     item_tax_amount = float(included_tax_amount if included_tax_amount is not None else 0)
     item_final_total = float(final_total if final_total is not None else item_subtotal + item_delivery_fee)
@@ -950,7 +975,7 @@ def purchase_item(
         seller_id=item.seller_id,
         seller_username=item.seller_username,
         seller_contact=item.contact,
-        quantity=1,
+        quantity=requested_quantity,
         total_amount=item_final_total,
         payment_method=payment_method_key,
         delivery_method=delivery_method_key,
@@ -968,11 +993,11 @@ def purchase_item(
         f"Your order for {item.name} is confirmed. Payment method: {PAYMENT_METHODS[payment_method_key]}.",
         buyer,
     )
-    notify_order_user(
-        purchase,
+    notify_user(
         item.seller_id,
         "New order placed",
         f"{buyer.username} placed an order for {item.name}.",
+        "sale",
         buyer,
     )
     return serialize_admin_item(item)
@@ -1114,15 +1139,22 @@ def dashboard(admin_id):
     require_admin(admin_id)
     today = date.today()
     purchases = list(visible_purchases().order_by("-id"))
+    counted_purchases = [
+        purchase
+        for purchase in purchases
+        if purchase.status not in {"cancelled", "canceled"} and purchase.order_stage not in {"cancelled", "canceled"}
+    ]
+    total_sales = sum(purchase.total_amount or purchase.price for purchase in counted_purchases)
     todays_sales = sum(
         purchase.total_amount or purchase.price
-        for purchase in purchases
+        for purchase in counted_purchases
         if purchase.purchased_at and purchase.purchased_at.date() == today
     )
     return {
         "total_students": User.objects.filter(role="student").count(),
         "total_active_listings": visible_items().filter(status="available").count(),
         "total_orders": len(purchases),
+        "total_sales": total_sales,
         "todays_sales": todays_sales,
         "recent_orders": [serialize_admin_purchase(purchase) for purchase in purchases[:5]],
     }
@@ -1342,10 +1374,31 @@ def submit_rating_review(data):
     return {"review": serialize_rating_review(review_record), "message": "Rating and review submitted."}
 
 
+def list_seller_reviews(seller_id):
+    seller = require_active_user(seller_id)
+    reviews = list(RatingReview.objects.filter(seller_id=seller.id).order_by("-id"))
+    serialized_reviews = [serialize_rating_review(review_record) for review_record in reviews]
+    average_rating = (
+        round(sum(review_record.rating for review_record in reviews) / len(serialized_reviews), 1)
+        if serialized_reviews
+        else 0
+    )
+    return {
+        "seller": {
+            "id": seller.id,
+            "username": seller.username,
+            "name": seller.name or seller.username,
+        },
+        "average_rating": average_rating,
+        "review_count": len(serialized_reviews),
+        "reviews": serialized_reviews,
+    }
+
+
 def list_user_reports(admin_id):
     require_admin(admin_id)
     reports = []
-    for report_record in UserReport.objects.order_by("-id"):
+    for report_record in UserReport.objects.exclude(reporter_username__startswith="__test_").order_by("-id"):
         serialized_report = serialize_user_report(report_record)
         if report_record.target_type == "listing" and report_record.target_id:
             item = Item.objects.filter(id=report_record.target_id).first()

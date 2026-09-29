@@ -15,7 +15,7 @@ from django.utils import timezone
 
 django.setup()
 
-from marketplace.models import AdminNotification, Item, PasswordReset, PendingRegistration, User, UserNotification
+from marketplace.models import AdminNotification, Item, PasswordReset, PendingRegistration, Purchase, RatingReview, User, UserNotification
 from marketplace.exceptions import ApiError
 from marketplace.schema import ensure_schema
 from marketplace.services import PENDING_REGISTRATIONS, VERIFICATION_CODE_TTL, send_email
@@ -32,6 +32,8 @@ def cleanup_test_records():
     PENDING_REGISTRATIONS.clear()
     AdminNotification.objects.filter(actor_username__startswith="__test_").delete()
     UserNotification.objects.filter(actor_username__startswith="__test_").delete()
+    RatingReview.objects.filter(reviewer_username__startswith="__test_").delete()
+    Purchase.objects.filter(item_name__startswith="__test_").delete()
     Item.objects.filter(name__startswith="__test_").delete()
     User.objects.filter(username__startswith="__test_").delete()
     PendingRegistration.objects.filter(username__startswith="__test_").delete()
@@ -203,8 +205,140 @@ def test_order_notifications_go_to_buyer_and_seller_not_admin():
     assert buyer_notifications.status_code == 200
     assert seller_notifications.status_code == 200
     assert any(notification["title"] == "Order confirmed" for notification in buyer_notifications.json())
-    assert any(notification["title"] == "New order placed" for notification in seller_notifications.json())
+    assert any(
+        notification["title"] == "New order placed" and notification["category"] == "sale"
+        for notification in seller_notifications.json()
+    )
     assert not AdminNotification.objects.filter(actor_username=buyer.username, category="checkout").exists()
+
+
+def test_purchase_quantity_updates_stock_and_history_total():
+    suffix = random.randint(10_000_000, 99_999_999)
+    buyer = create_active_test_user("quantity_buyer", suffix)
+    seller = create_active_test_user("quantity_seller", suffix + 1)
+    item = create_test_item(seller, suffix, name=f"__test_quantity_item_{suffix}")
+    item.stock = 3
+    item.save(update_fields=["stock"])
+
+    response = client.post(
+        f"/api/items/{item.id}/purchase?buyer_id={buyer.id}",
+        {
+            "quantity": 2,
+            "payment_method": "cash",
+            "delivery_method": "self_pickup",
+        },
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    item.refresh_from_db()
+    assert item.stock == 1
+    assert item.status == "available"
+    purchase = Purchase.objects.get(item_id=item.id, buyer_id=buyer.id)
+    assert purchase.quantity == 2
+    assert purchase.total_amount == 20
+    purchase_history = client.get(f"/api/users/{buyer.id}/purchases")
+    assert purchase_history.status_code == 200
+    assert any(order["item_id"] == item.id and order["quantity"] == 2 for order in purchase_history.json())
+
+
+def test_seller_reviews_are_publicly_viewable():
+    suffix = random.randint(10_000_000, 99_999_999)
+    buyer = create_active_test_user("review_buyer", suffix)
+    seller = create_active_test_user("review_seller", suffix + 1)
+    item = create_test_item(seller, suffix, name=f"__test_review_item_{suffix}")
+    review = RatingReview.objects.create(
+        reviewer_id=buyer.id,
+        reviewer_username=buyer.username,
+        item_id=item.id,
+        item_name=item.name,
+        seller_id=seller.id,
+        seller_username=seller.username,
+        rating=4,
+        review="Helpful seller and smooth pickup",
+    )
+
+    response = client.get(f"/api/users/{seller.id}/reviews")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["seller"]["username"] == seller.username
+    assert data["average_rating"] == 4
+    assert data["review_count"] == 1
+    assert data["reviews"][0]["id"] == review.id
+
+
+def test_admin_dashboard_total_sales_uses_purchase_totals():
+    suffix = random.randint(10_000_000, 99_999_999)
+    admin = User.objects.create(
+        username=f"__test_admin_{suffix}",
+        student_id=f"A{suffix}",
+        email=f"admin{suffix}@student.usp.ac.fj",
+        password_hash="hash",
+        role="admin",
+        status="active",
+        verified=True,
+    )
+    buyer = create_active_test_user("dashboard_buyer", suffix + 1)
+    seller = create_active_test_user("dashboard_seller", suffix + 2)
+    item = Item.objects.create(
+        name=f"Dashboard Sale Item {suffix}",
+        price=15,
+        description="Dashboard total sales item",
+        category="Books",
+        contact="test",
+        stock=4,
+        status="available",
+        seller_id=seller.id,
+        seller_username=seller.username,
+    )
+    cancelled_item = Item.objects.create(
+        name=f"Dashboard Cancelled Item {suffix}",
+        price=99,
+        description="Cancelled sale should not count",
+        category="Books",
+        contact="test",
+        stock=1,
+        status="available",
+        seller_id=seller.id,
+        seller_username=seller.username,
+    )
+
+    try:
+        initial_dashboard = client.get(f"/api/admin/dashboard?admin_id={admin.id}")
+        assert initial_dashboard.status_code == 200
+        initial_total_sales = initial_dashboard.json()["total_sales"]
+        initial_todays_sales = initial_dashboard.json()["todays_sales"]
+
+        purchase_response = client.post(
+            f"/api/items/{item.id}/purchase?buyer_id={buyer.id}",
+            {"quantity": 2, "payment_method": "cash", "delivery_method": "self_pickup"},
+            content_type="application/json",
+        )
+        cancelled_response = client.post(
+            f"/api/items/{cancelled_item.id}/purchase?buyer_id={buyer.id}",
+            {"payment_method": "cash", "delivery_method": "self_pickup"},
+            content_type="application/json",
+        )
+        assert purchase_response.status_code == 200
+        assert cancelled_response.status_code == 200
+        cancelled_purchase = Purchase.objects.get(item_id=cancelled_item.id, buyer_id=buyer.id)
+        cancel_response = client.post(
+            f"/api/orders/{cancelled_purchase.id}/cancel",
+            {"user_id": buyer.id},
+            content_type="application/json",
+        )
+        assert cancel_response.status_code == 200
+
+        dashboard = client.get(f"/api/admin/dashboard?admin_id={admin.id}")
+
+        assert dashboard.status_code == 200
+        data = dashboard.json()
+        assert data["total_sales"] == initial_total_sales + 30
+        assert data["todays_sales"] == initial_todays_sales + 30
+    finally:
+        Purchase.objects.filter(item_id__in=[item.id, cancelled_item.id]).delete()
+        Item.objects.filter(id__in=[item.id, cancelled_item.id]).delete()
 
 
 def test_cancel_order_notifies_buyer_and_seller_and_marks_read():
@@ -422,6 +556,14 @@ def test_password_reset_code_changes_password_once():
 
     assert request.status_code == 200
     code = re.search(r"\b\d{6}\b", reset_message).group()
+    verification = client.post(
+        "/api/users/verify-password-reset",
+        {"email": payload["email"], "code": code},
+        content_type="application/json",
+    )
+    assert verification.status_code == 200
+    assert verification.json()["message"] == "Reset code verified. Choose a new password."
+
     reset = client.post(
         "/api/users/reset-password",
         {"email": payload["email"], "code": code, "password": "newpass"},
@@ -436,3 +578,40 @@ def test_password_reset_code_changes_password_once():
         content_type="application/json",
     )
     assert reused.status_code == 400
+
+
+def test_password_reset_code_must_be_verified_before_password_form():
+    payload = unique_student_payload()
+    user = User.objects.create(
+        username=payload["username"],
+        student_id=payload["email"].split("@", 1)[0],
+        email=payload["email"],
+        password_hash=__import__("marketplace.services", fromlist=["hash_password"]).hash_password("oldpass"),
+        authenticator_secret="JBSWY3DPEHPK3PXP",
+        authenticator_enabled=True,
+    )
+
+    with patch("marketplace.services.send_email") as send_email:
+        request = client.post(
+            "/api/users/request-password-reset",
+            {"email": payload["email"]},
+            content_type="application/json",
+        )
+        reset_message = send_email.call_args.args[1]
+
+    assert request.status_code == 200
+    code = re.search(r"\b\d{6}\b", reset_message).group()
+    rejected = client.post(
+        "/api/users/verify-password-reset",
+        {"email": payload["email"], "code": "000000" if code != "000000" else "111111"},
+        content_type="application/json",
+    )
+    assert rejected.status_code == 400
+    assert PasswordReset.objects.filter(user=user).latest("created_at").attempts == 1
+
+    accepted = client.post(
+        "/api/users/verify-password-reset",
+        {"email": payload["email"], "code": code},
+        content_type="application/json",
+    )
+    assert accepted.status_code == 200

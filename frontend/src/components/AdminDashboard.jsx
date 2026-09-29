@@ -14,6 +14,7 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
   const [orderSearch, setOrderSearch] = useState("");
   const [orderDate, setOrderDate] = useState("");
   const [reportPeriod, setReportPeriod] = useState("daily");
+  const [reportSearch, setReportSearch] = useState("");
   const [reportFromDate, setReportFromDate] = useState("");
   const [reportToDate, setReportToDate] = useState("");
   const [reportOrders, setReportOrders] = useState([]);
@@ -146,7 +147,7 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
       ["Total Students", dashboard?.total_students ?? 0],
       ["Active Listings", dashboard?.total_active_listings ?? 0],
       ["Total Orders", dashboard?.total_orders ?? 0],
-      ["Today's Sales", `$${Number(dashboard?.todays_sales ?? 0).toFixed(2)}`],
+      ["Total Sales", `$${Number(dashboard?.total_sales ?? dashboard?.todays_sales ?? 0).toFixed(2)}`],
     ],
     [dashboard]
   );
@@ -155,15 +156,32 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
     const fromTime = reportFromDate ? new Date(`${reportFromDate}T00:00:00`).getTime() : null;
     const toTime = reportToDate ? new Date(`${reportToDate}T23:59:59`).getTime() : null;
 
+    const normalizedSearch = reportSearch.trim().toLowerCase();
+
     return reportOrders.filter((order) => {
       if (!order.purchased_at) {
         return false;
       }
 
       const orderTime = new Date(order.purchased_at).getTime();
-      return (fromTime === null || orderTime >= fromTime) && (toTime === null || orderTime <= toTime);
+      const matchesDate = (fromTime === null || orderTime >= fromTime) && (toTime === null || orderTime <= toTime);
+      if (!matchesDate) {
+        return false;
+      }
+      if (!normalizedSearch) {
+        return true;
+      }
+      return [
+        order.id,
+        order.item_name,
+        order.buyer_username,
+        order.seller_username,
+        order.category,
+      ]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(normalizedSearch));
     });
-  }, [reportOrders, reportFromDate, reportToDate]);
+  }, [reportOrders, reportFromDate, reportSearch, reportToDate]);
 
   const reportSummary = useMemo(() => {
     const useReportTotals = !reportFromDate && !reportToDate && reportOrders.length === 0;
@@ -379,59 +397,94 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
     }
   };
 
-  const generateReport = async () => {
+  const searchReportPurchases = async () => {
     if (reportFromDate && reportToDate && reportFromDate > reportToDate) {
       showToast("From date cannot be after To date.");
       return;
     }
 
     await loadReport();
-    showToast("Report generated successfully.");
+    showToast("Search updated.");
   };
 
   const createReportPdf = () => {
-    const rows = report?.rows ?? [];
+    if (reportFromDate && reportToDate && reportFromDate > reportToDate) {
+      showToast("From date cannot be after To date.");
+      setIsConfirmingReport(false);
+      return;
+    }
+
+    const purchases = filteredReportOrders;
     const clean = (value) => String(value).replace(/[^\x20-\x7E]/g, "?").replace(/[\\()]/g, "\\$&");
-    const commands = [];
-    const addText = (text, x, y, size = 10, font = "F1", color = "0.08 0.14 0.22") => {
-      commands.push(`${color} rg BT /${font} ${size} Tf ${x} ${y} Td (${clean(text)}) Tj ET`);
+    const truncate = (value, maxLength) => {
+      const text = String(value ?? "");
+      return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
     };
-    const addLine = (x1, y1, x2, y2) => commands.push(`0.84 0.88 0.93 RG ${x1} ${y1} m ${x2} ${y2} l S`);
+    const pages = [];
+    const addPage = (pagePurchases, pageNumber, totalPages) => {
+      const commands = [];
+      const addText = (text, x, y, size = 9, font = "F1", color = "0.08 0.14 0.22") => {
+        commands.push(`${color} rg BT /${font} ${size} Tf ${x} ${y} Td (${clean(text)}) Tj ET`);
+      };
+      const addLine = (x1, y1, x2, y2) => commands.push(`0.84 0.88 0.93 RG ${x1} ${y1} m ${x2} ${y2} l S`);
 
-    commands.push("0.05 0.18 0.30 rg 40 710 532 52 re f");
-    addText("USP", 58, 730, 18, "F2", "1 1 1");
-    addText("USP BUY & SELL ADMIN REPORT", 112, 736, 14, "F2", "1 1 1");
-    addText(`Period: ${reportPeriod}`, 112, 720, 10, "F1", "1 1 1");
-    addText(`Generated: ${new Date().toLocaleString()}`, 350, 720, 8, "F1", "1 1 1");
-    addText(`Total Orders: ${report?.total_orders ?? 0}`, 44, 676, 11, "F2");
-    addText(`Items Sold: ${report?.total_items_sold ?? 0}`, 230, 676, 11, "F2");
-    addText(`Total Sales: $${Number(report?.total_sales ?? 0).toFixed(2)}`, 405, 676, 11, "F2");
-    addLine(40, 650, 572, 650);
-    addText("Date", 44, 628, 9, "F2");
-    addText("Orders", 225, 628, 9, "F2");
-    addText("Items Sold", 335, 628, 9, "F2");
-    addText("Total Sales", 465, 628, 9, "F2");
-    addLine(40, 618, 572, 618);
+      commands.push("0.05 0.18 0.30 rg 40 710 532 52 re f");
+      addText("USP", 58, 730, 18, "F2", "1 1 1");
+      addText("USP BUY & SELL PURCHASES", 112, 736, 14, "F2", "1 1 1");
+      addText(`Generated: ${new Date().toLocaleString()}`, 350, 720, 8, "F1", "1 1 1");
+      addText(`Purchases: ${purchases.length}`, 44, 676, 11, "F2");
+      addText(`Items Sold: ${reportSummary.itemsSold}`, 230, 676, 11, "F2");
+      addText(`Total Revenue: $${Number(reportSummary.revenue).toFixed(2)}`, 405, 676, 11, "F2");
+      addLine(40, 650, 572, 650);
+      addText("Order", 44, 628, 8, "F2");
+      addText("Date", 92, 628, 8, "F2");
+      addText("Buyer", 178, 628, 8, "F2");
+      addText("Seller", 256, 628, 8, "F2");
+      addText("Item", 334, 628, 8, "F2");
+      addText("Qty", 490, 628, 8, "F2");
+      addText("Total", 524, 628, 8, "F2");
+      addLine(40, 618, 572, 618);
 
-    let y = 598;
-    rows.slice(0, 22).forEach((row) => {
-      addText(row.date, 44, y);
-      addText(String(row.orders), 225, y);
-      addText(String(row.items_sold), 335, y);
-      addText(`$${Number(row.total_sales).toFixed(2)}`, 465, y);
-      addLine(40, y - 12, 572, y - 12);
-      y -= 24;
-    });
+      let y = 598;
+      pagePurchases.forEach((purchase) => {
+        addText(`#${purchase.id}`, 44, y);
+        addText(new Date(purchase.purchased_at).toLocaleDateString(), 92, y);
+        addText(truncate(purchase.buyer_username, 14), 178, y);
+        addText(truncate(purchase.seller_username, 14), 256, y);
+        addText(truncate(purchase.item_name, 28), 334, y);
+        addText(String(purchase.quantity || 1), 490, y);
+        addText(`$${Number(purchase.total_amount || purchase.price || 0).toFixed(2)}`, 524, y);
+        addLine(40, y - 12, 572, y - 12);
+        y -= 22;
+      });
 
-    addText("USP Buy & Sell | Admin Office | Laucala Campus", 44, 44, 8);
-    const textCommands = commands.join("\n");
+      if (!pagePurchases.length) {
+        addText("No purchases found.", 44, 598);
+      }
+
+      addText("USP Buy & Sell | Admin Office | Laucala Campus", 44, 44, 8);
+      addText(`Page ${pageNumber} of ${totalPages}`, 504, 44, 8);
+      pages.push(commands.join("\n"));
+    };
+
+    const rowsPerPage = 22;
+    const pageCount = Math.max(1, Math.ceil(purchases.length / rowsPerPage));
+    for (let index = 0; index < pageCount; index += 1) {
+      addPage(purchases.slice(index * rowsPerPage, (index + 1) * rowsPerPage), index + 1, pageCount);
+    }
+
+    const pageStartRef = 3;
+    const fontRef = pageStartRef + pageCount;
+    const boldFontRef = fontRef + 1;
+    const contentStartRef = boldFontRef + 1;
+    const pageRefs = Array.from({ length: pageCount }, (_, index) => pageStartRef + index);
     const objects = [
       "<< /Type /Catalog /Pages 2 0 R >>",
-      "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>",
+      `<< /Type /Pages /Kids [${pageRefs.map((ref) => `${ref} 0 R`).join(" ")}] /Count ${pageCount} >>`,
+      ...pages.map((_, index) => `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${fontRef} 0 R /F2 ${boldFontRef} 0 R >> >> /Contents ${contentStartRef + index} 0 R >>`),
       "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
       "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
-      `<< /Length ${textCommands.length} >>\nstream\n${textCommands}\nendstream`,
+      ...pages.map((textCommands) => `<< /Length ${textCommands.length} >>\nstream\n${textCommands}\nendstream`),
     ];
     let pdf = "%PDF-1.4\n";
     const offsets = [0];
@@ -788,6 +841,14 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
 
             <div className="report-filter">
               <label>
+                Search
+                <input
+                  value={reportSearch}
+                  onChange={(event) => setReportSearch(event.target.value)}
+                  placeholder="Order ID, buyer, seller, or item"
+                />
+              </label>
+              <label>
                 Period
                 <select value={reportPeriod} onChange={(event) => setReportPeriod(event.target.value)}>
                   <option value="daily">Daily</option>
@@ -803,8 +864,8 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
                 To
                 <input type="date" value={reportToDate} onChange={(event) => setReportToDate(event.target.value)} />
               </label>
-              <button type="button" className="secondary-button" onClick={generateReport}>
-                Generate Report
+              <button type="button" className="auth-submit" onClick={searchReportPurchases}>
+                Search
               </button>
             </div>
 

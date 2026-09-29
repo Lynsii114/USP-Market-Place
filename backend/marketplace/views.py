@@ -65,6 +65,13 @@ def request_password_reset(request):
 
 
 @csrf_exempt
+def verify_password_reset_code(request):
+    if request.method != "POST":
+        return method_not_allowed()
+    return run(lambda: (services.verify_password_reset_code(json_body(request)), True))
+
+
+@csrf_exempt
 def reset_password(request):
     if request.method != "POST":
         return method_not_allowed()
@@ -121,6 +128,7 @@ def purchase_item(request, item_id):
         request.GET.get("buyer_id"),
         data.get("payment_method", "cash"),
         data.get("delivery_method", "self_pickup"),
+        data.get("quantity", 1),
         data.get("delivery_fee", 0),
         data.get("subtotal"),
         data.get("included_tax_amount"),
@@ -152,6 +160,12 @@ def list_seller_orders(request, seller_id):
     if request.method != "GET":
         return method_not_allowed()
     return run(lambda: (services.list_seller_orders(seller_id), False))
+
+
+def list_seller_reviews(request, seller_id):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.list_seller_reviews(seller_id), False))
 
 
 @csrf_exempt

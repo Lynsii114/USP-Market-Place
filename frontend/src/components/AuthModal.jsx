@@ -59,6 +59,20 @@ function PasswordStrengthSign({ password }) {
   );
 }
 
+function PasswordMatchSign({ password, confirmation }) {
+  if (!confirmation) {
+    return null;
+  }
+
+  const matches = password === confirmation;
+
+  return (
+    <p className={`password-match ${matches ? "password-match-success" : "password-match-error"}`} aria-live="polite">
+      {matches ? "Passwords match" : "Passwords do not match"}
+    </p>
+  );
+}
+
 function AuthModal({
   authMode,
   authForm,
@@ -99,6 +113,8 @@ function AuthModal({
                 ? "Verify your email"
                 : authMode === "forgot-password"
                   ? "Reset your password"
+                  : authMode === "verify-reset-code"
+                    ? "Enter reset code"
                   : authMode === "reset-password"
                     ? "Choose a new password"
                     : "Welcome back"}
@@ -113,8 +129,11 @@ function AuthModal({
           {authMode === "forgot-password" && (
             <p className="auth-subtitle">Enter your USP student email and we will send a reset code.</p>
           )}
+          {authMode === "verify-reset-code" && (
+            <p className="auth-subtitle">Enter the six-digit reset code sent to {verificationEmail}.</p>
+          )}
           {authMode === "reset-password" && (
-            <p className="auth-subtitle">Enter the code sent to {verificationEmail}, then choose a new password.</p>
+            <p className="auth-subtitle">Choose a new password for {verificationEmail}.</p>
           )}
         </div>
         {!standalone && (
@@ -130,7 +149,7 @@ function AuthModal({
       </div>
 
       <form onSubmit={onSubmit} className="auth-form">
-        {authMode === "verify-email" || authMode === "authenticator" || authMode === "authenticator-setup" || authMode === "reset-password" ? (
+        {authMode === "verify-email" || authMode === "authenticator" || authMode === "authenticator-setup" || authMode === "verify-reset-code" || authMode === "reset-password" ? (
           <>
             {authMode === "authenticator-setup" && (
               <div className="authenticator-setup">
@@ -152,21 +171,23 @@ function AuthModal({
                 </label>
               </div>
             )}
-            <label>
-              {authMode === "verify-email" ? "Verification code" : authMode === "reset-password" ? "Password reset code" : "Microsoft Authenticator code"}
-              <input
-                type="text"
-                name={authMode === "verify-email" ? "verification_code" : authMode === "reset-password" ? "reset_code" : "authenticator_code"}
-                value={authMode === "verify-email" ? authForm.verification_code : authMode === "reset-password" ? authForm.reset_code : authForm.authenticator_code}
-                onChange={onFieldChange}
-                inputMode="numeric"
-                pattern="[0-9]{6}"
-                maxLength={6}
-                placeholder="000000"
-                required
-                disabled={authMode === "authenticator-setup" && !setupAcknowledged}
-              />
-            </label>
+            {authMode !== "reset-password" && (
+              <label>
+                {authMode === "verify-email" ? "Verification code" : authMode === "verify-reset-code" ? "Password reset code" : "Microsoft Authenticator code"}
+                <input
+                  type="text"
+                  name={authMode === "verify-email" ? "verification_code" : authMode === "verify-reset-code" ? "reset_code" : "authenticator_code"}
+                  value={authMode === "verify-email" ? authForm.verification_code : authMode === "verify-reset-code" ? authForm.reset_code : authForm.authenticator_code}
+                  onChange={onFieldChange}
+                  inputMode="numeric"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
+                  placeholder="000000"
+                  required
+                  disabled={authMode === "authenticator-setup" && !setupAcknowledged}
+                />
+              </label>
+            )}
             {authMode === "reset-password" && (
               <>
                 <PasswordField name="new_password" value={authForm.new_password} onChange={onFieldChange} label="New password" />
@@ -229,12 +250,16 @@ function AuthModal({
             )}
 
             {authMode === "signup" && (
-              <PasswordField
-                name="password_confirmation"
-                value={authForm.password_confirmation}
-                onChange={onFieldChange}
-                label="Confirm password"
-              />
+              <>
+                <PasswordField
+                  name="password_confirmation"
+                  value={authForm.password_confirmation}
+                  onChange={onFieldChange}
+                  label="Confirm password"
+                />
+                <PasswordStrengthSign password={authForm.password_confirmation} />
+                <PasswordMatchSign password={authForm.password} confirmation={authForm.password_confirmation} />
+              </>
             )}
 
             {authMode === "signup" && (
@@ -252,17 +277,19 @@ function AuthModal({
               ? "Sign Up"
               : authMode === "verify-email"
                 ? "Verify email"
-                : authMode === "forgot-password"
-                  ? "Send reset code"
-                  : authMode === "reset-password"
-                    ? "Reset password"
+              : authMode === "forgot-password"
+                ? "Send reset code"
+                : authMode === "verify-reset-code"
+                  ? "Verify reset code"
+                : authMode === "reset-password"
+                  ? "Reset password"
                 : ["authenticator", "authenticator-setup"].includes(authMode)
                   ? "Confirm code"
                   : "Login"}
         </button>
       </form>
 
-      {standalone && !["verify-email", "authenticator", "authenticator-setup", "forgot-password", "reset-password"].includes(authMode) && (
+      {standalone && !["verify-email", "authenticator", "authenticator-setup", "forgot-password", "verify-reset-code", "reset-password"].includes(authMode) && (
         <p className="auth-switch">
           {authMode === "login" ? "New to USP Marketplace?" : "Already have an account?"}{" "}
           <button type="button" onClick={() => onSwitchMode(authMode === "login" ? "signup" : "login")}>
@@ -275,7 +302,7 @@ function AuthModal({
           <button type="button" onClick={() => onSwitchMode("forgot-password")}>Forgot password?</button>
         </p>
       )}
-      {standalone && ["forgot-password", "reset-password"].includes(authMode) && (
+      {standalone && ["forgot-password", "verify-reset-code", "reset-password"].includes(authMode) && (
         <p className="auth-switch">
           <button type="button" onClick={() => onSwitchMode("login")}>Back to login</button>
         </p>

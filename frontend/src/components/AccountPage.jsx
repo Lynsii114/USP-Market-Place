@@ -1,10 +1,12 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 
 function AccountPage({
   page,
   currentUser,
   myListings,
   purchaseHistory,
+  sellerOrders = [],
+  activeSalesView = "active",
   conversations = [],
   activeConversationId,
   messageDraft,
@@ -16,12 +18,19 @@ function AccountPage({
 }) {
   const [salesFilter, setSalesFilter] = useState("active");
 
+  useEffect(() => {
+    if (page === "sales") {
+      setSalesFilter(activeSalesView);
+    }
+  }, [activeSalesView, page]);
+
   if (!page || !currentUser) {
     return null;
   }
 
   const soldListings = myListings.filter((listing) => listing.status === "sold" || Number(listing.stock) <= 0);
   const activeListings = myListings.filter((listing) => listing.status !== "sold" && Number(listing.stock) > 0);
+  const salesHistory = sellerOrders;
 
   const content = {
     profile: {
@@ -38,6 +47,7 @@ function AccountPage({
       rows: [
         ["Active Listings", activeListings.length, "active"],
         ["Sold Out Listings", soldListings.length, "sold"],
+        ["Sales History", salesHistory.length, "history"],
       ],
     },
     settings: {
@@ -58,6 +68,12 @@ function AccountPage({
   const activeConversation =
     conversations.find((conversation) => conversation.id === activeConversationId) || conversations[0];
   const selectedSalesListings = salesFilter === "sold" ? soldListings : activeListings;
+  const formatOrderDate = (value) => {
+    if (!value) {
+      return "Date unavailable";
+    }
+    return new Date(value).toLocaleString();
+  };
   const handleMessageKeyDown = (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -205,8 +221,35 @@ function AccountPage({
 
       {page === "sales" && (
         <div className="sales-list-panel">
-          <h3>{salesFilter === "sold" ? "Sold Out Listings" : "Active Listings"}</h3>
-          {selectedSalesListings.length ? (
+          <h3>
+            {salesFilter === "history"
+              ? "Sales History"
+              : salesFilter === "sold"
+                ? "Sold Out Listings"
+                : "Active Listings"}
+          </h3>
+          {salesFilter === "history" ? (
+            salesHistory.length ? (
+              <div className="sales-list">
+                {salesHistory.map((order) => (
+                  <div className="sales-list-item sales-history-item" key={order.id}>
+                    <div>
+                      <strong>{order.item_name}</strong>
+                      <span>
+                        Buyer: {order.buyer_username} - {order.quantity || 1} sold
+                      </span>
+                    </div>
+                    <div>
+                      <strong>${Number(order.total_amount || order.price).toFixed(2)}</strong>
+                      <span>{formatOrderDate(order.purchased_at)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="empty-state">No sales history yet.</p>
+            )
+          ) : selectedSalesListings.length ? (
             <div className="sales-list">
               {selectedSalesListings.map((listing) => (
                 <button type="button" className="sales-list-item" onClick={() => onViewConversationListing(listing)} key={listing.id}>

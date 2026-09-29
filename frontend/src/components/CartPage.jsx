@@ -9,6 +9,8 @@ function CartPage({
   onClearReceipt,
   onClose,
   onRemove,
+  onQuantityChange,
+  onViewSeller,
   isSubmitting,
 }) {
   const [checkoutStep, setCheckoutStep] = useState("cart");
@@ -24,7 +26,9 @@ function CartPage({
     { value: "cash", label: "Cash" },
     { value: "visa", label: "Visa Card" },
   ];
-  const itemCount = cartItems.length;
+  const quantityFor = (item) => Math.min(Math.max(Number(item.quantity || 1), 1), Math.max(Number(item.stock) || 1, 1));
+  const lineTotalFor = (item) => Number(item.price) * quantityFor(item);
+  const itemCount = cartItems.reduce((total, item) => total + quantityFor(item), 0);
   const availableItems = cartItems.filter(
     (item) =>
       item.status !== "sold" &&
@@ -32,7 +36,7 @@ function CartPage({
       (item.status !== "reserved" || item.reserved_buyer_id === currentUser?.id)
   );
   const hasAvailableItems = availableItems.length > 0;
-  const itemsSubtotal = availableItems.reduce((total, item) => total + Number(item.price), 0);
+  const itemsSubtotal = availableItems.reduce((total, item) => total + lineTotalFor(item), 0);
   const selectedDeliveryOption = deliveryOptions.find((option) => option.value === deliveryMethod);
   const deliveryFee = selectedDeliveryOption?.fee ?? 0;
   const finalTotal = itemsSubtotal + deliveryFee;
@@ -41,7 +45,7 @@ function CartPage({
     delivery_fee: deliveryFee,
     subtotal: itemsSubtotal,
     final_total: finalTotal,
-    item_count: availableItems.length,
+    item_count: itemCount,
   };
   return (
     <section className="cart-section cart-page" id="cart">
@@ -72,7 +76,12 @@ function CartPage({
               <div className="receipt-item" key={item.id}>
                 <div>
                   <strong>{item.name}</strong>
-                  <small>Seller: {item.seller_username}</small>
+                  <small>
+                    Seller:{" "}
+                    <button type="button" className="seller-inline-link" onClick={() => onViewSeller?.(item)}>
+                      {item.seller_username}
+                    </button>
+                  </small>
                 </div>
                 <div>
                   <span>${Number(item.price).toFixed(2)}</span>
@@ -116,7 +125,7 @@ function CartPage({
               <p>Select one option before reviewing checkout costs.</p>
             </div>
             <span>
-              {availableItems.length} {availableItems.length === 1 ? "item" : "items"}
+              {itemCount} {itemCount === 1 ? "item" : "items"}
             </span>
           </div>
 
@@ -158,7 +167,7 @@ function CartPage({
               <h3>Review Costs Before Payment</h3>
             </div>
             <span>
-              {availableItems.length} {availableItems.length === 1 ? "item" : "items"}
+              {itemCount} {itemCount === 1 ? "item" : "items"}
             </span>
           </div>
 
@@ -167,15 +176,20 @@ function CartPage({
               <div className="receipt-item" key={item.id}>
                 <div>
                   <strong>{item.name}</strong>
-                  <small>Seller: {item.seller_username}</small>
+                  <small>
+                    Seller:{" "}
+                    <button type="button" className="seller-inline-link" onClick={() => onViewSeller?.(item)}>
+                      {item.seller_username}
+                    </button>
+                  </small>
                 </div>
                 <div>
-                  <span>Qty 1</span>
+                  <span>Qty {quantityFor(item)}</span>
                   <small>Quantity</small>
                 </div>
                 <div>
-                  <span>${Number(item.price).toFixed(2)}</span>
-                  <small>Item price</small>
+                  <span>${lineTotalFor(item).toFixed(2)}</span>
+                  <small>${Number(item.price).toFixed(2)} each</small>
                 </div>
               </div>
             ))}
@@ -246,12 +260,36 @@ function CartPage({
                   </div>
                   <div className="cart-seller">
                     <span>Seller</span>
-                    <strong>{item.seller_username}</strong>
+                    <button type="button" className="seller-inline-link" onClick={() => onViewSeller?.(item)}>
+                      {item.seller_username}
+                    </button>
                   </div>
                 </div>
                 <div className="cart-item-action">
                   <span>${Number(item.price).toFixed(2)}</span>
                   <small>{Number(item.stock) > 0 ? `${item.stock} in stock` : "Sold"}</small>
+                  {Number(item.stock) > 1 && (
+                    <div className="cart-quantity-control" aria-label={`Quantity for ${item.name}`}>
+                      <button
+                        type="button"
+                        onClick={() => onQuantityChange(item.id, quantityFor(item) - 1)}
+                        disabled={quantityFor(item) <= 1}
+                        aria-label={`Decrease quantity for ${item.name}`}
+                      >
+                        -
+                      </button>
+                      <strong>{quantityFor(item)}</strong>
+                      <button
+                        type="button"
+                        onClick={() => onQuantityChange(item.id, quantityFor(item) + 1)}
+                        disabled={quantityFor(item) >= Number(item.stock)}
+                        aria-label={`Increase quantity for ${item.name}`}
+                      >
+                        +
+                      </button>
+                    </div>
+                  )}
+                  {Number(item.stock) > 1 && <small>Line total ${lineTotalFor(item).toFixed(2)}</small>}
                   <button type="button" className="secondary-button" onClick={() => onRemove(item.id)}>
                     Remove
                   </button>

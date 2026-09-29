@@ -859,6 +859,20 @@
   background: #16a34a;
 }
 
+.password-match {
+  margin: -8px 0 0;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.password-match-success {
+  color: #166534;
+}
+
+.password-match-error {
+  color: #b91c1c;
+}
+
 .auth-form input:focus {
   border-color: var(--usp-blue);
   box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.12);
@@ -2063,6 +2077,23 @@
   text-transform: uppercase;
 }
 
+.seller-inline-link {
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: var(--usp-blue);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+}
+
+.seller-inline-link:hover,
+.seller-inline-link:focus {
+  color: var(--usp-navy);
+  outline: none;
+  text-decoration: underline;
+}
+
 .cart-item-action {
   display: grid;
   justify-items: end;
@@ -2078,6 +2109,39 @@
 .cart-item-action small {
   color: var(--usp-muted);
   font-weight: 800;
+}
+
+.cart-quantity-control {
+  display: inline-grid;
+  grid-template-columns: 34px 40px 34px;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--usp-border);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.cart-quantity-control button {
+  width: 34px;
+  height: 34px;
+  border: none;
+  background: #edf3ff;
+  color: var(--usp-blue);
+  cursor: pointer;
+  font: inherit;
+  font-size: 1.1rem;
+  font-weight: 900;
+}
+
+.cart-quantity-control button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.cart-quantity-control strong {
+  color: var(--usp-navy);
+  font-size: 0.95rem;
+  text-align: center;
 }
 
 .cart-summary {
@@ -2257,6 +2321,16 @@
   color: var(--usp-muted);
   font-size: 0.84rem;
   font-weight: 800;
+}
+
+.sales-history-item {
+  cursor: default;
+}
+
+.sales-history-item:hover,
+.sales-history-item:focus {
+  border-color: var(--usp-border);
+  background: #f8fbff;
 }
 
 .messages-layout {
@@ -3525,10 +3599,86 @@
   font-size: 1.35rem;
 }
 
+.seller-profile-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.seller-profile-summary div {
+  display: grid;
+  gap: 5px;
+  padding: 14px;
+  border: 1px solid var(--usp-border);
+  border-radius: 8px;
+  background: #f8fafe;
+}
+
+.seller-profile-summary span,
+.seller-review-item small {
+  color: var(--usp-muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.seller-profile-summary strong {
+  color: var(--usp-navy);
+}
+
+.seller-profile-section {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.seller-profile-section h4 {
+  margin: 0;
+  color: var(--usp-navy);
+}
+
 .seller-products-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
+}
+
+.seller-review-list {
+  display: grid;
+  gap: 10px;
+}
+
+.seller-review-item {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--usp-border);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.seller-review-item div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.seller-review-item strong {
+  color: var(--usp-navy);
+}
+
+.seller-review-item span {
+  color: #b45309;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.seller-review-item p {
+  margin: 0;
+  color: var(--usp-text);
+  line-height: 1.5;
 }
 
 .product-header-actions {
@@ -4196,6 +4346,10 @@
   }
 
   .seller-products-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .seller-profile-summary {
     grid-template-columns: 1fr;
   }
 
