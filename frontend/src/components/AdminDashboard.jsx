@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import ReportsPanel from "./ReportsPanel";
 
 const adminTabs = ["Dashboard", "Students", "Listings", "Orders", "Reports", "Flags", "Reviews"];
 
@@ -8,21 +9,14 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
   const [students, setStudents] = useState([]);
   const [listings, setListings] = useState([]);
   const [orders, setOrders] = useState([]);
-  const [report, setReport] = useState(null);
   const [studentSearch, setStudentSearch] = useState("");
   const [listingSearch, setListingSearch] = useState("");
   const [orderSearch, setOrderSearch] = useState("");
+  const [orderStatus, setOrderStatus] = useState("");
   const [orderDate, setOrderDate] = useState("");
-  const [reportPeriod, setReportPeriod] = useState("daily");
-  const [reportSearch, setReportSearch] = useState("");
-  const [reportFromDate, setReportFromDate] = useState("");
-  const [reportToDate, setReportToDate] = useState("");
-  const [reportOrders, setReportOrders] = useState([]);
-  const [reportListings, setReportListings] = useState([]);
   const [userReports, setUserReports] = useState([]);
   const [ratingReviews, setRatingReviews] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [isConfirmingReport, setIsConfirmingReport] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
   const [selectedNotification, setSelectedNotification] = useState(null);
@@ -70,21 +64,11 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
   const loadOrders = async () => {
     const params = new URLSearchParams({
       search: orderSearch,
+      status: orderStatus,
       order_date: orderDate,
     });
     const data = await fetchAdmin(`/admin/orders?${params.toString()}`, "Unable to load orders");
     setOrders(data);
-  };
-
-  const loadReport = async () => {
-    const [reportData, ordersData, listingsData] = await Promise.all([
-      fetchAdmin(`/admin/reports?period=${reportPeriod}`, "Unable to load reports"),
-      fetchAdmin("/admin/orders", "Unable to load report orders"),
-      fetchAdmin("/admin/listings", "Unable to load report listings"),
-    ]);
-    setReport(reportData);
-    setReportOrders(ordersData);
-    setReportListings(listingsData);
   };
 
   const loadNotifications = async () => {
@@ -117,8 +101,6 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
         await loadListings();
       } else if (activeTab === "Orders") {
         await loadOrders();
-      } else if (activeTab === "Reports") {
-        await loadReport();
       } else if (activeTab === "Flags") {
         await loadUserReports();
       } else if (activeTab === "Reviews") {
@@ -134,7 +116,7 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
 
   useEffect(() => {
     refreshActiveTab();
-  }, [activeTab, isAdmin, reportPeriod]);
+  }, [activeTab, isAdmin]);
 
   useEffect(() => {
     if (isAdmin) {
@@ -147,66 +129,9 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
       ["Total Students", dashboard?.total_students ?? 0],
       ["Active Listings", dashboard?.total_active_listings ?? 0],
       ["Total Orders", dashboard?.total_orders ?? 0],
-      ["Total Sales", `$${Number(dashboard?.total_sales ?? dashboard?.todays_sales ?? 0).toFixed(2)}`],
+      ["Today's Sales", `$${Number(dashboard?.todays_sales ?? 0).toFixed(2)}`],
     ],
     [dashboard]
-  );
-
-  const filteredReportOrders = useMemo(() => {
-    const fromTime = reportFromDate ? new Date(`${reportFromDate}T00:00:00`).getTime() : null;
-    const toTime = reportToDate ? new Date(`${reportToDate}T23:59:59`).getTime() : null;
-
-    const normalizedSearch = reportSearch.trim().toLowerCase();
-
-    return reportOrders.filter((order) => {
-      if (!order.purchased_at) {
-        return false;
-      }
-
-      const orderTime = new Date(order.purchased_at).getTime();
-      const matchesDate = (fromTime === null || orderTime >= fromTime) && (toTime === null || orderTime <= toTime);
-      if (!matchesDate) {
-        return false;
-      }
-      if (!normalizedSearch) {
-        return true;
-      }
-      return [
-        order.id,
-        order.item_name,
-        order.buyer_username,
-        order.seller_username,
-        order.category,
-      ]
-        .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(normalizedSearch));
-    });
-  }, [reportOrders, reportFromDate, reportSearch, reportToDate]);
-
-  const reportSummary = useMemo(() => {
-    const useReportTotals = !reportFromDate && !reportToDate && reportOrders.length === 0;
-    const totalRevenue = filteredReportOrders.reduce(
-      (total, order) => total + Number(order.total_amount || order.price || 0),
-      0
-    );
-    const itemsSold = filteredReportOrders.reduce((total, order) => total + Number(order.quantity || 1), 0);
-    const completedOrders = filteredReportOrders.filter((order) => order.status === "completed").length;
-
-    return {
-      totalSales: useReportTotals ? report?.total_orders ?? 0 : completedOrders,
-      totalOrders: useReportTotals ? report?.total_orders ?? 0 : filteredReportOrders.length,
-      itemsSold: useReportTotals ? report?.total_items_sold ?? 0 : itemsSold,
-      revenue: useReportTotals ? Number(report?.total_sales ?? 0) : totalRevenue,
-    };
-  }, [filteredReportOrders, report, reportFromDate, reportOrders.length, reportToDate]);
-
-  const listingSummary = useMemo(
-    () => ({
-      active: reportListings.filter((listing) => listing.status === "available").length,
-      sold: reportListings.filter((listing) => listing.status === "sold").length,
-      removed: reportListings.filter((listing) => listing.status === "removed").length,
-    }),
-    [reportListings]
   );
 
   const formatDate = (value) =>
@@ -230,34 +155,8 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
 
   const unreadNotifications = notifications.filter((notification) => !notification.is_read);
 
-  const notificationDestination = (notification) => {
-    if (notification.category === "report") {
-      return "Flags";
-    }
-    if (notification.category === "listing") {
-      return "Listings";
-    }
-    if (notification.category === "account") {
-      return "Students";
-    }
-    if (notification.category === "checkout" || notification.category === "order") {
-      return "Orders";
-    }
-    if (notification.category === "review") {
-      return "Reviews";
-    }
-    return null;
-  };
-
   const openNotification = async (notification) => {
-    const destination = notificationDestination(notification);
-    if (destination) {
-      setActiveTab(destination);
-      setSelectedNotification(null);
-    } else {
-      setSelectedNotification(notification);
-    }
-
+    setSelectedNotification(notification);
     if (notification.is_read) {
       return;
     }
@@ -274,9 +173,7 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
       const updatedNotification = await fetchAdmin(`/admin/notifications/${notification.id}/view`, "Unable to mark notification as viewed", {
         method: "POST",
       });
-      if (!destination) {
-        setSelectedNotification(updatedNotification);
-      }
+      setSelectedNotification(updatedNotification);
       setNotifications((currentNotifications) =>
         currentNotifications.map((currentNotification) =>
           currentNotification.id === updatedNotification.id ? updatedNotification : currentNotification
@@ -395,120 +292,6 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const searchReportPurchases = async () => {
-    if (reportFromDate && reportToDate && reportFromDate > reportToDate) {
-      showToast("From date cannot be after To date.");
-      return;
-    }
-
-    await loadReport();
-    showToast("Search updated.");
-  };
-
-  const createReportPdf = () => {
-    if (reportFromDate && reportToDate && reportFromDate > reportToDate) {
-      showToast("From date cannot be after To date.");
-      setIsConfirmingReport(false);
-      return;
-    }
-
-    const purchases = filteredReportOrders;
-    const clean = (value) => String(value).replace(/[^\x20-\x7E]/g, "?").replace(/[\\()]/g, "\\$&");
-    const truncate = (value, maxLength) => {
-      const text = String(value ?? "");
-      return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
-    };
-    const pages = [];
-    const addPage = (pagePurchases, pageNumber, totalPages) => {
-      const commands = [];
-      const addText = (text, x, y, size = 9, font = "F1", color = "0.08 0.14 0.22") => {
-        commands.push(`${color} rg BT /${font} ${size} Tf ${x} ${y} Td (${clean(text)}) Tj ET`);
-      };
-      const addLine = (x1, y1, x2, y2) => commands.push(`0.84 0.88 0.93 RG ${x1} ${y1} m ${x2} ${y2} l S`);
-
-      commands.push("0.05 0.18 0.30 rg 40 710 532 52 re f");
-      addText("USP", 58, 730, 18, "F2", "1 1 1");
-      addText("USP BUY & SELL PURCHASES", 112, 736, 14, "F2", "1 1 1");
-      addText(`Generated: ${new Date().toLocaleString()}`, 350, 720, 8, "F1", "1 1 1");
-      addText(`Purchases: ${purchases.length}`, 44, 676, 11, "F2");
-      addText(`Items Sold: ${reportSummary.itemsSold}`, 230, 676, 11, "F2");
-      addText(`Total Revenue: $${Number(reportSummary.revenue).toFixed(2)}`, 405, 676, 11, "F2");
-      addLine(40, 650, 572, 650);
-      addText("Order", 44, 628, 8, "F2");
-      addText("Date", 92, 628, 8, "F2");
-      addText("Buyer", 178, 628, 8, "F2");
-      addText("Seller", 256, 628, 8, "F2");
-      addText("Item", 334, 628, 8, "F2");
-      addText("Qty", 490, 628, 8, "F2");
-      addText("Total", 524, 628, 8, "F2");
-      addLine(40, 618, 572, 618);
-
-      let y = 598;
-      pagePurchases.forEach((purchase) => {
-        addText(`#${purchase.id}`, 44, y);
-        addText(new Date(purchase.purchased_at).toLocaleDateString(), 92, y);
-        addText(truncate(purchase.buyer_username, 14), 178, y);
-        addText(truncate(purchase.seller_username, 14), 256, y);
-        addText(truncate(purchase.item_name, 28), 334, y);
-        addText(String(purchase.quantity || 1), 490, y);
-        addText(`$${Number(purchase.total_amount || purchase.price || 0).toFixed(2)}`, 524, y);
-        addLine(40, y - 12, 572, y - 12);
-        y -= 22;
-      });
-
-      if (!pagePurchases.length) {
-        addText("No purchases found.", 44, 598);
-      }
-
-      addText("USP Buy & Sell | Admin Office | Laucala Campus", 44, 44, 8);
-      addText(`Page ${pageNumber} of ${totalPages}`, 504, 44, 8);
-      pages.push(commands.join("\n"));
-    };
-
-    const rowsPerPage = 22;
-    const pageCount = Math.max(1, Math.ceil(purchases.length / rowsPerPage));
-    for (let index = 0; index < pageCount; index += 1) {
-      addPage(purchases.slice(index * rowsPerPage, (index + 1) * rowsPerPage), index + 1, pageCount);
-    }
-
-    const pageStartRef = 3;
-    const fontRef = pageStartRef + pageCount;
-    const boldFontRef = fontRef + 1;
-    const contentStartRef = boldFontRef + 1;
-    const pageRefs = Array.from({ length: pageCount }, (_, index) => pageStartRef + index);
-    const objects = [
-      "<< /Type /Catalog /Pages 2 0 R >>",
-      `<< /Type /Pages /Kids [${pageRefs.map((ref) => `${ref} 0 R`).join(" ")}] /Count ${pageCount} >>`,
-      ...pages.map((_, index) => `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${fontRef} 0 R /F2 ${boldFontRef} 0 R >> >> /Contents ${contentStartRef + index} 0 R >>`),
-      "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-      "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
-      ...pages.map((textCommands) => `<< /Length ${textCommands.length} >>\nstream\n${textCommands}\nendstream`),
-    ];
-    let pdf = "%PDF-1.4\n";
-    const offsets = [0];
-    objects.forEach((object, index) => {
-      offsets.push(pdf.length);
-      pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
-    });
-    const xrefOffset = pdf.length;
-    pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-    offsets.slice(1).forEach((offset) => {
-      pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
-    });
-    pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
-
-    const blob = new Blob([pdf], { type: "application/pdf" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `usp-buy-sell-admin-report-${Date.now()}.pdf`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    setIsConfirmingReport(false);
   };
 
   if (!isAdmin) {
@@ -818,6 +601,10 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
             <div className="admin-filters">
               <input value={orderSearch} onChange={(event) => setOrderSearch(event.target.value)} placeholder="Order ID, buyer, seller, or item" />
               <input type="date" value={orderDate} onChange={(event) => setOrderDate(event.target.value)} />
+              <select value={orderStatus} onChange={(event) => setOrderStatus(event.target.value)}>
+                <option value="">All statuses</option>
+                <option value="completed">Completed</option>
+              </select>
               <button type="button" className="auth-submit" onClick={loadOrders}>
                 Search
               </button>
@@ -826,92 +613,7 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
           </div>
         )}
 
-        {activeTab === "Reports" && (
-          <div className="reports-page">
-            <div className="reports-header">
-              <div>
-                <p className="section-kicker">Marketplace analytics</p>
-                <h2>Reports</h2>
-                <span>View marketplace sales, orders and listing activity.</span>
-              </div>
-              <button type="button" className="auth-submit" onClick={() => setIsConfirmingReport(true)}>
-                Export PDF
-              </button>
-            </div>
-
-            <div className="report-filter">
-              <label>
-                Search
-                <input
-                  value={reportSearch}
-                  onChange={(event) => setReportSearch(event.target.value)}
-                  placeholder="Order ID, buyer, seller, or item"
-                />
-              </label>
-              <label>
-                Period
-                <select value={reportPeriod} onChange={(event) => setReportPeriod(event.target.value)}>
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="monthly">Monthly</option>
-                </select>
-              </label>
-              <label>
-                From
-                <input type="date" value={reportFromDate} onChange={(event) => setReportFromDate(event.target.value)} />
-              </label>
-              <label>
-                To
-                <input type="date" value={reportToDate} onChange={(event) => setReportToDate(event.target.value)} />
-              </label>
-              <button type="button" className="auth-submit" onClick={searchReportPurchases}>
-                Search
-              </button>
-            </div>
-
-            <div className="summary-grid">
-              <div className="summary-card">
-                <span>Total Sales</span>
-                <h3>{reportSummary.totalSales}</h3>
-              </div>
-              <div className="summary-card">
-                <span>Total Orders</span>
-                <h3>{reportSummary.totalOrders}</h3>
-              </div>
-              <div className="summary-card">
-                <span>Items Sold</span>
-                <h3>{reportSummary.itemsSold}</h3>
-              </div>
-              <div className="summary-card revenue-card">
-                <span>Total Revenue</span>
-                <h3>${Number(reportSummary.revenue).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
-              </div>
-            </div>
-
-            <div className="report-sections">
-              <div className="report-box">
-                <h3>Listings</h3>
-                <div className="status-row">
-                  <span>Active</span>
-                  <strong>{listingSummary.active}</strong>
-                </div>
-                <div className="status-row">
-                  <span>Sold</span>
-                  <strong>{listingSummary.sold}</strong>
-                </div>
-                <div className="status-row">
-                  <span>Removed</span>
-                  <strong>{listingSummary.removed}</strong>
-                </div>
-              </div>
-            </div>
-
-            <div className="transactions admin-table-card">
-              <h3>Sales & Order Report</h3>
-              <AdminReportTable orders={filteredReportOrders} onViewProfile={openUserProfile} />
-            </div>
-          </div>
-        )}
+        {activeTab === "Reports" && <ReportsPanel apiUrl={apiUrl} adminId={adminId} showToast={showToast} />}
 
         {activeTab === "Flags" && (
           <div className="admin-table-card">
@@ -1010,23 +712,6 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
           </div>
         )}
       </section>
-
-      {isConfirmingReport && (
-        <div className="auth-modal-backdrop" onClick={() => setIsConfirmingReport(false)}>
-          <div className="report-confirm-modal" onClick={(event) => event.stopPropagation()}>
-            <h3>Download Admin Report?</h3>
-            <p>Your browser will save the selected admin report as a PDF.</p>
-            <div className="checkout-actions">
-              <button type="button" className="secondary-button" onClick={() => setIsConfirmingReport(false)}>
-                Cancel
-              </button>
-              <button type="button" className="auth-submit" onClick={createReportPdf}>
-                Confirm Download
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {selectedNotification && (
         <div className="auth-modal-backdrop" onClick={() => setSelectedNotification(null)}>
@@ -1185,6 +870,7 @@ function AdminOrdersTable({ orders, formatDate, onViewProfile }) {
         <span>Qty</span>
         <span>Total</span>
         <span>Date</span>
+        <span>Status</span>
       </div>
       {orders.map((order) => (
         <div className="admin-table-row orders-grid" key={order.id}>
@@ -1199,37 +885,7 @@ function AdminOrdersTable({ orders, formatDate, onViewProfile }) {
           <span>{order.quantity}</span>
           <span>${Number(order.total_amount || order.price).toFixed(2)}</span>
           <span>{formatDate(order.purchased_at)}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function AdminReportTable({ orders, onViewProfile }) {
-  if (!orders.length) {
-    return <p className="empty-state">No report records found.</p>;
-  }
-
-  return (
-    <div className="admin-table">
-      <div className="admin-table-head report-orders-grid">
-        <span>Order ID</span>
-        <span>Item</span>
-        <span>Seller</span>
-        <span>Buyer</span>
-        <span>Amount</span>
-      </div>
-      {orders.map((order) => (
-        <div className="admin-table-row report-orders-grid" key={order.id}>
-          <strong>ORD{String(order.id).padStart(3, "0")}</strong>
-          <span>{order.item_name}</span>
-          <button type="button" className="profile-name-button" onClick={() => onViewProfile(order.seller)}>
-            {order.seller_username}
-          </button>
-          <button type="button" className="profile-name-button" onClick={() => onViewProfile(order.buyer)}>
-            {order.buyer_username}
-          </button>
-          <span>${Number(order.total_amount || order.price).toFixed(2)}</span>
+          <span className={`status-pill ${order.status}`}>{order.status}</span>
         </div>
       ))}
     </div>

@@ -1,9 +1,10 @@
 from django.db import DatabaseError
+from django.http import HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 
-from . import services
+from . import reporting, services
 from .exceptions import ApiError
-from .responses import api_response, handle_api_error, json_body, method_not_allowed
+from .responses import api_response, error_response, handle_api_error, json_body, method_not_allowed
 
 
 def get_admin_id(request):
@@ -65,13 +66,6 @@ def request_password_reset(request):
 
 
 @csrf_exempt
-def verify_password_reset_code(request):
-    if request.method != "POST":
-        return method_not_allowed()
-    return run(lambda: (services.verify_password_reset_code(json_body(request)), True))
-
-
-@csrf_exempt
 def reset_password(request):
     if request.method != "POST":
         return method_not_allowed()
@@ -128,7 +122,6 @@ def purchase_item(request, item_id):
         request.GET.get("buyer_id"),
         data.get("payment_method", "cash"),
         data.get("delivery_method", "self_pickup"),
-        data.get("quantity", 1),
         data.get("delivery_fee", 0),
         data.get("subtotal"),
         data.get("included_tax_amount"),
@@ -162,12 +155,6 @@ def list_seller_orders(request, seller_id):
     return run(lambda: (services.list_seller_orders(seller_id), False))
 
 
-def list_seller_reviews(request, seller_id):
-    if request.method != "GET":
-        return method_not_allowed()
-    return run(lambda: (services.list_seller_reviews(seller_id), False))
-
-
 @csrf_exempt
 def item_conversation(request, item_id):
     if request.method != "POST":
@@ -186,22 +173,6 @@ def user_unread_messages(request, user_id):
     if request.method != "GET":
         return method_not_allowed()
     return run(lambda: (services.get_unread_message_count(user_id), True))
-
-
-@csrf_exempt
-def user_notifications(request, user_id):
-    if request.method == "GET":
-        return run(lambda: (services.list_user_notifications(user_id), False))
-    return method_not_allowed()
-
-
-@csrf_exempt
-def user_notification_detail(request, user_id, notification_id):
-    if request.method == "POST":
-        return run(lambda: (services.mark_user_notification_viewed(user_id, notification_id), True))
-    if request.method == "DELETE":
-        return run(lambda: (services.delete_user_notification(user_id, notification_id), True))
-    return method_not_allowed()
 
 
 @csrf_exempt
@@ -242,14 +213,6 @@ def seller_order_stage(request, purchase_id):
         return method_not_allowed()
     data = json_body(request)
     return run(lambda: (services.update_seller_order_stage(purchase_id, data.get("seller_id"), data.get("stage")), True))
-
-
-@csrf_exempt
-def order_cancel(request, purchase_id):
-    if request.method != "POST":
-        return method_not_allowed()
-    data = json_body(request)
-    return run(lambda: (services.cancel_order(purchase_id, data.get("user_id")), True))
 
 
 @csrf_exempt
@@ -354,7 +317,36 @@ def admin_orders(request):
 def admin_reports(request):
     if request.method != "GET":
         return method_not_allowed()
-    return run(lambda: (services.report(get_admin_id(request), request.GET.get("period", "daily")), True))
+    return run(
+        lambda: (
+            reporting.build_report(
+                get_admin_id(request),
+                request.GET.get("period", "daily"),
+                request.GET.get("from", ""),
+                request.GET.get("to", ""),
+            ),
+            True,
+        )
+    )
+
+
+def admin_reports_pdf(request):
+    if request.method != "GET":
+        return method_not_allowed()
+    try:
+        pdf_bytes, filename = reporting.build_report_pdf(
+            get_admin_id(request),
+            request.GET.get("period", "daily"),
+            request.GET.get("from", ""),
+            request.GET.get("to", ""),
+        )
+    except ApiError as exc:
+        return handle_api_error(exc)
+    except DatabaseError:
+        return error_response("Marketplace database is temporarily unavailable. Start MySQL in XAMPP, then refresh the page.", 503)
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
 
 
 def admin_user_reports(request):
