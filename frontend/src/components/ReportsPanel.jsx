@@ -78,9 +78,8 @@ function ReportsPanel({ apiUrl, adminId, showToast }) {
     <div className="reports-page">
       <div className="reports-header">
         <div>
-          <p className="section-kicker">Marketplace analytics</p>
-          <h2>Reports</h2>
-          <span>Sales and orders from completed purchases.</span>
+          <p className="section-kicker">Marketplace Analytics</p>
+           <span>Sales and orders from completed purchases.</span>
         </div>
         <button type="button" className="auth-submit" onClick={() => setIsConfirmingExport(true)}>
           Export PDF
