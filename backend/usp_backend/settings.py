@@ -2,9 +2,11 @@ import os
 from pathlib import Path
 from urllib.parse import urlparse
 
+import certifi
 from dotenv import load_dotenv
 
 load_dotenv()
+os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")

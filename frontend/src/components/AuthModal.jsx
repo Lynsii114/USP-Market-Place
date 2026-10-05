@@ -302,6 +302,13 @@ function AuthModal({
           <button type="button" onClick={() => onSwitchMode("forgot-password")}>Forgot password?</button>
         </p>
       )}
+      {authMode === "verify-email" && (
+        <p className="auth-switch">
+          <button type="button" onClick={onCancelVerification} disabled={isSubmitting}>
+            Cancel registration
+          </button>
+        </p>
+      )}
       {standalone && ["forgot-password", "verify-reset-code", "reset-password"].includes(authMode) && (
         <p className="auth-switch">
           <button type="button" onClick={() => onSwitchMode("login")}>Back to login</button>

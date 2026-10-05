@@ -2,6 +2,7 @@ import os
 import random
 import re
 import smtplib
+import ssl
 from datetime import timedelta
 from unittest.mock import patch
 
@@ -18,7 +19,7 @@ django.setup()
 from marketplace.models import AdminNotification, Item, PasswordReset, PendingRegistration, Purchase, RatingReview, User, UserNotification
 from marketplace.exceptions import ApiError
 from marketplace.schema import ensure_schema
-from marketplace.services import PENDING_REGISTRATIONS, VERIFICATION_CODE_TTL, send_email
+from marketplace.services import PENDING_REGISTRATIONS, VERIFICATION_CODE_TTL, hash_verification_code, send_email
 
 ensure_schema()
 
@@ -440,6 +441,67 @@ def test_cancel_verification_removes_pending_registration():
     assert not PendingRegistration.objects.filter(email=payload["email"]).exists()
 
 
+def test_signup_resumes_existing_database_pending_registration():
+    payload = unique_student_payload()
+    code = "123456"
+    PendingRegistration.objects.create(
+        username=payload["username"],
+        student_id=payload["email"].split("@", 1)[0],
+        email=payload["email"],
+        password_hash="stored-password-hash",
+        code_hash=hash_verification_code(code),
+        expires_at=timezone.now() + VERIFICATION_CODE_TTL,
+    )
+
+    response = client.post("/api/users/signup", payload, content_type="application/json")
+
+    assert response.status_code == 200
+    assert response.json()["verification_required"] is True
+    assert response.json()["pending_token"] == ""
+    assert "already been sent" in response.json()["message"]
+    assert PendingRegistration.objects.filter(email=payload["email"]).count() == 1
+
+    verification = client.post(
+        "/api/users/verify-email",
+        {"email": payload["email"], "code": code},
+        content_type="application/json",
+    )
+    assert verification.status_code == 200
+    assert verification.json()["authenticator_setup_required"] is True
+    assert User.objects.filter(email=payload["email"]).exists()
+    assert not PendingRegistration.objects.filter(email=payload["email"]).exists()
+
+
+def test_signup_resumes_existing_in_memory_pending_registration():
+    payload = unique_student_payload()
+    with patch("marketplace.services.send_email") as send_email:
+        first_signup = client.post("/api/users/signup", payload, content_type="application/json")
+        retry_signup = client.post("/api/users/signup", payload, content_type="application/json")
+
+    assert first_signup.status_code == 200
+    assert retry_signup.status_code == 200
+    assert retry_signup.json()["verification_required"] is True
+    assert retry_signup.json()["pending_token"] == first_signup.json()["pending_token"]
+    assert "already been sent" in retry_signup.json()["message"]
+    assert send_email.call_count == 1
+
+
+def test_cancel_verification_without_token_removes_in_memory_registration():
+    payload = unique_student_payload()
+    with patch("marketplace.services.send_email"):
+        signup = client.post("/api/users/signup", payload, content_type="application/json")
+
+    response = client.post(
+        "/api/users/cancel-verification",
+        {"email": payload["email"]},
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["deleted"] is True
+    assert signup.json()["pending_token"] not in PENDING_REGISTRATIONS
+
+
 def test_signup_rejects_non_usp_email():
     payload = unique_student_payload()
     payload["email"] = "person@gmail.com"
@@ -507,6 +569,15 @@ def test_gmail_disconnect_error_explains_auth_setup():
 
     assert "Gmail closed the SMTP authentication connection" in detail
     assert "App Password" in detail
+
+
+def test_tls_certificate_error_is_not_reported_as_invalid_email_header():
+    detail = __import__("marketplace.services", fromlist=["describe_email_exception"]).describe_email_exception(
+        ssl.SSLCertVerificationError("certificate verify failed")
+    )
+
+    assert "SMTP TLS certificate verification failed" in detail
+    assert "invalid header" not in detail
 
 
 def test_resend_verification_waits_one_minute():

@@ -7,6 +7,7 @@ import math
 import smtplib
 import secrets
 import re
+import ssl
 import pyotp
 import qrcode
 from urllib.error import HTTPError, URLError
@@ -180,6 +181,8 @@ def verification_email_message(code):
 
 
 def describe_email_exception(exc):
+    if isinstance(exc, ssl.SSLCertVerificationError):
+        return "SMTP TLS certificate verification failed. Install or configure a trusted CA certificate bundle and check system date/time."
     if isinstance(exc, smtplib.SMTPAuthenticationError):
         smtp_message = exc.smtp_error.decode("utf-8", errors="replace") if isinstance(exc.smtp_error, bytes) else str(exc.smtp_error)
         return f"SMTP authentication failed ({exc.smtp_code}): {smtp_message}. Check EMAIL_HOST_USER and EMAIL_HOST_PASSWORD. Gmail requires a 16-character App Password with 2-Step Verification enabled."
@@ -310,6 +313,7 @@ def cleanup_pending_registrations():
     ]
     for token in expired_tokens:
         PENDING_REGISTRATIONS.pop(token, None)
+    PendingRegistration.objects.filter(expires_at__lte=now).delete()
 
 
 def delete_pending_registration(registration):
@@ -325,18 +329,34 @@ def find_pending_registration(email, pending_token=""):
         registration = PENDING_REGISTRATIONS.get(pending_token)
         if registration and registration["email"].lower() == email.lower():
             return registration
-        return None
+    else:
+        registration = next(
+            (
+                registration
+                for registration in PENDING_REGISTRATIONS.values()
+                if registration["email"].lower() == email.lower()
+            ),
+            None,
+        )
+        if registration:
+            return registration
     return PendingRegistration.objects.filter(email__iexact=email).first()
 
 
 def pending_exists_for_username(username):
     cleanup_pending_registrations()
-    return any(registration["username"].lower() == username.lower() for registration in PENDING_REGISTRATIONS.values())
+    return (
+        any(registration["username"].lower() == username.lower() for registration in PENDING_REGISTRATIONS.values())
+        or PendingRegistration.objects.filter(username__iexact=username).exists()
+    )
 
 
 def pending_exists_for_email(email):
     cleanup_pending_registrations()
-    return any(registration["email"].lower() == email.lower() for registration in PENDING_REGISTRATIONS.values())
+    return (
+        any(registration["email"].lower() == email.lower() for registration in PENDING_REGISTRATIONS.values())
+        or PendingRegistration.objects.filter(email__iexact=email).exists()
+    )
 
 
 def send_verification_code(registration):
@@ -371,8 +391,18 @@ def signup_user(data):
     student_id = email.split("@", 1)[0]
 
     username_registered = User.objects.filter(username__iexact=username).exists()
-    username_pending = pending_exists_for_username(username)
     email_registered = User.objects.filter(email__iexact=email).exists()
+    pending_by_email = find_pending_registration(email)
+    if pending_by_email and pending_value(pending_by_email, "username").lower() == username.lower():
+        return {
+            "user": None,
+            "email": email,
+            "pending_token": pending_value(pending_by_email, "pending_token") if isinstance(pending_by_email, dict) else "",
+            "verification_required": True,
+            "message": "A verification email has already been sent. Enter its code to continue.",
+        }
+
+    username_pending = pending_exists_for_username(username)
     email_pending = pending_exists_for_email(email)
     username_exists = username_registered or username_pending
     email_exists = email_registered or email_pending

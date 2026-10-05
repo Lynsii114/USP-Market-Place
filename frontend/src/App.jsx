@@ -26,11 +26,31 @@ import { categories } from "./data/categories";
 import logo from "../logo.png";
 
 const API_URL = "http://localhost:8000/api";
+const PENDING_VERIFICATION_STORAGE_KEY = "usp-marketplace-pending-verification";
+
+function readPendingVerification() {
+  try {
+    const pending = JSON.parse(window.sessionStorage.getItem(PENDING_VERIFICATION_STORAGE_KEY) || "null");
+    if (
+      pending &&
+      typeof pending.email === "string" &&
+      pending.email &&
+      typeof pending.pendingToken === "string"
+    ) {
+      return pending;
+    }
+    window.sessionStorage.removeItem(PENDING_VERIFICATION_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+  return null;
+}
 
 function Home() {
-  const [authMode, setAuthMode] = useState("login");
-  const [verificationEmail, setVerificationEmail] = useState("");
-  const [verificationToken, setVerificationToken] = useState("");
+  const [storedPendingVerification] = useState(readPendingVerification);
+  const [authMode, setAuthMode] = useState(storedPendingVerification ? "verify-email" : "login");
+  const [verificationEmail, setVerificationEmail] = useState(storedPendingVerification?.email || "");
+  const [verificationToken, setVerificationToken] = useState(storedPendingVerification?.pendingToken || "");
   const [resendAvailableAt, setResendAvailableAt] = useState(0);
   const [resendSecondsRemaining, setResendSecondsRemaining] = useState(0);
   const [authenticatorUserId, setAuthenticatorUserId] = useState(null);
@@ -241,20 +261,28 @@ function Home() {
   const cancelVerification = async () => {
     const email = verificationEmail;
     const pendingToken = verificationToken;
-    resetAuth();
-
     if (!email) {
+      resetAuth();
       return;
     }
 
+    setIsSubmitting(true);
+    setFormMessage("");
     try {
-      await fetch(`${API_URL}/users/cancel-verification`, {
+      const response = await fetch(`${API_URL}/users/cancel-verification`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, pending_token: pendingToken }),
       });
-    } catch {
-      // Closing the dialog should still work if the API is unavailable.
+      await parseResponse(response, "Unable to cancel registration");
+      window.sessionStorage.removeItem(PENDING_VERIFICATION_STORAGE_KEY);
+      resetAuth();
+      setAuthMode("signup");
+      setFormMessage("Registration cancelled. You can sign up again.");
+    } catch (error) {
+      setFormMessage(error instanceof Error ? error.message : "Unable to cancel registration");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -297,6 +325,7 @@ function Home() {
           body: JSON.stringify({ email: verificationEmail, code: authForm.verification_code, pending_token: verificationToken }),
         });
         const data = await parseResponse(response, "Email verification failed");
+        window.sessionStorage.removeItem(PENDING_VERIFICATION_STORAGE_KEY);
         if (data.authenticator_setup_required) {
           setAuthenticatorUserId(data.user_id);
           setAuthenticatorSecret(data.authenticator_secret);
@@ -435,8 +464,14 @@ function Home() {
       }
 
       if (authMode === "signup" && data.verification_required) {
-        setVerificationEmail(authForm.email.trim());
-        setVerificationToken(data.pending_token || "");
+        const email = authForm.email.trim();
+        const pendingToken = data.pending_token || "";
+        window.sessionStorage.setItem(
+          PENDING_VERIFICATION_STORAGE_KEY,
+          JSON.stringify({ email, pendingToken }),
+        );
+        setVerificationEmail(email);
+        setVerificationToken(pendingToken);
         setAuthForm((previous) => ({ ...previous, verification_code: "" }));
         setAuthMode("verify-email");
         startResendCountdown();
