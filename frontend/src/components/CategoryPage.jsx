@@ -1,7 +1,7 @@
 import React from "react";
 import ProductCard from "./ProductCard";
 
-function CategoryPage({ categoryName, listings, onBack, onSelectListing }) {
+function CategoryPage({ categoryName, listings, onBack, onSelectListing, onViewSeller }) {
   if (!categoryName) {
     return null;
   }
@@ -29,7 +29,7 @@ function CategoryPage({ categoryName, listings, onBack, onSelectListing }) {
       ) : listings.length ? (
         <div className="product-container">
           {listings.map((listing) => (
-            <ProductCard listing={listing} showPrice onSelect={onSelectListing} key={listing.id} />
+            <ProductCard listing={listing} showPrice onSelect={onSelectListing} onViewSeller={onViewSeller} key={listing.id} />
           ))}
         </div>
       ) : (

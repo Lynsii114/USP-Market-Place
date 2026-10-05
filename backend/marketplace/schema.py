@@ -2,7 +2,7 @@ import logging
 
 from django.db import DatabaseError, OperationalError, connection
 
-from .models import AdminNotification, EmailVerification, Item, PasswordReset, PendingRegistration, Purchase, RatingReview, User, UserReport
+from .models import AdminNotification, Conversation, EmailVerification, Item, Message, PasswordReset, PendingRegistration, Purchase, RatingReview, User, UserNotification, UserReport
 
 
 TABLE_COLUMNS = {
@@ -15,6 +15,8 @@ TABLE_COLUMNS = {
         "status": "VARCHAR(32) NOT NULL DEFAULT 'available'",
         "seller_id": "INTEGER NOT NULL DEFAULT 0",
         "seller_username": "VARCHAR(64) NOT NULL DEFAULT 'Unknown'",
+        "reserved_buyer_id": "INTEGER NULL",
+        "reserved_buyer_username": "VARCHAR(64) NULL",
         "removed_reason": "VARCHAR(255) NULL",
         "created_at": "DATETIME NULL",
     },
@@ -34,11 +36,26 @@ TABLE_COLUMNS = {
         "seller_contact": "VARCHAR(128) NOT NULL DEFAULT ''",
         "quantity": "INTEGER NOT NULL DEFAULT 1",
         "total_amount": "FLOAT NOT NULL DEFAULT 0",
-        "payment_method": "VARCHAR(32) NOT NULL DEFAULT 'Simulated Card Payment'",
+        "payment_method": "VARCHAR(32) NOT NULL DEFAULT 'cash'",
+        "delivery_method": "VARCHAR(32) NOT NULL DEFAULT 'self_pickup'",
+        "delivery_fee": "FLOAT NOT NULL DEFAULT 0",
+        "subtotal": "FLOAT NOT NULL DEFAULT 0",
+        "included_tax_amount": "FLOAT NOT NULL DEFAULT 0",
+        "final_total": "FLOAT NOT NULL DEFAULT 0",
         "status": "VARCHAR(32) NOT NULL DEFAULT 'completed'",
+        "order_stage": "VARCHAR(32) NOT NULL DEFAULT 'completed'",
         "purchased_at": "DATETIME NULL",
+        "updated_at": "DATETIME NULL",
     },
     "admin_notifications": {
+        "category": "VARCHAR(40) NOT NULL DEFAULT 'activity'",
+        "actor_id": "INTEGER NULL",
+        "actor_username": "VARCHAR(64) NULL",
+        "is_read": "BOOLEAN NOT NULL DEFAULT 0",
+        "created_at": "DATETIME NULL",
+    },
+    "user_notifications": {
+        "user_id": "INTEGER NOT NULL DEFAULT 0",
         "category": "VARCHAR(40) NOT NULL DEFAULT 'activity'",
         "actor_id": "INTEGER NULL",
         "actor_username": "VARCHAR(64) NULL",
@@ -50,6 +67,22 @@ TABLE_COLUMNS = {
         "created_at": "DATETIME NULL",
     },
     "rating_reviews": {
+        "purchase_id": "INTEGER NULL",
+        "created_at": "DATETIME NULL",
+    },
+    "conversations": {
+        "item_id": "INTEGER NOT NULL DEFAULT 0",
+        "buyer_id": "INTEGER NOT NULL DEFAULT 0",
+        "seller_id": "INTEGER NOT NULL DEFAULT 0",
+        "created_at": "DATETIME NULL",
+        "updated_at": "DATETIME NULL",
+    },
+    "messages": {
+        "conversation_id": "INTEGER NOT NULL DEFAULT 0",
+        "sender_id": "INTEGER NOT NULL DEFAULT 0",
+        "receiver_id": "INTEGER NOT NULL DEFAULT 0",
+        "body": "VARCHAR(1000) NOT NULL DEFAULT ''",
+        "is_read": "BOOLEAN NOT NULL DEFAULT 0",
         "created_at": "DATETIME NULL",
     },
 }
@@ -74,7 +107,7 @@ logger = logging.getLogger(__name__)
 
 
 def ensure_schema():
-    models = [User, EmailVerification, PasswordReset, PendingRegistration, Item, Purchase, AdminNotification, UserReport, RatingReview]
+    models = [User, EmailVerification, PasswordReset, PendingRegistration, Item, Purchase, AdminNotification, UserNotification, Conversation, Message, UserReport, RatingReview]
 
     for model in models:
         try:
@@ -118,6 +151,18 @@ def ensure_schema():
                         cursor.execute(
                             f"ALTER TABLE users MODIFY COLUMN {column_name} {column_definition} AFTER {previous_column}"
                         )
+            if "messages" in connection.introspection.table_names() and "conversations" in connection.introspection.table_names():
+                cursor.execute(
+                    """
+                    UPDATE messages m
+                    JOIN conversations c ON c.id = m.conversation_id
+                    SET m.receiver_id = CASE
+                        WHEN m.sender_id = c.buyer_id THEN c.seller_id
+                        ELSE c.buyer_id
+                    END
+                    WHERE m.receiver_id = 0
+                    """
+                )
     except (DatabaseError, OperationalError) as exc:
         logger.warning("Could not update database schema: %s", exc)
         connection.close()

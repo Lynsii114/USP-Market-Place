@@ -26,6 +26,8 @@ def serialize_item(item):
         "status": item.status,
         "seller_id": item.seller_id,
         "seller_username": item.seller_username,
+        "reserved_buyer_id": item.reserved_buyer_id,
+        "reserved_buyer_username": item.reserved_buyer_username,
         "removed_reason": item.removed_reason,
         "created_at": item.created_at,
     }
@@ -46,13 +48,20 @@ def serialize_purchase(purchase):
         "quantity": purchase.quantity,
         "total_amount": purchase.total_amount,
         "payment_method": purchase.payment_method,
+        "delivery_method": purchase.delivery_method,
+        "delivery_fee": purchase.delivery_fee,
+        "subtotal": purchase.subtotal,
+        "included_tax_amount": purchase.included_tax_amount,
+        "final_total": purchase.final_total,
         "status": purchase.status,
+        "order_stage": purchase.order_stage,
         "purchased_at": purchase.purchased_at,
+        "updated_at": purchase.updated_at,
     }
 
 
 def serialize_notification(notification):
-    return {
+    data = {
         "id": notification.id,
         "title": notification.title,
         "message": notification.message,
@@ -61,6 +70,47 @@ def serialize_notification(notification):
         "actor_username": notification.actor_username,
         "is_read": notification.is_read,
         "created_at": notification.created_at,
+    }
+    if hasattr(notification, "user_id"):
+        data["user_id"] = notification.user_id
+    return data
+
+
+def serialize_message(message):
+    return {
+        "id": message.id,
+        "conversation_id": message.conversation_id,
+        "sender_id": message.sender_id,
+        "receiver_id": message.receiver_id,
+        "body": message.body,
+        "is_read": message.is_read,
+        "created_at": message.created_at,
+    }
+
+
+def serialize_conversation(conversation, item=None, buyer=None, seller=None, messages=None, current_user_id=None):
+    unread_count = 0
+    serialized_messages = []
+    if messages is not None:
+        serialized_messages = [serialize_message(message) for message in messages]
+        unread_count = sum(
+            1
+            for message in messages
+            if current_user_id and message.receiver_id == int(current_user_id) and not message.is_read
+        )
+
+    return {
+        "id": conversation.id,
+        "item_id": conversation.item_id,
+        "buyer_id": conversation.buyer_id,
+        "seller_id": conversation.seller_id,
+        "buyer_username": buyer.username if buyer else "",
+        "seller_username": seller.username if seller else "",
+        "item": serialize_item(item) if item else None,
+        "messages": serialized_messages,
+        "unread_count": unread_count,
+        "created_at": conversation.created_at,
+        "updated_at": conversation.updated_at,
     }
 
 
@@ -81,6 +131,7 @@ def serialize_user_report(report):
 def serialize_rating_review(review):
     return {
         "id": review.id,
+        "purchase_id": review.purchase_id,
         "reviewer_id": review.reviewer_id,
         "reviewer_username": review.reviewer_username,
         "item_id": review.item_id,

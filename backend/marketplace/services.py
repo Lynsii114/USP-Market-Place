@@ -2,6 +2,9 @@ import hashlib
 import base64
 from io import BytesIO
 import json
+import logging
+import math
+import smtplib
 import secrets
 import re
 import pyotp
@@ -11,7 +14,7 @@ from urllib.request import Request, urlopen
 from collections import defaultdict
 from datetime import date, timedelta
 
-from django.core.mail import send_mail
+from django.core.mail import BadHeaderError, send_mail
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Q
@@ -21,12 +24,18 @@ from django.utils.dateparse import parse_date
 # import jwt
 # from jwt import PyJWKClient
 
-from .constants import ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_USERNAME, HIDDEN_ITEM_NAMES
+from .constants import ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_USERNAME
 from .exceptions import ApiError
-from .models import AdminNotification, EmailVerification, Item, PasswordReset, PendingRegistration, Purchase, RatingReview, User, UserReport
+from .models import AdminNotification, Conversation, EmailVerification, Item, Message, PasswordReset, PendingRegistration, Purchase, RatingReview, User, UserNotification, UserReport
 from .queries import find_student, find_user_by_login, item_status, public_items, visible_items, visible_purchases
-from .serializers import serialize_item, serialize_notification, serialize_purchase, serialize_rating_review, serialize_user, serialize_user_report
+from .serializers import serialize_conversation, serialize_item, serialize_message, serialize_notification, serialize_purchase, serialize_rating_review, serialize_user, serialize_user_report
 from .validators import validate_item_payload, validate_signup
+
+
+email_logger = logging.getLogger("marketplace.email")
+VERIFICATION_CODE_TTL = timedelta(minutes=10)
+VERIFICATION_RESEND_COOLDOWN = timedelta(minutes=1)
+PENDING_REGISTRATIONS = {}
 
 
 def hash_password(password):
@@ -87,6 +96,23 @@ def notify_admin(title, message, category="activity", actor=None):
     )
 
 
+def notify_user(user_id, title, message, category="activity", actor=None):
+    if not User.objects.filter(id=user_id).exists():
+        return None
+    return UserNotification.objects.create(
+        user_id=user_id,
+        title=title,
+        message=message,
+        category=category,
+        actor_id=actor.id if actor else None,
+        actor_username=actor.username if actor else None,
+    )
+
+
+def notify_order_user(purchase, user_id, title, message, actor=None):
+    return notify_user(user_id, title, message, "order", actor)
+
+
 def serialize_admin_item(item):
     data = serialize_item(item)
     seller = User.objects.filter(id=item.seller_id).first()
@@ -142,9 +168,79 @@ def authenticator_setup(secret, email):
     }
 
 
-def send_email(subject, message, recipient):
+def verification_email_message(code):
+    return (
+        "Hello,\n\n"
+        "USP Marketplace received a request to register an account with this email address.\n\n"
+        f"Your 6-digit verification code is: {code}\n\n"
+        "This code expires in 10 minutes.\n\n"
+        "If you did not request this code, you can ignore this email.\n\n"
+        "USP Marketplace System"
+    )
+
+
+def describe_email_exception(exc):
+    if isinstance(exc, smtplib.SMTPAuthenticationError):
+        smtp_message = exc.smtp_error.decode("utf-8", errors="replace") if isinstance(exc.smtp_error, bytes) else str(exc.smtp_error)
+        return f"SMTP authentication failed ({exc.smtp_code}): {smtp_message}. Check EMAIL_HOST_USER and EMAIL_HOST_PASSWORD. Gmail requires a 16-character App Password with 2-Step Verification enabled."
+    if isinstance(exc, smtplib.SMTPConnectError):
+        return f"SMTP connection failed ({exc.smtp_code}): {exc.smtp_error}. Check EMAIL_HOST, EMAIL_PORT, and network/firewall access."
+    if isinstance(exc, smtplib.SMTPServerDisconnected):
+        if settings.EMAIL_HOST == "smtp.gmail.com":
+            return "Gmail closed the SMTP authentication connection. Check that EMAIL_HOST_USER is an active Gmail/Google Workspace mailbox, 2-Step Verification is enabled, the App Password was generated for that exact mailbox, and Workspace allows App Passwords/SMTP access."
+        return "SMTP server disconnected before accepting the message. Check TLS/SSL settings, host, and port."
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        return "SMTP provider refused the recipient address."
+    if isinstance(exc, smtplib.SMTPSenderRefused):
+        return f"SMTP provider refused DEFAULT_FROM_EMAIL: {exc.sender}. Make sure it matches or is allowed by the SMTP account."
+    if isinstance(exc, smtplib.SMTPException):
+        return f"SMTP error: {exc}"
+    if isinstance(exc, BadHeaderError):
+        return "Email subject or body contains an invalid header."
+    if isinstance(exc, TimeoutError):
+        return "SMTP connection timed out. Check host, port, TLS/SSL, and network access."
+    if isinstance(exc, OSError):
+        return f"Network error while contacting SMTP server: {exc}"
+    return str(exc) or exc.__class__.__name__
+
+
+def require_smtp_settings(failure_prefix):
+    if not settings.EMAIL_HOST_USER:
+        raise ApiError(f"{failure_prefix}: EMAIL_HOST_USER is not configured", 500)
+    if not settings.EMAIL_HOST_PASSWORD:
+        raise ApiError(f"{failure_prefix}: EMAIL_HOST_PASSWORD is not configured", 500)
+    if settings.EMAIL_HOST == "smtp.gmail.com" and len(settings.EMAIL_HOST_PASSWORD) != 16:
+        raise ApiError(f"{failure_prefix}: EMAIL_HOST_PASSWORD must be a 16-character Gmail App Password for smtp.gmail.com", 500)
+    if not settings.DEFAULT_FROM_EMAIL:
+        raise ApiError(f"{failure_prefix}: DEFAULT_FROM_EMAIL is not configured", 500)
+    if settings.EMAIL_USE_TLS and settings.EMAIL_USE_SSL:
+        raise ApiError(f"{failure_prefix}: EMAIL_USE_TLS and EMAIL_USE_SSL cannot both be enabled", 500)
+
+
+def send_email(subject, message, recipient, failure_prefix="Failed to send email"):
     if settings.EMAIL_HOST:
-        send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [recipient])
+        require_smtp_settings(failure_prefix)
+        email_logger.info(
+            "[email-debug] SMTP connection stage: host=%s port=%s tls=%s ssl=%s user=%s from=%s recipient=%s",
+            settings.EMAIL_HOST,
+            settings.EMAIL_PORT,
+            settings.EMAIL_USE_TLS,
+            settings.EMAIL_USE_SSL,
+            settings.EMAIL_HOST_USER,
+            settings.DEFAULT_FROM_EMAIL,
+            recipient,
+        )
+        try:
+            sent_count = send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [recipient], fail_silently=False)
+        except Exception as exc:
+            detail = describe_email_exception(exc)
+            email_logger.exception("[email-debug] SMTP/email sending failed for %s: %s", recipient, detail)
+            raise ApiError(f"{failure_prefix}: {detail}", 502) from exc
+        if sent_count != 1:
+            detail = "SMTP backend did not report a sent message. Check provider logs and sender verification."
+            email_logger.error("[email-debug] SMTP/email sending failed for %s: %s", recipient, detail)
+            raise ApiError(f"{failure_prefix}: {detail}", 502)
+        email_logger.info("[email-debug] Email sent successfully to %s", recipient)
         return
 
     if settings.RESEND_API_KEY:
@@ -163,9 +259,10 @@ def send_email(subject, message, recipient):
             method="POST",
         )
         try:
+            email_logger.info("[email-debug] Resend API sending stage: from=%s recipient=%s", settings.RESEND_FROM_EMAIL, recipient)
             with urlopen(request, timeout=15) as response:
                 if response.status not in range(200, 300):
-                    raise ApiError("Email provider rejected the message", 502)
+                    raise ApiError(f"{failure_prefix}: Email provider rejected the message", 502)
         except HTTPError as exc:
             raw_error = ""
             try:
@@ -175,25 +272,96 @@ def send_email(subject, message, recipient):
             except (ValueError, UnicodeDecodeError):
                 provider_error = raw_error.strip() or None
             detail = provider_error or f"HTTP {exc.code} from email provider"
-            raise ApiError(f"Resend error: {detail}", 502) from exc
+            email_logger.exception("[email-debug] Resend/email sending failed for %s: %s", recipient, detail)
+            raise ApiError(f"{failure_prefix}: Resend error: {detail}", 502) from exc
         except (URLError, TimeoutError) as exc:
-            raise ApiError("Unable to connect to Resend. Check your network connection.", 502) from exc
+            email_logger.exception("[email-debug] Resend/email sending failed for %s", recipient)
+            raise ApiError(f"{failure_prefix}: Unable to connect to Resend. Check your network connection.", 502) from exc
+        email_logger.info("[email-debug] Email sent successfully to %s", recipient)
         return
 
-    send_mail(subject, message, None, [recipient])
+    email_logger.error("[email-debug] No SMTP provider configured for %s", recipient)
+    raise ApiError(f"{failure_prefix}: SMTP is not configured. Set EMAIL_HOST, EMAIL_HOST_USER, EMAIL_HOST_PASSWORD, and DEFAULT_FROM_EMAIL in backend/.env.", 500)
+
+
+def pending_value(registration, key):
+    return registration[key] if isinstance(registration, dict) else getattr(registration, key)
+
+
+def set_pending_value(registration, key, value):
+    if isinstance(registration, dict):
+        registration[key] = value
+    else:
+        setattr(registration, key, value)
+
+
+def save_pending_verification(registration):
+    if isinstance(registration, dict):
+        return
+    registration.save(update_fields=["code_hash", "expires_at", "attempts"])
+
+
+def cleanup_pending_registrations():
+    now = timezone.now()
+    expired_tokens = [
+        token
+        for token, registration in PENDING_REGISTRATIONS.items()
+        if registration["expires_at"] <= now
+    ]
+    for token in expired_tokens:
+        PENDING_REGISTRATIONS.pop(token, None)
+
+
+def delete_pending_registration(registration):
+    if isinstance(registration, dict):
+        PENDING_REGISTRATIONS.pop(registration["pending_token"], None)
+    else:
+        registration.delete()
+
+
+def find_pending_registration(email, pending_token=""):
+    cleanup_pending_registrations()
+    if pending_token:
+        registration = PENDING_REGISTRATIONS.get(pending_token)
+        if registration and registration["email"].lower() == email.lower():
+            return registration
+        return None
+    return PendingRegistration.objects.filter(email__iexact=email).first()
+
+
+def pending_exists_for_username(username):
+    cleanup_pending_registrations()
+    return any(registration["username"].lower() == username.lower() for registration in PENDING_REGISTRATIONS.values())
+
+
+def pending_exists_for_email(email):
+    cleanup_pending_registrations()
+    return any(registration["email"].lower() == email.lower() for registration in PENDING_REGISTRATIONS.values())
 
 
 def send_verification_code(registration):
+    email = pending_value(registration, "email")
+    registration_id = pending_value(registration, "pending_token") if isinstance(registration, dict) else registration.id
+    email_logger.info("[email-debug] Registration -> code generation stage for %s", email)
     code = f"{secrets.randbelow(1_000_000):06d}"
-    registration.code_hash = hash_verification_code(code)
-    registration.expires_at = timezone.now() + timedelta(minutes=10)
-    registration.attempts = 0
-    registration.save(update_fields=["code_hash", "expires_at", "attempts"])
+    set_pending_value(registration, "code_hash", hash_verification_code(code))
+    set_pending_value(registration, "expires_at", timezone.now() + VERIFICATION_CODE_TTL)
+    set_pending_value(registration, "attempts", 0)
+    email_logger.info("[email-debug] Temporary verification save stage: registration_id=%s email=%s", registration_id, email)
+    save_pending_verification(registration)
+    email_logger.info("[email-debug] Temporary verification save complete: registration_id=%s email=%s", registration_id, email)
     send_email(
         "Verify your USP Marketplace account",
-        f"Your USP Marketplace verification code is {code}. It expires in 10 minutes.",
-        registration.email,
+        verification_email_message(code),
+        email,
+        "Failed to send verification email",
     )
+
+
+def verification_resend_seconds_remaining(registration):
+    sent_at = pending_value(registration, "expires_at") - VERIFICATION_CODE_TTL
+    resend_at = sent_at + VERIFICATION_RESEND_COOLDOWN
+    return max(0, math.ceil((resend_at - timezone.now()).total_seconds()))
 
 
 def signup_user(data):
@@ -203,9 +371,9 @@ def signup_user(data):
     student_id = email.split("@", 1)[0]
 
     username_registered = User.objects.filter(username__iexact=username).exists()
-    username_pending = PendingRegistration.objects.filter(username__iexact=username).exists()
+    username_pending = pending_exists_for_username(username)
     email_registered = User.objects.filter(email__iexact=email).exists()
-    email_pending = PendingRegistration.objects.filter(email__iexact=email).exists()
+    email_pending = pending_exists_for_email(email)
     username_exists = username_registered or username_pending
     email_exists = email_registered or email_pending
     if username_exists and email_exists:
@@ -217,62 +385,72 @@ def signup_user(data):
     if email_pending:
         raise ApiError("A verification email has already been sent for these details", 400)
 
-    registration = PendingRegistration.objects.create(
-        username=username,
-        student_id=student_id,
-        email=email,
-        password_hash=hash_password(data["password"]),
-        code_hash="",
-        expires_at=timezone.now(),
-    )
+    pending_token = secrets.token_urlsafe(32)
+    registration = {
+        "pending_token": pending_token,
+        "username": username,
+        "student_id": student_id,
+        "email": email,
+        "password_hash": hash_password(data["password"]),
+        "code_hash": "",
+        "expires_at": timezone.now(),
+        "attempts": 0,
+        "created_at": timezone.now(),
+    }
+    PENDING_REGISTRATIONS[pending_token] = registration
     try:
         send_verification_code(registration)
     except Exception:
-        registration.delete()
+        email_logger.exception("[email-debug] Registration email failed; deleting temporary pending registration token=%s email=%s so the user can retry", pending_token, email)
+        delete_pending_registration(registration)
         raise
     return {
         "user": None,
         "email": email,
+        "pending_token": pending_token,
         "verification_required": True,
-        "message": "Verification code sent to your personal email.",
+        "message": "Verification code sent successfully",
     }
 
 
 def verify_email(data):
     email = str(data.get("email", "")).strip().lower()
     code = str(data.get("code", "")).strip()
+    pending_token = str(data.get("pending_token", "")).strip()
     if not email or not code.isdigit() or len(code) != 6:
         raise ApiError("Enter the six-digit verification code sent to your email", 422)
 
-    registration = PendingRegistration.objects.filter(email__iexact=email).first()
+    registration = find_pending_registration(email, pending_token)
     if not registration:
         user = User.objects.filter(email__iexact=email).first()
         if user and user.status == "active":
             return {"user": serialize_user(user), "message": "Email already verified."}
         raise ApiError("Verification request not found", 404)
-    if registration.expires_at <= timezone.now():
+    if pending_value(registration, "expires_at") <= timezone.now():
+        delete_pending_registration(registration)
         raise ApiError("That code has expired. Request a new code.", 400)
-    if registration.attempts >= 5:
+    if pending_value(registration, "attempts") >= 5:
         raise ApiError("Too many attempts. Request a new code.", 429)
 
-    if not secrets.compare_digest(registration.code_hash, hash_verification_code(code)):
-        registration.attempts += 1
-        registration.save(update_fields=["attempts"])
+    if not secrets.compare_digest(pending_value(registration, "code_hash"), hash_verification_code(code)):
+        set_pending_value(registration, "attempts", pending_value(registration, "attempts") + 1)
+        if not isinstance(registration, dict):
+            registration.save(update_fields=["attempts"])
         raise ApiError("Incorrect verification code", 400)
 
     with transaction.atomic():
         user = User.objects.create(
-            username=registration.username,
-            student_id=registration.student_id,
-            name=registration.username,
-            email=registration.email,
-            password_hash=registration.password_hash,
+            username=pending_value(registration, "username"),
+            student_id=pending_value(registration, "student_id"),
+            name=pending_value(registration, "username"),
+            email=pending_value(registration, "email"),
+            password_hash=pending_value(registration, "password_hash"),
             authenticator_secret=pyotp.random_base32(),
             role="student",
             status="active",
             verified=True,
         )
-        registration.delete()
+        delete_pending_registration(registration)
     return {
         "user": None,
         "authenticator_setup_required": True,
@@ -284,17 +462,26 @@ def verify_email(data):
 
 def resend_verification(data):
     email = str(data.get("email", "")).strip().lower()
-    registration = PendingRegistration.objects.filter(email__iexact=email).first()
+    pending_token = str(data.get("pending_token", "")).strip()
+    registration = find_pending_registration(email, pending_token)
     if not registration:
         raise ApiError("Verification request not found", 404)
+    seconds_remaining = verification_resend_seconds_remaining(registration)
+    if seconds_remaining > 0:
+        raise ApiError(f"Resend code available in {seconds_remaining} seconds", 429)
     send_verification_code(registration)
-    return {"message": "A new verification code was sent to your USP email."}
+    return {"message": "Verification code sent successfully"}
 
 
 def cancel_verification(data):
     email = str(data.get("email", "")).strip().lower()
+    pending_token = str(data.get("pending_token", "")).strip()
     if not email:
         raise ApiError("Email is required", 422)
+    registration = find_pending_registration(email, pending_token)
+    if registration:
+        delete_pending_registration(registration)
+        return {"message": "Verification cancelled.", "deleted": True}
     deleted, _ = PendingRegistration.objects.filter(email__iexact=email).delete()
     return {"message": "Verification cancelled.", "deleted": deleted > 0}
 
@@ -318,17 +505,16 @@ def request_password_reset(data):
     return {"message": "If that USP email is registered, a password reset code has been sent."}
 
 
-def reset_password(data):
-    email = str(data.get("email", "")).strip().lower()
-    code = str(data.get("code", "")).strip()
-    password = str(data.get("password", ""))
-    if len(password) < 6:
-        raise ApiError("Password must be at least 6 characters long", 422)
-    reset = PasswordReset.objects.filter(
+def find_active_password_reset(email):
+    return PasswordReset.objects.filter(
         user__email__iexact=email,
         used_at__isnull=True,
         expires_at__gt=timezone.now(),
     ).order_by("-created_at").first()
+
+
+def validate_password_reset_code(email, code):
+    reset = find_active_password_reset(email)
     if not reset:
         raise ApiError("That reset code is invalid or expired", 400)
     if reset.attempts >= 5:
@@ -337,6 +523,23 @@ def reset_password(data):
         reset.attempts += 1
         reset.save(update_fields=["attempts"])
         raise ApiError("That reset code is invalid or expired", 400)
+    return reset
+
+
+def verify_password_reset_code(data):
+    email = str(data.get("email", "")).strip().lower()
+    code = str(data.get("code", "")).strip()
+    validate_password_reset_code(email, code)
+    return {"message": "Reset code verified. Choose a new password."}
+
+
+def reset_password(data):
+    email = str(data.get("email", "")).strip().lower()
+    code = str(data.get("code", "")).strip()
+    password = str(data.get("password", ""))
+    if len(password) < 6:
+        raise ApiError("Password must be at least 6 characters long", 422)
+    reset = validate_password_reset_code(email, code)
     reset.user.password_hash = hash_password(password)
     reset.user.save(update_fields=["password_hash"])
     reset.used_at = timezone.now()
@@ -459,7 +662,8 @@ def list_items():
 
 
 def list_seller_items(seller_id):
-    items = public_items().filter(seller_id=seller_id).order_by("-id")
+    seller = require_active_user(seller_id)
+    items = visible_items().filter(seller_id=seller.id).exclude(status="removed").order_by("-id")
     return [serialize_item(item) for item in items]
 
 
@@ -485,7 +689,7 @@ def create_item(data):
 
 def get_public_item(item_id):
     item = Item.objects.filter(id=item_id).first()
-    if not item or item.status == "removed" or item.name in HIDDEN_ITEM_NAMES or item.name.startswith("__test_"):
+    if not item or item.status == "removed" or item.name.startswith("__test_"):
         raise ApiError("Item not found", 404)
     return serialize_item(item)
 
@@ -508,7 +712,8 @@ def update_item(item_id, seller_id, data):
     if "stock" in data:
         item.stock = int(data["stock"])
 
-    item.status = item_status(item.stock)
+    if item.status != "reserved":
+        item.status = item_status(item.stock)
     item.save()
     return serialize_item(item)
 
@@ -523,13 +728,215 @@ def delete_item(item_id, seller_id):
     return {"message": "Listing removed successfully."}
 
 
-def purchase_item(item_id, buyer_id, payment_data=None):
+def _conversation_payload(conversation, current_user_id=None, mark_read=False):
+    item = Item.objects.filter(id=conversation.item_id).first()
+    buyer = User.objects.filter(id=conversation.buyer_id).first()
+    seller = User.objects.filter(id=conversation.seller_id).first()
+    if mark_read and current_user_id:
+        Message.objects.filter(conversation_id=conversation.id, receiver_id=current_user_id, is_read=False).update(is_read=True)
+    messages = list(Message.objects.filter(conversation_id=conversation.id).order_by("created_at", "id"))
+    return serialize_conversation(conversation, item, buyer, seller, messages, current_user_id)
+
+
+def list_conversations(user_id):
+    user = require_active_user(user_id)
+    conversations = Conversation.objects.filter(Q(buyer_id=user.id) | Q(seller_id=user.id)).order_by("-updated_at", "-id")
+    return [_conversation_payload(conversation, user.id) for conversation in conversations]
+
+
+def get_unread_message_count(user_id):
+    user = require_active_user(user_id)
+    return {"unread_count": Message.objects.filter(receiver_id=user.id, is_read=False).count()}
+
+
+def open_item_conversation(item_id, buyer_id):
+    buyer = require_active_user(buyer_id)
+    item = Item.objects.filter(id=item_id).first()
+    if not item or item.status in {"hidden", "removed"}:
+        raise ApiError("Item not found", 404)
+    if item.seller_id == buyer.id:
+        raise ApiError("You cannot message yourself about your own listing", 400)
+    seller = require_active_user(item.seller_id)
+    conversation, _ = Conversation.objects.get_or_create(
+        item_id=item.id,
+        buyer_id=buyer.id,
+        seller_id=seller.id,
+    )
+    conversation.save(update_fields=["updated_at"])
+    return _conversation_payload(conversation, buyer.id, mark_read=True)
+
+
+def send_conversation_message(conversation_id, sender_id, body):
+    sender = require_active_user(sender_id)
+    message_body = str(body or "").strip()
+    if len(message_body) < 1:
+        raise ApiError("Message cannot be empty", 422)
+    if len(message_body) > 1000:
+        raise ApiError("Message is too long", 422)
+    conversation = Conversation.objects.filter(id=conversation_id).first()
+    if not conversation:
+        raise ApiError("Conversation not found", 404)
+    if sender.id not in {conversation.buyer_id, conversation.seller_id}:
+        raise ApiError("You are not part of this conversation", 403)
+    receiver_id = conversation.seller_id if sender.id == conversation.buyer_id else conversation.buyer_id
+    Message.objects.create(
+        conversation_id=conversation.id,
+        sender_id=sender.id,
+        receiver_id=receiver_id,
+        body=message_body,
+        is_read=False,
+    )
+    conversation.save(update_fields=["updated_at"])
+    item = Item.objects.filter(id=conversation.item_id).first()
+    notify_user(
+        receiver_id,
+        "New message",
+        f"{sender.username} sent you a message about {item.name if item else 'a marketplace item'}.",
+        "message",
+        sender,
+    )
+    return _conversation_payload(conversation, sender.id)
+
+
+def get_conversation(conversation_id, user_id):
+    user = require_active_user(user_id)
+    conversation = Conversation.objects.filter(id=conversation_id).first()
+    if not conversation:
+        raise ApiError("Conversation not found", 404)
+    if user.id not in {conversation.buyer_id, conversation.seller_id}:
+        raise ApiError("You are not part of this conversation", 403)
+    return _conversation_payload(conversation, user.id, mark_read=True)
+
+
+def list_item_message_buyers(item_id, seller_id):
+    seller = require_active_user(seller_id)
+    item = Item.objects.filter(id=item_id).first()
+    if not item:
+        raise ApiError("Item not found", 404)
+    if item.seller_id != seller.id:
+        raise ApiError("You can only reserve your own listings", 403)
+    buyer_ids = Conversation.objects.filter(item_id=item.id, seller_id=seller.id).values_list("buyer_id", flat=True).distinct()
+    return [serialize_user(user) for user in User.objects.filter(id__in=list(buyer_ids)).order_by("username")]
+
+
+def reserve_item(item_id, seller_id, buyer_id):
+    seller = require_active_user(seller_id)
+    buyer = require_active_user(buyer_id)
+    item = Item.objects.filter(id=item_id).first()
+    if not item:
+        raise ApiError("Item not found", 404)
+    if item.seller_id != seller.id:
+        raise ApiError("You can only reserve your own listings", 403)
+    if item.status == "sold" or item.stock <= 0:
+        raise ApiError("Sold items cannot be reserved", 400)
+    if not Conversation.objects.filter(item_id=item.id, seller_id=seller.id, buyer_id=buyer.id).exists():
+        raise ApiError("Select a buyer who has messaged about this item", 422)
+    item.status = "reserved"
+    item.reserved_buyer_id = buyer.id
+    item.reserved_buyer_username = buyer.username
+    item.save(update_fields=["status", "reserved_buyer_id", "reserved_buyer_username"])
+    conversation = Conversation.objects.filter(item_id=item.id, seller_id=seller.id, buyer_id=buyer.id).first()
+    if conversation:
+        Message.objects.create(
+            conversation_id=conversation.id,
+            sender_id=seller.id,
+            receiver_id=buyer.id,
+            body=f"{seller.username} reserved {item.name} for you. You can now proceed with checkout.",
+            is_read=False,
+        )
+        conversation.save(update_fields=["updated_at"])
+    notify_user(
+        buyer.id,
+        "Listing reserved",
+        f"{seller.username} reserved {item.name} for you. You can now proceed with checkout.",
+        "listing",
+        seller,
+    )
+    return {"item": serialize_item(item), "message": f"{item.name} reserved for {buyer.username}."}
+
+
+def update_item_seller_status(item_id, seller_id, status):
+    seller = require_active_user(seller_id)
+    item = Item.objects.filter(id=item_id).first()
+    if not item:
+        raise ApiError("Item not found", 404)
+    if item.seller_id != seller.id:
+        raise ApiError("You can only update your own listings", 403)
+
+    if status == "available":
+        if item.stock <= 0:
+            raise ApiError("Add stock before marking this item available", 400)
+        item.status = "available"
+        item.reserved_buyer_id = None
+        item.reserved_buyer_username = None
+    elif status == "sold":
+        item.status = "sold"
+        item.stock = 0
+        item.reserved_buyer_id = None
+        item.reserved_buyer_username = None
+    elif status == "hidden":
+        item.status = "hidden"
+        item.reserved_buyer_id = None
+        item.reserved_buyer_username = None
+    else:
+        raise ApiError("Unsupported listing status", 422)
+
+    item.save()
+    return {"item": serialize_item(item), "message": "Listing status updated."}
+
+
+PAYMENT_METHODS = {
+    "mycash": "MyCash",
+    "mpaisa": "M-PAiSA",
+    "cash": "Cash",
+    "visa": "Visa Card",
+}
+
+DELIVERY_METHODS = {
+    "self_pickup": "Self Pickup",
+    "delivery": "Delivery",
+}
+
+ORDER_STAGES = [
+    "order_placed",
+    "payment_confirmed",
+    "preparing_item",
+    "ready_for_collection",
+    "item_received",
+    "completed",
+    "cancelled",
+]
+
+SELLER_ORDER_STAGES = {"preparing_item", "ready_for_collection"}
+
+
+def purchase_item(
+    item_id,
+    buyer_id,
+    payment_method="cash",
+    delivery_method="self_pickup",
+    quantity=1,
+    delivery_fee=0,
+    subtotal=None,
+    included_tax_amount=None,
+    final_total=None,
+):
     if not buyer_id:
         raise ApiError("User not found", 404)
 
-    payment_data = payment_data or {}
-    payment_method = str(payment_data.get("payment_method") or "Simulated Card Payment").strip()
-    simulate_failure = bool(payment_data.get("simulate_failure"))
+    payment_method_key = str(payment_method or "").strip().lower()
+    if payment_method_key not in PAYMENT_METHODS:
+        raise ApiError("Select a valid payment method", 422)
+
+    delivery_method_key = str(delivery_method or "").strip().lower()
+    if delivery_method_key not in DELIVERY_METHODS:
+        raise ApiError("Select a valid delivery method", 422)
+    try:
+        requested_quantity = int(quantity or 1)
+    except (TypeError, ValueError) as exc:
+        raise ApiError("Quantity must be a whole number", 422) from exc
+    if requested_quantity < 1:
+        raise ApiError("Quantity must be at least 1", 422)
 
     buyer = require_active_user(buyer_id)
     item = Item.objects.filter(id=item_id).first()
@@ -537,18 +944,27 @@ def purchase_item(item_id, buyer_id, payment_data=None):
         raise ApiError("Item not found", 404)
     if item.seller_id == buyer.id:
         raise ApiError("You cannot purchase your own listing", 400)
+    if item.status == "reserved" and item.reserved_buyer_id != buyer.id:
+        raise ApiError("This item is reserved for another buyer", 403)
     if item.stock <= 0 or item.status == "sold":
         item.stock = 0
         item.status = "sold"
         item.save()
         raise ApiError("Item is sold out", 400)
+    if requested_quantity > item.stock:
+        raise ApiError(f"Only {item.stock} unit{' is' if item.stock == 1 else 's are'} available", 400)
 
-    if simulate_failure:
-        raise ApiError(f"Simulated payment via {payment_method} failed. Please try again.", 402)
-
-    item.stock -= 1
-    item.status = item_status(item.stock)
+    was_reserved = item.status == "reserved"
+    item.stock -= requested_quantity
+    item.status = "sold" if was_reserved or item.stock <= 0 else item_status(item.stock)
+    if item.status == "sold":
+        item.reserved_buyer_id = None
+        item.reserved_buyer_username = None
     item.save()
+    item_subtotal = float(subtotal if subtotal is not None else item.price * requested_quantity)
+    item_delivery_fee = float(delivery_fee or 0)
+    item_tax_amount = float(included_tax_amount if included_tax_amount is not None else 0)
+    item_final_total = float(final_total if final_total is not None else item_subtotal + item_delivery_fee)
     purchase = Purchase.objects.create(
         buyer_id=buyer.id,
         buyer_username=buyer.username,
@@ -559,42 +975,186 @@ def purchase_item(item_id, buyer_id, payment_data=None):
         seller_id=item.seller_id,
         seller_username=item.seller_username,
         seller_contact=item.contact,
-        quantity=1,
-        total_amount=item.price,
-        payment_method=payment_method,
-        status="completed",
+        quantity=requested_quantity,
+        total_amount=item_final_total,
+        payment_method=payment_method_key,
+        delivery_method=delivery_method_key,
+        delivery_fee=item_delivery_fee,
+        subtotal=item_subtotal,
+        included_tax_amount=item_tax_amount,
+        final_total=item_final_total,
+        status="in_progress",
+        order_stage="payment_confirmed",
     )
-    notify_admin(
-        "Checkout payment completed",
-        f"{buyer.username} purchased {item.name} from {item.seller_username} for ${item.price:.2f} via {payment_method}.",
-        "checkout",
+    notify_order_user(
+        purchase,
+        buyer.id,
+        "Order confirmed",
+        f"Your order for {item.name} is confirmed. Payment method: {PAYMENT_METHODS[payment_method_key]}.",
         buyer,
     )
-    result = serialize_admin_item(item)
-    result["payment_method"] = purchase.payment_method
-    return result
+    notify_user(
+        item.seller_id,
+        "New order placed",
+        f"{buyer.username} placed an order for {item.name}.",
+        "sale",
+        buyer,
+    )
+    return serialize_admin_item(item)
 
 
 def list_buyer_purchases(buyer_id):
     if not User.objects.filter(id=buyer_id).exists():
         raise ApiError("User not found", 404)
     purchases = visible_purchases(include_test_records=True).filter(buyer_id=buyer_id).order_by("-id")
-    return [serialize_purchase(purchase) for purchase in purchases]
+    return [enrich_purchase_order(purchase) for purchase in purchases]
+
+
+def enrich_purchase_order(purchase):
+    data = serialize_purchase(purchase)
+    review = RatingReview.objects.filter(purchase_id=purchase.id, reviewer_id=purchase.buyer_id).first()
+    data["has_review"] = bool(review)
+    if review:
+        data["review"] = serialize_rating_review(review)
+    return data
+
+
+def list_seller_orders(seller_id):
+    seller = require_active_user(seller_id)
+    purchases = visible_purchases(include_test_records=True).filter(seller_id=seller.id).order_by("-id")
+    return [enrich_purchase_order(purchase) for purchase in purchases]
+
+
+def update_seller_order_stage(purchase_id, seller_id, stage):
+    seller = require_active_user(seller_id)
+    stage = str(stage or "").strip().lower()
+    if stage not in SELLER_ORDER_STAGES:
+        raise ApiError("Seller can only set Preparing Item or Ready for Collection", 422)
+
+    purchase = Purchase.objects.filter(id=purchase_id).first()
+    if not purchase:
+        raise ApiError("Order not found", 404)
+    if purchase.seller_id != seller.id:
+        raise ApiError("You can only update your own orders", 403)
+    if purchase.order_stage in {"item_received", "completed"}:
+        raise ApiError("This order has already been received by the buyer", 400)
+    if stage == "ready_for_collection" and purchase.order_stage not in {"preparing_item", "ready_for_collection"}:
+        raise ApiError("Mark the order as preparing before setting it ready for collection", 400)
+
+    purchase.order_stage = stage
+    purchase.status = "in_progress"
+    purchase.save(update_fields=["order_stage", "status", "updated_at"])
+    if stage == "ready_for_collection":
+        notify_order_user(
+            purchase,
+            purchase.buyer_id,
+            "Order ready for meetup",
+            f"{purchase.item_name} is ready for meetup or collection.",
+            seller,
+        )
+    elif stage == "preparing_item":
+        notify_order_user(
+            purchase,
+            purchase.buyer_id,
+            "Order confirmed by seller",
+            f"{seller.username} is preparing {purchase.item_name}.",
+            seller,
+        )
+    return enrich_purchase_order(purchase)
+
+
+def cancel_order(purchase_id, user_id):
+    user = require_active_user(user_id)
+    purchase = Purchase.objects.filter(id=purchase_id).first()
+    if not purchase:
+        raise ApiError("Order not found", 404)
+    if user.id not in {purchase.buyer_id, purchase.seller_id}:
+        raise ApiError("You can only cancel orders you are part of", 403)
+    if purchase.order_stage == "completed" or purchase.status == "completed":
+        raise ApiError("Completed orders cannot be cancelled", 400)
+    if purchase.order_stage in {"cancelled", "canceled"} or purchase.status in {"cancelled", "canceled"}:
+        return enrich_purchase_order(purchase)
+
+    purchase.order_stage = "cancelled"
+    purchase.status = "cancelled"
+    purchase.save(update_fields=["order_stage", "status", "updated_at"])
+
+    item = Item.objects.filter(id=purchase.item_id).first()
+    if item and item.status != "removed":
+        item.stock = max(0, item.stock) + (purchase.quantity or 1)
+        item.status = item_status(item.stock)
+        item.reserved_buyer_id = None
+        item.reserved_buyer_username = None
+        item.save(update_fields=["stock", "status", "reserved_buyer_id", "reserved_buyer_username"])
+
+    cancelled_by = "buyer" if user.id == purchase.buyer_id else "seller"
+    notify_order_user(
+        purchase,
+        purchase.buyer_id,
+        "Order cancelled",
+        f"Your order for {purchase.item_name} was cancelled by the {cancelled_by}.",
+        user,
+    )
+    notify_order_user(
+        purchase,
+        purchase.seller_id,
+        "Order cancelled",
+        f"Order #{purchase.id} for {purchase.item_name} was cancelled by {user.username}.",
+        user,
+    )
+    return enrich_purchase_order(purchase)
+
+
+def confirm_order_received(purchase_id, buyer_id):
+    buyer = require_active_user(buyer_id)
+    purchase = Purchase.objects.filter(id=purchase_id).first()
+    if not purchase:
+        raise ApiError("Order not found", 404)
+    if purchase.buyer_id != buyer.id:
+        raise ApiError("You can only confirm your own orders", 403)
+    if purchase.order_stage not in {"ready_for_collection", "item_received", "completed"}:
+        raise ApiError("This order is not ready for collection yet", 400)
+
+    purchase.order_stage = "completed"
+    purchase.status = "completed"
+    purchase.save(update_fields=["order_stage", "status", "updated_at"])
+    notify_order_user(
+        purchase,
+        buyer.id,
+        "Order completed",
+        f"Your order for {purchase.item_name} is complete.",
+        buyer,
+    )
+    notify_order_user(
+        purchase,
+        purchase.seller_id,
+        "Order completed",
+        f"{buyer.username} confirmed receiving {purchase.item_name}.",
+        buyer,
+    )
+    return enrich_purchase_order(purchase)
 
 
 def dashboard(admin_id):
     require_admin(admin_id)
     today = date.today()
     purchases = list(visible_purchases().order_by("-id"))
+    counted_purchases = [
+        purchase
+        for purchase in purchases
+        if purchase.status not in {"cancelled", "canceled"} and purchase.order_stage not in {"cancelled", "canceled"}
+    ]
+    total_sales = sum(purchase.total_amount or purchase.price for purchase in counted_purchases)
     todays_sales = sum(
         purchase.total_amount or purchase.price
-        for purchase in purchases
+        for purchase in counted_purchases
         if purchase.purchased_at and purchase.purchased_at.date() == today
     )
     return {
         "total_students": User.objects.filter(role="student").count(),
         "total_active_listings": visible_items().filter(status="available").count(),
         "total_orders": len(purchases),
+        "total_sales": total_sales,
         "todays_sales": todays_sales,
         "recent_orders": [serialize_admin_purchase(purchase) for purchase in purchases[:5]],
     }
@@ -636,11 +1196,13 @@ def set_student_status(admin_id, student_id, status):
         notification = "Reactivation email sent to the student."
 
     send_email(subject, message, student.email)
-    notify_admin(
-        "Student account status changed",
-        f"{student.username} was {status}. {notification}",
-        "account",
-        student,
+    notify_user(
+        student.id,
+        "Account suspended" if status == "suspended" else "Account reactivated",
+        "Your USP Marketplace account has been suspended by an administrator."
+        if status == "suspended"
+        else "Your USP Marketplace account has been reactivated by an administrator.",
+        "administration",
     )
     return {
         "user": serialize_user(student),
@@ -660,11 +1222,6 @@ def delete_student(admin_id, student_id):
     Item.objects.filter(seller_id=student.id).delete()
     PendingRegistration.objects.filter(email__iexact=email).delete()
     student.delete()
-    notify_admin(
-        "Student account deleted",
-        f"Admin permanently deleted student account '{username}' and removed that student's listings.",
-        "account",
-    )
     return {"message": f"{username} was permanently deleted."}
 
 
@@ -687,6 +1244,36 @@ def mark_admin_notification_viewed(admin_id, notification_id):
 def delete_admin_notification(admin_id, notification_id):
     require_admin(admin_id)
     deleted, _ = AdminNotification.objects.filter(id=notification_id).delete()
+    if not deleted:
+        raise ApiError("Notification not found", 404)
+    return {"message": "Notification removed."}
+
+
+def list_user_notifications(user_id):
+    user = User.objects.filter(id=user_id).first()
+    if not user:
+        raise ApiError("User not found", 404)
+    notifications = UserNotification.objects.filter(user_id=user.id).order_by("-id")[:30]
+    return [serialize_notification(notification) for notification in notifications]
+
+
+def mark_user_notification_viewed(user_id, notification_id):
+    user = User.objects.filter(id=user_id).first()
+    if not user:
+        raise ApiError("User not found", 404)
+    notification = UserNotification.objects.filter(id=notification_id, user_id=user.id).first()
+    if not notification:
+        raise ApiError("Notification not found", 404)
+    notification.is_read = True
+    notification.save(update_fields=["is_read"])
+    return serialize_notification(notification)
+
+
+def delete_user_notification(user_id, notification_id):
+    user = User.objects.filter(id=user_id).first()
+    if not user:
+        raise ApiError("User not found", 404)
+    deleted, _ = UserNotification.objects.filter(id=notification_id, user_id=user.id).delete()
     if not deleted:
         raise ApiError("Notification not found", 404)
     return {"message": "Notification removed."}
@@ -737,10 +1324,29 @@ def submit_user_report(data):
 
 def submit_rating_review(data):
     reviewer = require_active_user(data.get("reviewer_id"))
-    item = Item.objects.filter(id=data.get("item_id")).first()
-    if not item:
-        raise ApiError("Listing not found", 404)
-    if item.seller_id == reviewer.id:
+    purchase = None
+    if data.get("purchase_id"):
+        purchase = Purchase.objects.filter(id=data.get("purchase_id")).first()
+        if not purchase:
+            raise ApiError("Order not found", 404)
+        if purchase.buyer_id != reviewer.id:
+            raise ApiError("Only the buyer who purchased this item can review this order", 403)
+        if RatingReview.objects.filter(purchase_id=purchase.id, reviewer_id=reviewer.id).exists():
+            raise ApiError("You have already reviewed this order", 400)
+        item_id = purchase.item_id
+        item_name = purchase.item_name
+        seller_id = purchase.seller_id
+        seller_username = purchase.seller_username
+    else:
+        item = Item.objects.filter(id=data.get("item_id")).first()
+        if not item:
+            raise ApiError("Listing not found", 404)
+        item_id = item.id
+        item_name = item.name
+        seller_id = item.seller_id
+        seller_username = item.seller_username
+
+    if seller_id == reviewer.id:
         raise ApiError("You cannot review your own listing", 400)
 
     try:
@@ -755,28 +1361,44 @@ def submit_rating_review(data):
         raise ApiError("Review must be at least 5 characters long", 422)
 
     review_record = RatingReview.objects.create(
+        purchase_id=purchase.id if purchase else None,
         reviewer_id=reviewer.id,
         reviewer_username=reviewer.username,
-        item_id=item.id,
-        item_name=item.name,
-        seller_id=item.seller_id,
-        seller_username=item.seller_username,
+        item_id=item_id,
+        item_name=item_name,
+        seller_id=seller_id,
+        seller_username=seller_username,
         rating=rating,
         review=review_text,
     )
-    notify_admin(
-        "New rating and review",
-        f"{reviewer.username} rated {item.name} {rating}/5.",
-        "review",
-        reviewer,
-    )
     return {"review": serialize_rating_review(review_record), "message": "Rating and review submitted."}
+
+
+def list_seller_reviews(seller_id):
+    seller = require_active_user(seller_id)
+    reviews = list(RatingReview.objects.filter(seller_id=seller.id).order_by("-id"))
+    serialized_reviews = [serialize_rating_review(review_record) for review_record in reviews]
+    average_rating = (
+        round(sum(review_record.rating for review_record in reviews) / len(serialized_reviews), 1)
+        if serialized_reviews
+        else 0
+    )
+    return {
+        "seller": {
+            "id": seller.id,
+            "username": seller.username,
+            "name": seller.name or seller.username,
+        },
+        "average_rating": average_rating,
+        "review_count": len(serialized_reviews),
+        "reviews": serialized_reviews,
+    }
 
 
 def list_user_reports(admin_id):
     require_admin(admin_id)
     reports = []
-    for report_record in UserReport.objects.order_by("-id"):
+    for report_record in UserReport.objects.exclude(reporter_username__startswith="__test_").order_by("-id"):
         serialized_report = serialize_user_report(report_record)
         if report_record.target_type == "listing" and report_record.target_id:
             item = Item.objects.filter(id=report_record.target_id).first()
@@ -821,10 +1443,11 @@ def hide_listing(admin_id, item_id, reason):
     item.status = "hidden"
     item.removed_reason = reason
     item.save()
-    notify_admin(
+    notify_user(
+        item.seller_id,
         "Listing hidden",
-        f"Admin hid listing '{item.name}'.",
-        "listing",
+        f"An administrator hid your listing '{item.name}'. Reason: {reason or 'No reason provided'}.",
+        "administration",
     )
     return serialize_admin_item(item)
 
@@ -837,10 +1460,11 @@ def remove_listing(admin_id, item_id, reason):
     item.status = "removed"
     item.removed_reason = reason
     item.save()
-    notify_admin(
+    notify_user(
+        item.seller_id,
         "Listing removed",
-        f"Admin removed listing '{item.name}'.",
-        "listing",
+        f"An administrator removed your listing '{item.name}'. Reason: {reason or 'No reason provided'}.",
+        "administration",
     )
     return serialize_admin_item(item)
 
@@ -853,6 +1477,12 @@ def restore_listing(admin_id, item_id):
     item.status = item_status(item.stock)
     item.removed_reason = None
     item.save()
+    notify_user(
+        item.seller_id,
+        "Listing restored",
+        f"An administrator restored your listing '{item.name}'.",
+        "administration",
+    )
     return serialize_admin_item(item)
 
 

@@ -8,16 +8,19 @@ function ListingsSection({
   searchQuery,
   selectedCategory,
   sortOption,
+  title = "Recent Listings",
+  description = "",
   onClearFilters,
   onSelectCategory,
   onSelectListing,
+  onViewSeller,
   onSortChange,
 }) {
   return (
     <section className="listings" id="listings">
       <div className="section-heading">
-        <h2>Recent Listings</h2>
-        {selectedCategory !== "All" && <p>{`Showing products listed under ${selectedCategory}.`}</p>}
+        <h2>{title}</h2>
+        {description ? <p>{description}</p> : selectedCategory !== "All" && <p>{`Showing products listed under ${selectedCategory}.`}</p>}
       </div>
 
       <div className="listing-filters">
@@ -57,7 +60,7 @@ function ListingsSection({
       ) : filteredListings.length ? (
         <div className="product-container">
           {filteredListings.map((listing) => (
-            <ProductCard listing={listing} showPrice onSelect={onSelectListing} key={listing.id} />
+            <ProductCard listing={listing} showPrice onSelect={onSelectListing} onViewSeller={onViewSeller} key={listing.id} />
           ))}
         </div>
       ) : (

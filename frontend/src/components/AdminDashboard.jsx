@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import ReportsPanel from "./ReportsPanel";
 
 const adminTabs = ["Dashboard", "Students", "Listings", "Orders", "Reports", "Flags", "Reviews"];
 
@@ -8,21 +9,14 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
   const [students, setStudents] = useState([]);
   const [listings, setListings] = useState([]);
   const [orders, setOrders] = useState([]);
-  const [report, setReport] = useState(null);
   const [studentSearch, setStudentSearch] = useState("");
   const [listingSearch, setListingSearch] = useState("");
   const [orderSearch, setOrderSearch] = useState("");
   const [orderStatus, setOrderStatus] = useState("");
   const [orderDate, setOrderDate] = useState("");
-  const [reportPeriod, setReportPeriod] = useState("daily");
-  const [reportFromDate, setReportFromDate] = useState("");
-  const [reportToDate, setReportToDate] = useState("");
-  const [reportOrders, setReportOrders] = useState([]);
-  const [reportListings, setReportListings] = useState([]);
   const [userReports, setUserReports] = useState([]);
   const [ratingReviews, setRatingReviews] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [isConfirmingReport, setIsConfirmingReport] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
   const [selectedNotification, setSelectedNotification] = useState(null);
@@ -37,7 +31,11 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
   const parseResponse = async (response, fallbackMessage) => {
     const data = await response.json();
     if (!response.ok) {
-      throw new Error(data?.detail || fallbackMessage);
+      const detail = data?.detail || fallbackMessage;
+      if (response.status === 503 || /database unavailable/i.test(detail)) {
+        throw new Error("Marketplace database is unavailable. Start MySQL in XAMPP, then refresh the page.");
+      }
+      throw new Error(detail);
     }
     return data;
   };
@@ -73,17 +71,6 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
     setOrders(data);
   };
 
-  const loadReport = async () => {
-    const [reportData, ordersData, listingsData] = await Promise.all([
-      fetchAdmin(`/admin/reports?period=${reportPeriod}`, "Unable to load reports"),
-      fetchAdmin("/admin/orders", "Unable to load report orders"),
-      fetchAdmin("/admin/listings", "Unable to load report listings"),
-    ]);
-    setReport(reportData);
-    setReportOrders(ordersData);
-    setReportListings(listingsData);
-  };
-
   const loadNotifications = async () => {
     const data = await fetchAdmin("/admin/notifications", "Unable to load notifications");
     setNotifications(data);
@@ -114,8 +101,6 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
         await loadListings();
       } else if (activeTab === "Orders") {
         await loadOrders();
-      } else if (activeTab === "Reports") {
-        await loadReport();
       } else if (activeTab === "Flags") {
         await loadUserReports();
       } else if (activeTab === "Reviews") {
@@ -131,7 +116,7 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
 
   useEffect(() => {
     refreshActiveTab();
-  }, [activeTab, isAdmin, reportPeriod]);
+  }, [activeTab, isAdmin]);
 
   useEffect(() => {
     if (isAdmin) {
@@ -147,55 +132,6 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
       ["Today's Sales", `$${Number(dashboard?.todays_sales ?? 0).toFixed(2)}`],
     ],
     [dashboard]
-  );
-
-  const filteredReportOrders = useMemo(() => {
-    const fromTime = reportFromDate ? new Date(`${reportFromDate}T00:00:00`).getTime() : null;
-    const toTime = reportToDate ? new Date(`${reportToDate}T23:59:59`).getTime() : null;
-
-    return reportOrders.filter((order) => {
-      if (!order.purchased_at) {
-        return false;
-      }
-
-      const orderTime = new Date(order.purchased_at).getTime();
-      return (fromTime === null || orderTime >= fromTime) && (toTime === null || orderTime <= toTime);
-    });
-  }, [reportOrders, reportFromDate, reportToDate]);
-
-  const reportSummary = useMemo(() => {
-    const useReportTotals = !reportFromDate && !reportToDate && reportOrders.length === 0;
-    const totalRevenue = filteredReportOrders.reduce(
-      (total, order) => total + Number(order.total_amount || order.price || 0),
-      0
-    );
-    const itemsSold = filteredReportOrders.reduce((total, order) => total + Number(order.quantity || 1), 0);
-    const completedOrders = filteredReportOrders.filter((order) => order.status === "completed").length;
-
-    return {
-      totalSales: useReportTotals ? report?.total_orders ?? 0 : completedOrders,
-      totalOrders: useReportTotals ? report?.total_orders ?? 0 : filteredReportOrders.length,
-      itemsSold: useReportTotals ? report?.total_items_sold ?? 0 : itemsSold,
-      revenue: useReportTotals ? Number(report?.total_sales ?? 0) : totalRevenue,
-    };
-  }, [filteredReportOrders, report, reportFromDate, reportOrders.length, reportToDate]);
-
-  const orderStatusSummary = useMemo(
-    () => ({
-      completed: filteredReportOrders.filter((order) => order.status === "completed").length,
-      pending: filteredReportOrders.filter((order) => order.status === "pending").length,
-      cancelled: filteredReportOrders.filter((order) => ["cancelled", "canceled"].includes(order.status)).length,
-    }),
-    [filteredReportOrders]
-  );
-
-  const listingSummary = useMemo(
-    () => ({
-      active: reportListings.filter((listing) => listing.status === "available").length,
-      sold: reportListings.filter((listing) => listing.status === "sold").length,
-      removed: reportListings.filter((listing) => listing.status === "removed").length,
-    }),
-    [reportListings]
   );
 
   const formatDate = (value) =>
@@ -356,85 +292,6 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const generateReport = async () => {
-    if (reportFromDate && reportToDate && reportFromDate > reportToDate) {
-      showToast("From date cannot be after To date.");
-      return;
-    }
-
-    await loadReport();
-    showToast("Report generated successfully.");
-  };
-
-  const createReportPdf = () => {
-    const rows = report?.rows ?? [];
-    const clean = (value) => String(value).replace(/[^\x20-\x7E]/g, "?").replace(/[\\()]/g, "\\$&");
-    const commands = [];
-    const addText = (text, x, y, size = 10, font = "F1", color = "0.08 0.14 0.22") => {
-      commands.push(`${color} rg BT /${font} ${size} Tf ${x} ${y} Td (${clean(text)}) Tj ET`);
-    };
-    const addLine = (x1, y1, x2, y2) => commands.push(`0.84 0.88 0.93 RG ${x1} ${y1} m ${x2} ${y2} l S`);
-
-    commands.push("0.05 0.18 0.30 rg 40 710 532 52 re f");
-    addText("USP", 58, 730, 18, "F2", "1 1 1");
-    addText("USP BUY & SELL ADMIN REPORT", 112, 736, 14, "F2", "1 1 1");
-    addText(`Period: ${reportPeriod}`, 112, 720, 10, "F1", "1 1 1");
-    addText(`Generated: ${new Date().toLocaleString()}`, 350, 720, 8, "F1", "1 1 1");
-    addText(`Total Orders: ${report?.total_orders ?? 0}`, 44, 676, 11, "F2");
-    addText(`Items Sold: ${report?.total_items_sold ?? 0}`, 230, 676, 11, "F2");
-    addText(`Total Sales: $${Number(report?.total_sales ?? 0).toFixed(2)}`, 405, 676, 11, "F2");
-    addLine(40, 650, 572, 650);
-    addText("Date", 44, 628, 9, "F2");
-    addText("Orders", 225, 628, 9, "F2");
-    addText("Items Sold", 335, 628, 9, "F2");
-    addText("Total Sales", 465, 628, 9, "F2");
-    addLine(40, 618, 572, 618);
-
-    let y = 598;
-    rows.slice(0, 22).forEach((row) => {
-      addText(row.date, 44, y);
-      addText(String(row.orders), 225, y);
-      addText(String(row.items_sold), 335, y);
-      addText(`$${Number(row.total_sales).toFixed(2)}`, 465, y);
-      addLine(40, y - 12, 572, y - 12);
-      y -= 24;
-    });
-
-    addText("USP Buy & Sell | Admin Office | Laucala Campus", 44, 44, 8);
-    const textCommands = commands.join("\n");
-    const objects = [
-      "<< /Type /Catalog /Pages 2 0 R >>",
-      "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>",
-      "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-      "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
-      `<< /Length ${textCommands.length} >>\nstream\n${textCommands}\nendstream`,
-    ];
-    let pdf = "%PDF-1.4\n";
-    const offsets = [0];
-    objects.forEach((object, index) => {
-      offsets.push(pdf.length);
-      pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
-    });
-    const xrefOffset = pdf.length;
-    pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-    offsets.slice(1).forEach((offset) => {
-      pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
-    });
-    pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
-
-    const blob = new Blob([pdf], { type: "application/pdf" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `usp-buy-sell-admin-report-${Date.now()}.pdf`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    setIsConfirmingReport(false);
   };
 
   if (!isAdmin) {
@@ -756,100 +613,7 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
           </div>
         )}
 
-        {activeTab === "Reports" && (
-          <div className="reports-page">
-            <div className="reports-header">
-              <div>
-                <p className="section-kicker">Marketplace analytics</p>
-                <h2>Reports</h2>
-                <span>View marketplace sales, orders and listing activity.</span>
-              </div>
-              <button type="button" className="auth-submit" onClick={() => setIsConfirmingReport(true)}>
-                Export PDF
-              </button>
-            </div>
-
-            <div className="report-filter">
-              <label>
-                Period
-                <select value={reportPeriod} onChange={(event) => setReportPeriod(event.target.value)}>
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="monthly">Monthly</option>
-                </select>
-              </label>
-              <label>
-                From
-                <input type="date" value={reportFromDate} onChange={(event) => setReportFromDate(event.target.value)} />
-              </label>
-              <label>
-                To
-                <input type="date" value={reportToDate} onChange={(event) => setReportToDate(event.target.value)} />
-              </label>
-              <button type="button" className="secondary-button" onClick={generateReport}>
-                Generate Report
-              </button>
-            </div>
-
-            <div className="summary-grid">
-              <div className="summary-card">
-                <span>Total Sales</span>
-                <h3>{reportSummary.totalSales}</h3>
-              </div>
-              <div className="summary-card">
-                <span>Total Orders</span>
-                <h3>{reportSummary.totalOrders}</h3>
-              </div>
-              <div className="summary-card">
-                <span>Items Sold</span>
-                <h3>{reportSummary.itemsSold}</h3>
-              </div>
-              <div className="summary-card revenue-card">
-                <span>Total Revenue</span>
-                <h3>${Number(reportSummary.revenue).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
-              </div>
-            </div>
-
-            <div className="report-sections">
-              <div className="report-box">
-                <h3>Order Summary</h3>
-                <div className="status-row">
-                  <span>Completed</span>
-                  <strong>{orderStatusSummary.completed}</strong>
-                </div>
-                <div className="status-row">
-                  <span>Pending</span>
-                  <strong>{orderStatusSummary.pending}</strong>
-                </div>
-                <div className="status-row">
-                  <span>Cancelled</span>
-                  <strong>{orderStatusSummary.cancelled}</strong>
-                </div>
-              </div>
-
-              <div className="report-box">
-                <h3>Listings</h3>
-                <div className="status-row">
-                  <span>Active</span>
-                  <strong>{listingSummary.active}</strong>
-                </div>
-                <div className="status-row">
-                  <span>Sold</span>
-                  <strong>{listingSummary.sold}</strong>
-                </div>
-                <div className="status-row">
-                  <span>Removed</span>
-                  <strong>{listingSummary.removed}</strong>
-                </div>
-              </div>
-            </div>
-
-            <div className="transactions admin-table-card">
-              <h3>Sales & Order Report</h3>
-              <AdminReportTable orders={filteredReportOrders} onViewProfile={openUserProfile} />
-            </div>
-          </div>
-        )}
+        {activeTab === "Reports" && <ReportsPanel apiUrl={apiUrl} adminId={adminId} showToast={showToast} />}
 
         {activeTab === "Flags" && (
           <div className="admin-table-card">
@@ -948,23 +712,6 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
           </div>
         )}
       </section>
-
-      {isConfirmingReport && (
-        <div className="auth-modal-backdrop" onClick={() => setIsConfirmingReport(false)}>
-          <div className="report-confirm-modal" onClick={(event) => event.stopPropagation()}>
-            <h3>Download Admin Report?</h3>
-            <p>Your browser will save the selected admin report as a PDF.</p>
-            <div className="checkout-actions">
-              <button type="button" className="secondary-button" onClick={() => setIsConfirmingReport(false)}>
-                Cancel
-              </button>
-              <button type="button" className="auth-submit" onClick={createReportPdf}>
-                Confirm Download
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {selectedNotification && (
         <div className="auth-modal-backdrop" onClick={() => setSelectedNotification(null)}>
@@ -1139,39 +886,6 @@ function AdminOrdersTable({ orders, formatDate, onViewProfile }) {
           <span>${Number(order.total_amount || order.price).toFixed(2)}</span>
           <span>{formatDate(order.purchased_at)}</span>
           <span className={`status-pill ${order.status}`}>{order.status}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function AdminReportTable({ orders, onViewProfile }) {
-  if (!orders.length) {
-    return <p className="empty-state">No report records found.</p>;
-  }
-
-  return (
-    <div className="admin-table">
-      <div className="admin-table-head report-orders-grid">
-        <span>Order ID</span>
-        <span>Item</span>
-        <span>Seller</span>
-        <span>Buyer</span>
-        <span>Status</span>
-        <span>Amount</span>
-      </div>
-      {orders.map((order) => (
-        <div className="admin-table-row report-orders-grid" key={order.id}>
-          <strong>ORD{String(order.id).padStart(3, "0")}</strong>
-          <span>{order.item_name}</span>
-          <button type="button" className="profile-name-button" onClick={() => onViewProfile(order.seller)}>
-            {order.seller_username}
-          </button>
-          <button type="button" className="profile-name-button" onClick={() => onViewProfile(order.buyer)}>
-            {order.buyer_username}
-          </button>
-          <span className={`status-pill ${order.status}`}>{order.status}</span>
-          <span>${Number(order.total_amount || order.price).toFixed(2)}</span>
         </div>
       ))}
     </div>
