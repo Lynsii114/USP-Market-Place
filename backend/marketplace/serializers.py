@@ -34,6 +34,14 @@ def serialize_item(item):
 
 
 def serialize_purchase(purchase):
+    payment_status = purchase.payment_status
+    if not payment_status:
+        if purchase.order_stage in {"cancelled", "canceled"}:
+            payment_status = "cancelled"
+        elif purchase.payment_method == "cash" and purchase.order_stage == "order_placed":
+            payment_status = "pending"
+        else:
+            payment_status = "approved"
     return {
         "id": purchase.id,
         "buyer_id": purchase.buyer_id,
@@ -55,6 +63,8 @@ def serialize_purchase(purchase):
         "final_total": purchase.final_total,
         "status": purchase.status,
         "order_stage": purchase.order_stage,
+        "payment_status": payment_status,
+        "payment_reference": purchase.payment_reference,
         "purchased_at": purchase.purchased_at,
         "updated_at": purchase.updated_at,
     }
@@ -142,4 +152,3 @@ def serialize_rating_review(review):
         "review": review.review,
         "created_at": review.created_at,
     }
-

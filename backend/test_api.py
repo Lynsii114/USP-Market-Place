@@ -213,7 +213,7 @@ def test_order_notifications_go_to_buyer_and_seller_not_admin():
     assert not AdminNotification.objects.filter(actor_username=buyer.username, category="checkout").exists()
 
 
-def test_purchase_quantity_updates_stock_and_history_total():
+def test_cash_checkout_records_success_and_decrements_purchased_quantity():
     suffix = random.randint(10_000_000, 99_999_999)
     buyer = create_active_test_user("quantity_buyer", suffix)
     seller = create_active_test_user("quantity_seller", suffix + 1)
@@ -235,12 +235,325 @@ def test_purchase_quantity_updates_stock_and_history_total():
     item.refresh_from_db()
     assert item.stock == 1
     assert item.status == "available"
+    assert item.reserved_buyer_id is None
     purchase = Purchase.objects.get(item_id=item.id, buyer_id=buyer.id)
     assert purchase.quantity == 2
     assert purchase.total_amount == 20
+    assert purchase.order_stage == "payment_confirmed"
+    assert purchase.payment_status == "approved"
     purchase_history = client.get(f"/api/users/{buyer.id}/purchases")
     assert purchase_history.status_code == 200
     assert any(order["item_id"] == item.id and order["quantity"] == 2 for order in purchase_history.json())
+
+
+@pytest.mark.parametrize(("payment_method", "payment_details"), [
+    ("mycash", {"phone_number": "+679 9000000", "authorization_code": "123456"}),
+    ("mpaisa", {"phone_number": "+679 8111222", "authorization_code": "123456"}),
+    ("visa", {
+        "cardholder_name": "Demo Buyer",
+        "card_number": "4242 4242 4242 4242",
+        "expiry": "12/30",
+        "security_code": "123",
+    }),
+    ("cash", {}),
+])
+def test_checkout_simulates_success_and_marks_listing_sold(payment_method, payment_details):
+    suffix = random.randint(10_000_000, 99_999_999)
+    buyer = create_active_test_user("checkout_buyer", suffix)
+    seller = create_active_test_user("checkout_seller", suffix + 1)
+    item = create_test_item(seller, suffix, name=f"__test_checkout_item_{suffix}")
+
+    response = client.post(
+        f"/api/checkout?buyer_id={buyer.id}",
+        {
+            "payment_method": payment_method,
+            "delivery_method": "self_pickup",
+            "payment_details": payment_details,
+            "items": [{"item_id": item.id, "quantity": 1}],
+        },
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["payment"]["status"] == "approved"
+    assert response.json()["payment"]["method"] == payment_method
+    assert response.json()["payment"]["reference"].startswith("DEMO-")
+    assert response.json()["total"] == 10
+    purchase = Purchase.objects.get(item_id=item.id, buyer_id=buyer.id)
+    assert purchase.payment_status == "approved"
+    assert purchase.payment_method == payment_method
+    assert purchase.payment_reference == response.json()["payment"]["reference"]
+    item.refresh_from_db()
+    assert item.stock == 0
+    assert item.status == "sold"
+    history = client.get(f"/api/users/{buyer.id}/purchases")
+    assert history.status_code == 200
+    assert history.json()[0]["payment_status"] == "approved"
+
+
+@pytest.mark.parametrize(("payment_method", "payment_details"), [
+    ("mpaisa", {"phone_number": "+679 8111222", "authorization_code": "123456"}),
+    ("mycash", {"phone_number": "+679 9000000", "authorization_code": "123456"}),
+    ("visa", {
+        "cardholder_name": "Demo Buyer",
+        "card_number": "4242 4242 4242 4242",
+        "expiry": "12/30",
+        "security_code": "123",
+    }),
+    ("cash", {}),
+])
+def test_forced_payment_failure_does_not_create_order_or_change_stock(payment_method, payment_details):
+    suffix = random.randint(10_000_000, 99_999_999)
+    buyer = create_active_test_user("forced_failure_buyer", suffix)
+    seller = create_active_test_user("forced_failure_seller", suffix + 1)
+    item = create_test_item(seller, suffix, name=f"__test_forced_failure_{suffix}")
+    item.stock = 3
+    item.save(update_fields=["stock"])
+
+    response = client.post(
+        f"/api/checkout?buyer_id={buyer.id}",
+        {
+            "payment_method": payment_method,
+            "payment_details": payment_details,
+            "delivery_method": "self_pickup",
+            "force_failure": True,
+            "items": [{"item_id": item.id, "quantity": 1}],
+        },
+        content_type="application/json",
+    )
+
+    assert response.status_code == 402
+    assert "simulated failure" in response.json()["detail"]
+    assert Purchase.objects.filter(item_id=item.id, buyer_id=buyer.id).count() == 0
+    item.refresh_from_db()
+    assert item.stock == 3
+    assert item.status == "available"
+
+
+@pytest.mark.parametrize(("payment_method", "payment_details"), [
+    ("visa", {
+        "cardholder_name": "Demo Buyer",
+        "card_number": "4000 0000 0000 9995",
+        "expiry": "12/30",
+        "security_code": "123",
+    }),
+    ("mycash", {"phone_number": "+679 9000000", "authorization_code": "000000"}),
+    ("mpaisa", {"phone_number": "+679 8111222", "authorization_code": "000000"}),
+])
+def test_insufficient_funds_failure_preserves_stock_and_creates_no_order(payment_method, payment_details):
+    suffix = random.randint(10_000_000, 99_999_999)
+    buyer = create_active_test_user("insufficient_buyer", suffix)
+    seller = create_active_test_user("insufficient_seller", suffix + 1)
+    item = create_test_item(seller, suffix, name=f"__test_insufficient_{suffix}")
+    response = client.post(
+        f"/api/checkout?buyer_id={buyer.id}",
+        {
+            "payment_method": payment_method,
+            "payment_details": payment_details,
+            "delivery_method": "self_pickup",
+            "items": [{"item_id": item.id, "quantity": 1}],
+        },
+        content_type="application/json",
+    )
+
+    assert response.status_code == 402
+    assert "insufficient funds" in response.json()["detail"]
+    assert Purchase.objects.filter(item_id=item.id, buyer_id=buyer.id).count() == 0
+    item.refresh_from_db()
+    assert item.stock == 1
+    assert item.status == "available"
+
+
+def test_failed_multi_item_payment_does_not_partially_create_orders_or_reduce_stock():
+    suffix = random.randint(10_000_000, 99_999_999)
+    buyer = create_active_test_user("multi_failure_buyer", suffix)
+    seller = create_active_test_user("multi_failure_seller", suffix + 1)
+    first_item = create_test_item(seller, suffix, name=f"__test_multi_first_{suffix}")
+    second_item = create_test_item(seller, suffix + 2, name=f"__test_multi_second_{suffix}")
+
+    response = client.post(
+        f"/api/checkout?buyer_id={buyer.id}",
+        {
+            "payment_method": "mycash",
+            "payment_details": {"phone_number": "+679 9000000", "authorization_code": "000000"},
+            "delivery_method": "delivery",
+            "force_failure": False,
+            "items": [
+                {"item_id": first_item.id, "quantity": 1},
+                {"item_id": second_item.id, "quantity": 1},
+            ],
+        },
+        content_type="application/json",
+    )
+
+    assert response.status_code == 402
+    assert Purchase.objects.filter(buyer_id=buyer.id, item_id__in=[first_item.id, second_item.id]).count() == 0
+    first_item.refresh_from_db()
+    second_item.refresh_from_db()
+    assert first_item.stock == second_item.stock == 1
+    assert first_item.status == second_item.status == "available"
+
+
+def test_checkout_cash_payment_is_simulated_and_marks_listing_sold():
+    suffix = random.randint(10_000_000, 99_999_999)
+    buyer = create_active_test_user("cash_buyer", suffix)
+    seller = create_active_test_user("cash_seller", suffix + 1)
+    item = create_test_item(seller, suffix, name=f"__test_cash_item_{suffix}")
+
+    response = client.post(
+        f"/api/checkout?buyer_id={buyer.id}",
+        {
+            "payment_method": "cash",
+            "delivery_method": "delivery",
+            "items": [{"item_id": item.id, "quantity": 1}],
+        },
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["payment"]["status"] == "approved"
+    assert response.json()["total"] == 15
+    purchase = Purchase.objects.get(item_id=item.id, buyer_id=buyer.id)
+    assert purchase.order_stage == "payment_confirmed"
+    assert purchase.payment_status == "approved"
+    assert purchase.payment_reference.startswith("DEMO-")
+    assert purchase.total_amount == 15
+    item.refresh_from_db()
+    assert item.status == "sold"
+    assert item.stock == 0
+    assert item.reserved_buyer_id is None
+
+
+def test_cash_order_is_ready_for_seller_progress_after_simulated_payment():
+    suffix = random.randint(10_000_000, 99_999_999)
+    buyer = create_active_test_user("cash_confirm_buyer", suffix)
+    seller = create_active_test_user("cash_confirm_seller", suffix + 1)
+    item = create_test_item(seller, suffix, name=f"__test_cash_confirm_item_{suffix}")
+
+    checkout = client.post(
+        f"/api/checkout?buyer_id={buyer.id}",
+        {
+            "payment_method": "cash",
+            "delivery_method": "self_pickup",
+            "items": [{"item_id": item.id, "quantity": 1}],
+        },
+        content_type="application/json",
+    )
+    purchase = Purchase.objects.get(item_id=item.id, buyer_id=buyer.id)
+    stage_before_payment = client.post(
+        f"/api/orders/{purchase.id}/seller-stage",
+        {"seller_id": seller.id, "stage": "preparing_item"},
+        content_type="application/json",
+    )
+    rejected_confirmation = client.post(
+        f"/api/orders/{purchase.id}/cash-payment",
+        {"seller_id": buyer.id},
+        content_type="application/json",
+    )
+    confirmed = client.post(
+        f"/api/orders/{purchase.id}/cash-payment",
+        {"seller_id": seller.id},
+        content_type="application/json",
+    )
+
+    assert checkout.status_code == 200
+    assert stage_before_payment.status_code == 200
+    assert rejected_confirmation.status_code == 403
+    assert confirmed.status_code == 400
+    assert purchase.payment_status == "approved"
+    assert purchase.payment_reference.startswith("DEMO-")
+    preparing = client.post(
+        f"/api/orders/{purchase.id}/seller-stage",
+        {"seller_id": seller.id, "stage": "preparing_item"},
+        content_type="application/json",
+    )
+    assert preparing.status_code == 200
+    item.refresh_from_db()
+    assert item.status == "sold"
+    assert item.stock == 0
+    buyer_history = client.get(f"/api/users/{buyer.id}/purchases")
+    assert buyer_history.status_code == 200
+    assert buyer_history.json()[0]["payment_status"] == "approved"
+    assert buyer_history.json()[0]["payment_reference"].startswith("DEMO-")
+
+
+def test_failed_cash_checkout_creates_no_order_and_leaves_listing_available():
+    suffix = random.randint(10_000_000, 99_999_999)
+    buyer = create_active_test_user("cash_cancel_buyer", suffix)
+    seller = create_active_test_user("cash_cancel_seller", suffix + 1)
+    item = create_test_item(seller, suffix, name=f"__test_cash_cancel_item_{suffix}")
+    item.stock = 3
+    item.save(update_fields=["stock"])
+
+    response = client.post(
+        f"/api/checkout?buyer_id={buyer.id}",
+        {
+            "payment_method": "cash",
+            "delivery_method": "self_pickup",
+            "force_failure": True,
+            "items": [{"item_id": item.id, "quantity": 2}],
+        },
+        content_type="application/json",
+    )
+    assert response.status_code == 402
+    assert Purchase.objects.filter(item_id=item.id, buyer_id=buyer.id).count() == 0
+    item.refresh_from_db()
+    assert item.stock == 3
+    assert item.status == "available"
+
+
+def test_sold_listing_cannot_be_purchased_twice():
+    suffix = random.randint(10_000_000, 99_999_999)
+    buyer = create_active_test_user("cash_duplicate_buyer", suffix)
+    seller = create_active_test_user("cash_duplicate_seller", suffix + 1)
+    item = create_test_item(seller, suffix, name=f"__test_cash_duplicate_item_{suffix}")
+    payload = {
+        "payment_method": "cash",
+        "delivery_method": "self_pickup",
+        "items": [{"item_id": item.id, "quantity": 1}],
+    }
+
+    first_checkout = client.post(
+        f"/api/checkout?buyer_id={buyer.id}",
+        payload,
+        content_type="application/json",
+    )
+    repeated_checkout = client.post(
+        f"/api/checkout?buyer_id={buyer.id}",
+        {
+            **payload,
+            "payment_method": "mycash",
+        },
+        content_type="application/json",
+    )
+
+    assert first_checkout.status_code == 200
+    assert repeated_checkout.status_code == 400
+    assert Purchase.objects.filter(item_id=item.id, buyer_id=buyer.id).count() == 1
+
+
+def test_cash_checkout_decrements_only_purchased_quantity():
+    suffix = random.randint(10_000_000, 99_999_999)
+    buyer = create_active_test_user("cash_quantity_buyer", suffix)
+    seller = create_active_test_user("cash_quantity_seller", suffix + 1)
+    item = create_test_item(seller, suffix, name=f"__test_cash_quantity_item_{suffix}")
+    item.stock = 3
+    item.save(update_fields=["stock"])
+
+    checkout = client.post(
+        f"/api/checkout?buyer_id={buyer.id}",
+        {
+            "payment_method": "cash",
+            "delivery_method": "self_pickup",
+            "items": [{"item_id": item.id, "quantity": 2}],
+        },
+        content_type="application/json",
+    )
+    assert checkout.status_code == 200
+    assert checkout.json()["payment"]["status"] == "approved"
+    item.refresh_from_db()
+    assert item.stock == 1
+    assert item.status == "available"
 
 
 def test_seller_reviews_are_publicly_viewable():

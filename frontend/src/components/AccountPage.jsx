@@ -238,6 +238,17 @@ function AccountPage({
                       <span>
                         Buyer: {order.buyer_username} - {order.quantity || 1} sold
                       </span>
+                      <span>
+                        Payment: {order.payment_method === "mpaisa" ? "M-PAiSA" : order.payment_method === "mycash" ? "MyCash" : order.payment_method === "visa" ? "VISA" : "Cash"} -{" "}
+                        {order.payment_status === "paid"
+                          ? "Seller confirmed received"
+                          : order.payment_status === "approved"
+                            ? "Approved (demo)"
+                            : order.payment_status === "cancelled"
+                              ? "Cancelled"
+                              : "Awaiting payment"}
+                      </span>
+                      {order.payment_reference && <span>Payment reference: {order.payment_reference}</span>}
                     </div>
                     <div>
                       <strong>${Number(order.total_amount || order.price).toFixed(2)}</strong>

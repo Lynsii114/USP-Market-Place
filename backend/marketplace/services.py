@@ -10,6 +10,7 @@ import re
 import ssl
 import pyotp
 import qrcode
+from datetime import datetime
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from collections import defaultdict
@@ -733,6 +734,12 @@ def update_item(item_id, seller_id, data):
 
     require_active_user(seller_id)
     validate_item_payload(data, partial=True)
+    if ("price" in data or "stock" in data) and Purchase.objects.filter(
+        item_id=item.id,
+        payment_status="pending",
+        order_stage="order_placed",
+    ).exists():
+        raise ApiError("An order is waiting for payment; cancel it before changing price or stock", 409)
 
     for field in ["name", "description", "category", "contact", "photo"]:
         if field in data:
@@ -754,6 +761,10 @@ def delete_item(item_id, seller_id):
         raise ApiError("Item not found", 404)
     if not seller_id or item.seller_id != int(seller_id):
         raise ApiError("You can only remove your own listings", 403)
+    if Purchase.objects.filter(
+        item_id=item.id, payment_status="pending", order_stage="order_placed",
+    ).exists():
+        raise ApiError("An order is waiting for payment; cancel it before deleting this listing", 409)
     item.delete()
     return {"message": "Listing removed successfully."}
 
@@ -857,6 +868,10 @@ def reserve_item(item_id, seller_id, buyer_id):
         raise ApiError("Item not found", 404)
     if item.seller_id != seller.id:
         raise ApiError("You can only reserve your own listings", 403)
+    if Purchase.objects.filter(
+        item_id=item.id, payment_status="pending", order_stage="order_placed",
+    ).exists():
+        raise ApiError("This listing is reserved for an unpaid order", 409)
     if item.status == "sold" or item.stock <= 0:
         raise ApiError("Sold items cannot be reserved", 400)
     if not Conversation.objects.filter(item_id=item.id, seller_id=seller.id, buyer_id=buyer.id).exists():
@@ -892,6 +907,10 @@ def update_item_seller_status(item_id, seller_id, status):
         raise ApiError("Item not found", 404)
     if item.seller_id != seller.id:
         raise ApiError("You can only update your own listings", 403)
+    if Purchase.objects.filter(
+        item_id=item.id, payment_status="pending", order_stage="order_placed",
+    ).exists():
+        raise ApiError("Release the pending order before changing this listing's status", 409)
 
     if status == "available":
         if item.stock <= 0:
@@ -919,8 +938,13 @@ PAYMENT_METHODS = {
     "mycash": "MyCash",
     "mpaisa": "M-PAiSA",
     "cash": "Cash",
-    "visa": "Visa Card",
+    "visa": "VISA",
 }
+
+DEMO_CARD_APPROVED = "4242424242424242"
+DEMO_CARD_INSUFFICIENT_FUNDS = "4000000000009995"
+DEMO_WALLET_APPROVED_CODE = "123456"
+DEMO_WALLET_INSUFFICIENT_FUNDS_CODE = "000000"
 
 DELIVERY_METHODS = {
     "self_pickup": "Self Pickup",
@@ -940,6 +964,160 @@ ORDER_STAGES = [
 SELLER_ORDER_STAGES = {"preparing_item", "ready_for_collection"}
 
 
+def simulate_payment_authorization(payment_method, payment_details, amount, force_failure=False):
+    if payment_method not in PAYMENT_METHODS:
+        raise ApiError("Select a valid payment method", 422)
+    if force_failure:
+        raise ApiError("Payment declined: simulated failure. No order was placed and stock was unchanged.", 402)
+
+    payment_details = payment_details if isinstance(payment_details, dict) else {}
+    if payment_method == "visa":
+        cardholder = str(payment_details.get("cardholder_name", "")).strip()
+        card_number = re.sub(r"\D", "", str(payment_details.get("card_number", "")))
+        expiry = str(payment_details.get("expiry", "")).strip()
+        security_code = str(payment_details.get("security_code", "")).strip()
+        if not cardholder:
+            raise ApiError("Enter the cardholder name", 422)
+        if len(security_code) != 3 or not security_code.isdigit():
+            raise ApiError("Enter the three-digit demo security code", 422)
+        try:
+            expiry_date = datetime.strptime(expiry, "%m/%y")
+        except ValueError as exc:
+            raise ApiError("Enter the card expiry as MM/YY", 422) from exc
+        now = timezone.now()
+        if (expiry_date.year, expiry_date.month) < (now.year, now.month):
+            raise ApiError("The demo card has expired", 422)
+        if card_number == DEMO_CARD_INSUFFICIENT_FUNDS:
+            raise ApiError("Payment declined: insufficient funds. No order was placed and stock was unchanged.", 402)
+        if card_number != DEMO_CARD_APPROVED:
+            raise ApiError("Use one of the demo Visa card numbers shown at checkout. Real cards are not accepted.", 422)
+    elif payment_method in {"mycash", "mpaisa"}:
+        phone = re.sub(r"[ ()-]", "", str(payment_details.get("phone_number", "")).strip())
+        authorization_code = str(payment_details.get("authorization_code", "")).strip()
+        if not re.fullmatch(r"\+?\d{7,15}", phone):
+            raise ApiError("Enter a valid demo mobile number", 422)
+        if authorization_code == DEMO_WALLET_INSUFFICIENT_FUNDS_CODE:
+            raise ApiError("Payment declined: insufficient funds. No order was placed and stock was unchanged.", 402)
+        if authorization_code != DEMO_WALLET_APPROVED_CODE:
+            raise ApiError("Enter the valid demo authorization code shown at checkout.", 422)
+
+    return {
+        "status": "approved",
+        "provider": f"{PAYMENT_METHODS[payment_method]} demo processor",
+        "reference": f"DEMO-{secrets.token_hex(6).upper()}",
+        "amount": round(amount, 2),
+        "message": "Payment recorded. Contact the seller to arrange meetup/collection.",
+    }
+
+
+def checkout_cart(buyer_id, data):
+    if not buyer_id:
+        raise ApiError("User not found", 404)
+
+    payment_method = str(data.get("payment_method", "")).strip().lower()
+    if payment_method not in PAYMENT_METHODS:
+        raise ApiError("Select a valid payment method", 422)
+    delivery_method = str(data.get("delivery_method", "")).strip().lower()
+    if delivery_method not in DELIVERY_METHODS:
+        raise ApiError("Select a valid delivery method", 422)
+    requested_items = data.get("items")
+    if not isinstance(requested_items, list) or not requested_items:
+        raise ApiError("Your cart is empty", 422)
+
+    item_quantities = {}
+    for entry in requested_items:
+        if not isinstance(entry, dict):
+            raise ApiError("Invalid cart item", 422)
+        try:
+            item_id = int(entry.get("item_id"))
+            quantity = int(entry.get("quantity"))
+        except (TypeError, ValueError) as exc:
+            raise ApiError("Cart item IDs and quantities must be whole numbers", 422) from exc
+        if item_id <= 0 or quantity <= 0:
+            raise ApiError("Cart item IDs and quantities must be positive", 422)
+        if item_id in item_quantities:
+            raise ApiError("Each item can only appear once in your cart", 422)
+        item_quantities[item_id] = quantity
+    if len(item_quantities) > 50:
+        raise ApiError("A checkout can contain at most 50 items", 422)
+
+    buyer = require_active_user(buyer_id)
+    with transaction.atomic():
+        locked_items = {
+            item.id: item
+            for item in Item.objects.select_for_update().filter(id__in=item_quantities).order_by("id")
+        }
+        if len(locked_items) != len(item_quantities):
+            raise ApiError("One or more items are no longer available", 404)
+
+        items_subtotal_cents = 0
+        for item_id, quantity in item_quantities.items():
+            item = locked_items[item_id]
+            if Purchase.objects.filter(
+                item_id=item_id,
+                buyer_id=buyer.id,
+                payment_status="pending",
+                order_stage="order_placed",
+            ).exists():
+                raise ApiError(
+                    f"Cancel the existing unpaid order for {item.name} before checking it out again",
+                    409,
+                )
+            if item.status == "removed":
+                raise ApiError(f"{item.name} is no longer available", 404)
+            if item.seller_id == buyer.id:
+                raise ApiError("You cannot purchase your own listing", 400)
+            if item.status == "reserved" and item.reserved_buyer_id != buyer.id:
+                raise ApiError(f"{item.name} is reserved for another buyer", 403)
+            if item.status == "sold" or item.stock <= 0:
+                raise ApiError(f"{item.name} is sold out", 400)
+            if quantity > item.stock:
+                raise ApiError(f"Only {item.stock} unit{' is' if item.stock == 1 else 's are'} available for {item.name}", 400)
+            items_subtotal_cents += round(item.price * quantity * 100)
+
+        delivery_fee_cents = 500 if delivery_method == "delivery" else 0
+        total_cents = items_subtotal_cents + delivery_fee_cents
+        payment = simulate_payment_authorization(
+            payment_method,
+            data.get("payment_details"),
+            total_cents / 100,
+            force_failure=data.get("force_failure") is True,
+        )
+        fee_per_item, fee_remainder = divmod(delivery_fee_cents, len(item_quantities))
+        orders = []
+        for index, (item_id, quantity) in enumerate(item_quantities.items()):
+            item = locked_items[item_id]
+            item_subtotal_cents = round(item.price * quantity * 100)
+            item_delivery_fee_cents = fee_per_item + (1 if index < fee_remainder else 0)
+            item_total_cents = item_subtotal_cents + item_delivery_fee_cents
+            purchase_item(
+                item_id,
+                buyer.id,
+                payment_method,
+                delivery_method,
+                quantity,
+                item_delivery_fee_cents / 100,
+                item_subtotal_cents / 100,
+                0,
+                item_total_cents / 100,
+                payment_confirmed=True,
+                payment_status=payment["status"],
+                payment_reference=payment["reference"],
+            )
+            purchase = Purchase.objects.filter(buyer_id=buyer.id, item_id=item_id).latest("id")
+            orders.append(enrich_purchase_order(purchase))
+
+    return {
+        "orders": orders,
+        "payment": {
+            **payment,
+            "method": payment_method,
+            "amount": round(total_cents / 100, 2),
+        },
+        "total": round(total_cents / 100, 2),
+    }
+
+
 def purchase_item(
     item_id,
     buyer_id,
@@ -950,13 +1128,12 @@ def purchase_item(
     subtotal=None,
     included_tax_amount=None,
     final_total=None,
+    payment_confirmed=None,
+    payment_status=None,
+    payment_reference="",
 ):
     if not buyer_id:
         raise ApiError("User not found", 404)
-
-    payment_method_key = str(payment_method or "").strip().lower()
-    if payment_method_key not in PAYMENT_METHODS:
-        raise ApiError("Select a valid payment method", 422)
 
     delivery_method_key = str(delivery_method or "").strip().lower()
     if delivery_method_key not in DELIVERY_METHODS:
@@ -972,6 +1149,9 @@ def purchase_item(
     item = Item.objects.filter(id=item_id).first()
     if not item or item.status == "removed":
         raise ApiError("Item not found", 404)
+    payment_method_key = str(payment_method or "").strip().lower()
+    if payment_method_key not in PAYMENT_METHODS:
+        raise ApiError("Select a valid payment method", 422)
     if item.seller_id == buyer.id:
         raise ApiError("You cannot purchase your own listing", 400)
     if item.status == "reserved" and item.reserved_buyer_id != buyer.id:
@@ -984,9 +1164,17 @@ def purchase_item(
     if requested_quantity > item.stock:
         raise ApiError(f"Only {item.stock} unit{' is' if item.stock == 1 else 's are'} available", 400)
 
+    if payment_confirmed is None:
+        payment_confirmed = False
+    awaiting_payment = payment_confirmed is False
     was_reserved = item.status == "reserved"
-    item.stock -= requested_quantity
-    item.status = "sold" if was_reserved or item.stock <= 0 else item_status(item.stock)
+    if awaiting_payment:
+        item.status = "reserved"
+        item.reserved_buyer_id = buyer.id
+        item.reserved_buyer_username = buyer.username
+    else:
+        item.stock -= requested_quantity
+        item.status = "sold" if was_reserved or item.stock <= 0 else item_status(item.stock)
     if item.status == "sold":
         item.reserved_buyer_id = None
         item.reserved_buyer_username = None
@@ -995,6 +1183,8 @@ def purchase_item(
     item_delivery_fee = float(delivery_fee or 0)
     item_tax_amount = float(included_tax_amount if included_tax_amount is not None else 0)
     item_final_total = float(final_total if final_total is not None else item_subtotal + item_delivery_fee)
+    if payment_status is None:
+        payment_status = "paid" if payment_confirmed else "pending"
     purchase = Purchase.objects.create(
         buyer_id=buyer.id,
         buyer_username=buyer.username,
@@ -1014,13 +1204,19 @@ def purchase_item(
         included_tax_amount=item_tax_amount,
         final_total=item_final_total,
         status="in_progress",
-        order_stage="payment_confirmed",
+        order_stage="payment_confirmed" if payment_confirmed else "order_placed",
+        payment_status=payment_status,
+        payment_reference=payment_reference,
     )
     notify_order_user(
         purchase,
         buyer.id,
-        "Order confirmed",
-        f"Your order for {item.name} is confirmed. Payment method: {PAYMENT_METHODS[payment_method_key]}.",
+        "Order confirmed" if payment_confirmed else "Order placed — payment due",
+        (
+            f"Your order for {item.name} is confirmed. Payment method: {PAYMENT_METHODS[payment_method_key]}."
+            if payment_confirmed
+            else f"Your order for {item.name} is placed. Pay the seller directly by {PAYMENT_METHODS[payment_method_key]}."
+        ),
         buyer,
     )
     notify_user(
@@ -1066,6 +1262,8 @@ def update_seller_order_stage(purchase_id, seller_id, stage):
         raise ApiError("Order not found", 404)
     if purchase.seller_id != seller.id:
         raise ApiError("You can only update your own orders", 403)
+    if purchase.payment_status == "pending" and purchase.order_stage == "order_placed":
+        raise ApiError("Confirm payment receipt before preparing this order", 400)
     if purchase.order_stage in {"item_received", "completed"}:
         raise ApiError("This order has already been received by the buyer", 400)
     if stage == "ready_for_collection" and purchase.order_stage not in {"preparing_item", "ready_for_collection"}:
@@ -1093,29 +1291,87 @@ def update_seller_order_stage(purchase_id, seller_id, stage):
     return enrich_purchase_order(purchase)
 
 
-def cancel_order(purchase_id, user_id):
-    user = require_active_user(user_id)
-    purchase = Purchase.objects.filter(id=purchase_id).first()
-    if not purchase:
-        raise ApiError("Order not found", 404)
-    if user.id not in {purchase.buyer_id, purchase.seller_id}:
-        raise ApiError("You can only cancel orders you are part of", 403)
-    if purchase.order_stage == "completed" or purchase.status == "completed":
-        raise ApiError("Completed orders cannot be cancelled", 400)
-    if purchase.order_stage in {"cancelled", "canceled"} or purchase.status in {"cancelled", "canceled"}:
-        return enrich_purchase_order(purchase)
+def confirm_payment_received(purchase_id, seller_id):
+    seller = require_active_user(seller_id)
+    with transaction.atomic():
+        purchase = Purchase.objects.select_for_update().filter(id=purchase_id).first()
+        if not purchase:
+            raise ApiError("Order not found", 404)
+        if purchase.seller_id != seller.id:
+            raise ApiError("You can only confirm payment for your own orders", 403)
+        if purchase.payment_status != "pending" or purchase.order_stage != "order_placed":
+            raise ApiError("This order is not awaiting payment", 400)
 
-    purchase.order_stage = "cancelled"
-    purchase.status = "cancelled"
-    purchase.save(update_fields=["order_stage", "status", "updated_at"])
+        item = Item.objects.select_for_update().filter(id=purchase.item_id).first()
+        if not item or item.status != "reserved" or item.reserved_buyer_id != purchase.buyer_id:
+            raise ApiError("The listing reservation no longer matches this order", 409)
+        if item.stock < purchase.quantity:
+            raise ApiError("The reserved stock is no longer available", 409)
 
-    item = Item.objects.filter(id=purchase.item_id).first()
-    if item and item.status != "removed":
-        item.stock = max(0, item.stock) + (purchase.quantity or 1)
-        item.status = item_status(item.stock)
+        item.stock -= purchase.quantity
+        item.status = "sold" if item.stock <= 0 else item_status(item.stock)
         item.reserved_buyer_id = None
         item.reserved_buyer_username = None
         item.save(update_fields=["stock", "status", "reserved_buyer_id", "reserved_buyer_username"])
+
+        purchase.payment_status = "paid"
+        purchase.payment_reference = f"SELLER-CONFIRMED-{purchase.id}"
+        purchase.order_stage = "payment_confirmed"
+        purchase.status = "in_progress"
+        purchase.save(update_fields=[
+            "payment_status",
+            "payment_reference",
+            "order_stage",
+            "status",
+            "updated_at",
+        ])
+
+    notify_order_user(
+        purchase,
+        purchase.buyer_id,
+        "Payment received",
+        f"{seller.username} confirmed receiving ${purchase.total_amount:.2f} for {purchase.item_name}.",
+        seller,
+    )
+    return enrich_purchase_order(purchase)
+
+
+confirm_cash_payment = confirm_payment_received
+
+
+def cancel_order(purchase_id, user_id):
+    user = require_active_user(user_id)
+    with transaction.atomic():
+        purchase = Purchase.objects.select_for_update().filter(id=purchase_id).first()
+        if not purchase:
+            raise ApiError("Order not found", 404)
+        if user.id not in {purchase.buyer_id, purchase.seller_id}:
+            raise ApiError("You can only cancel orders you are part of", 403)
+        if purchase.order_stage == "completed" or purchase.status == "completed":
+            raise ApiError("Completed orders cannot be cancelled", 400)
+        if purchase.order_stage in {"cancelled", "canceled"} or purchase.status in {"cancelled", "canceled"}:
+            return enrich_purchase_order(purchase)
+
+        if purchase.payment_status == "paid":
+            raise ApiError("Payment has already been recorded as received. Arrange any refund directly with the buyer before changing this order.", 400)
+
+        awaiting_payment = purchase.payment_status == "pending" or (
+            not purchase.payment_status and purchase.order_stage == "order_placed"
+        )
+        purchase.order_stage = "cancelled"
+        purchase.status = "cancelled"
+        purchase.payment_status = "cancelled"
+        purchase.save(update_fields=["order_stage", "status", "payment_status", "updated_at"])
+
+        item = Item.objects.select_for_update().filter(id=purchase.item_id).first()
+        if item and item.status != "removed":
+            if not awaiting_payment:
+                item.stock = max(0, item.stock) + (purchase.quantity or 1)
+            item.status = item_status(item.stock)
+            if item.reserved_buyer_id == purchase.buyer_id:
+                item.reserved_buyer_id = None
+                item.reserved_buyer_username = None
+            item.save(update_fields=["stock", "status", "reserved_buyer_id", "reserved_buyer_username"])
 
     cancelled_by = "buyer" if user.id == purchase.buyer_id else "seller"
     notify_order_user(
@@ -1173,6 +1429,7 @@ def dashboard(admin_id):
         purchase
         for purchase in purchases
         if purchase.status not in {"cancelled", "canceled"} and purchase.order_stage not in {"cancelled", "canceled"}
+        and purchase.payment_status != "pending"
     ]
     total_sales = sum(purchase.total_amount or purchase.price for purchase in counted_purchases)
     todays_sales = sum(
@@ -1547,6 +1804,10 @@ def report(admin_id, period="daily"):
     grouped = defaultdict(lambda: {"orders": 0, "items_sold": 0, "total_sales": 0})
 
     for purchase in visible_purchases().order_by("-purchased_at"):
+        if purchase.status in {"cancelled", "canceled"} or purchase.order_stage in {"cancelled", "canceled"}:
+            continue
+        if purchase.payment_status == "pending":
+            continue
         if not purchase.purchased_at:
             continue
         purchased_date = purchase.purchased_at.date()

@@ -2544,6 +2544,46 @@
   text-transform: uppercase;
 }
 
+.payment-demo-details {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px dashed var(--usp-blue);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.payment-demo-details > p,
+.payment-demo-details > small {
+  margin: 0;
+  color: var(--usp-muted);
+  font-size: 0.82rem;
+}
+
+.payment-demo-details label {
+  display: grid;
+  gap: 6px;
+  color: var(--usp-navy);
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
+.payment-demo-details input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--usp-border);
+  border-radius: 6px;
+  padding: 9px 11px;
+  color: var(--usp-text);
+  font: inherit;
+}
+
+.payment-demo-inline-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .payment-method-options {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2573,6 +2613,58 @@
   border-color: var(--usp-blue);
   background: #edf3ff;
   color: var(--usp-navy);
+}
+
+.payment-method-options .payment-option {
+  min-width: 0;
+}
+
+.payment-option-icon {
+  display: inline-grid;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 50%;
+  background: #edf3ff;
+  color: var(--usp-blue);
+  font-weight: 900;
+}
+
+.payment-option > span:last-child {
+  display: grid;
+  gap: 2px;
+}
+
+.payment-option small {
+  color: var(--usp-muted);
+  font-size: 0.72rem;
+}
+
+.payment-failure-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px dashed #d28b28;
+  border-radius: 8px;
+  background: #fffaf0;
+  color: var(--usp-navy);
+  cursor: pointer;
+}
+
+.payment-failure-toggle input {
+  margin-top: 3px;
+  accent-color: #b66a12;
+}
+
+.payment-failure-toggle span {
+  display: grid;
+  gap: 4px;
+}
+
+.payment-failure-toggle small {
+  color: var(--usp-muted);
 }
 
 .payment-option input {
@@ -2996,6 +3088,12 @@
   margin-top: 4px;
   color: var(--usp-muted);
   font-weight: 800;
+}
+
+.seller-order-payment-note {
+  margin: 0;
+  color: var(--usp-navy);
+  font-size: 0.88rem;
 }
 
 .listing-menu {

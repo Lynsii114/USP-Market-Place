@@ -37,4 +37,3 @@ def validate_item_payload(data, partial=False):
             float(data["price"])
         except (TypeError, ValueError) as exc:
             raise ApiError("Price must be a number", 422) from exc
-

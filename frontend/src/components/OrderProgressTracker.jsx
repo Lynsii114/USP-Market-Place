@@ -10,10 +10,10 @@ export const orderSteps = [
 ];
 
 function OrderProgressTracker({ stage }) {
-  const currentIndex = Math.max(
-    orderSteps.findIndex((step) => step.key === stage),
-    stage === "completed" ? orderSteps.length - 1 : 1
-  );
+  const currentIndex =
+    stage === "completed"
+      ? orderSteps.length - 1
+      : Math.max(orderSteps.findIndex((step) => step.key === stage), 0);
 
   return (
     <div className="order-progress-tracker">

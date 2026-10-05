@@ -44,6 +44,8 @@ TABLE_COLUMNS = {
         "final_total": "FLOAT NOT NULL DEFAULT 0",
         "status": "VARCHAR(32) NOT NULL DEFAULT 'completed'",
         "order_stage": "VARCHAR(32) NOT NULL DEFAULT 'completed'",
+        "payment_status": "VARCHAR(20) NOT NULL DEFAULT ''",
+        "payment_reference": "VARCHAR(64) NOT NULL DEFAULT ''",
         "purchased_at": "DATETIME NULL",
         "updated_at": "DATETIME NULL",
     },

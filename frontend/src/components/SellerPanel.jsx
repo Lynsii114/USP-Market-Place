@@ -28,6 +28,7 @@ function SellerPanel({
   onReserveListing,
   onUpdateListingStatus,
   onUpdateOrderStage,
+  onConfirmPaymentReceived,
   onCancelOrder,
 }) {
   const activeSellerOrders = sellerOrders.filter(
@@ -211,7 +212,13 @@ function SellerPanel({
               <h3>My Listings</h3>
               {myListings.length ? (
                 <div className="seller-list">
-                  {myListings.map((listing) => (
+                  {myListings.map((listing) => {
+                    const pendingPaymentOrder = sellerOrders.find(
+                      (order) =>
+                        order.item_id === listing.id &&
+                        order.payment_status === "pending",
+                    );
+                    return (
                     <div className="seller-list-item" key={listing.id}>
                       <div className="seller-list-details">
                         <strong>{listing.name}</strong>
@@ -245,15 +252,26 @@ function SellerPanel({
                               Edit
                             </button>
                             {listing.status === "reserved" ? (
-                              <button type="button" onClick={() => onUpdateListingStatus(listing, "available")}>
-                                Cancel Reservation
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  pendingPaymentOrder
+                                    ? onCancelOrder(pendingPaymentOrder)
+                                    : onUpdateListingStatus(listing, "available")
+                                }
+                              >
+                                {pendingPaymentOrder ? "Release Unpaid Order" : "Cancel Reservation"}
                               </button>
                             ) : (
                               <button type="button" onClick={() => openReservationModal(listing)} disabled={listing.status === "sold" || Number(listing.stock) <= 0}>
                                 Mark as Reserved
                               </button>
                             )}
-                            <button type="button" onClick={() => onUpdateListingStatus(listing, "sold")} disabled={listing.status === "sold"}>
+                            <button
+                              type="button"
+                              onClick={() => onUpdateListingStatus(listing, "sold")}
+                              disabled={listing.status === "sold" || Boolean(pendingPaymentOrder)}
+                            >
                               Mark as Sold
                             </button>
                             <div className="admin-action-divider" />
@@ -264,7 +282,8 @@ function SellerPanel({
                         )}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <p className="empty-state">You have not listed any items yet.</p>
@@ -281,16 +300,45 @@ function SellerPanel({
                             <span>
                               Buyer: {order.buyer_username} - {deliveryMethodLabel(order.delivery_method)}
                             </span>
+                            <span>
+                              Payment: {order.payment_method === "mpaisa" ? "M-PAiSA" : order.payment_method === "mycash" ? "MyCash" : order.payment_method === "visa" ? "VISA" : "Cash"} -{" "}
+                              {order.payment_status === "paid"
+                                ? "Seller confirmed received"
+                                : order.payment_status === "approved"
+                                  ? "Approved (demo)"
+                                  : order.payment_status === "cancelled"
+                                    ? "Cancelled"
+                                    : "Awaiting payment"}
+                            </span>
+                            {order.payment_reference && <span>Payment reference: {order.payment_reference}</span>}
                           </div>
                           <strong>${Number(order.total_amount || order.price).toFixed(2)}</strong>
                         </div>
+                        {order.payment_status === "pending" && (
+                          <p className="seller-order-payment-note">
+                            The listing is reserved. Confirm payment only after you receive it outside the app, or release the reservation if unpaid.
+                          </p>
+                        )}
                         <OrderProgressTracker stage={order.order_stage} />
                         <div className="seller-order-actions">
+                          {order.payment_status === "pending" && (
+                            <button
+                              type="button"
+                              className="auth-submit"
+                              onClick={() => onConfirmPaymentReceived(order)}
+                              disabled={isSubmitting}
+                            >
+                              Confirm Payment Received
+                            </button>
+                          )}
                           <button
                             type="button"
                             className="secondary-button"
                             onClick={() => onUpdateOrderStage(order, "preparing_item")}
-                            disabled={["preparing_item", "ready_for_collection", "completed"].includes(order.order_stage)}
+                            disabled={
+                              order.payment_status === "pending" ||
+                              ["preparing_item", "ready_for_collection", "completed"].includes(order.order_stage)
+                            }
                           >
                             Preparing Item
                           </button>
@@ -308,7 +356,9 @@ function SellerPanel({
                             onClick={() => onCancelOrder(order)}
                             disabled={isSubmitting}
                           >
-                            Cancel Order
+                            {order.payment_status === "pending"
+                              ? "Release Reservation"
+                              : "Cancel Order"}
                           </button>
                         </div>
                       </div>

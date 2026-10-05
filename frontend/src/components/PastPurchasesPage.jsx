@@ -1,11 +1,33 @@
 import React, { useState } from "react";
 
-function PastPurchasesPage({ currentUser, purchases, onBack, onLogin, onSubmitReview, onViewSeller, isSubmitting }) {
+function PastPurchasesPage({
+  currentUser,
+  purchases,
+  onBack,
+  onLogin,
+  onSubmitReview,
+  onViewSeller,
+  onCancelOrder,
+  isSubmitting,
+}) {
   const [reviewingPurchase, setReviewingPurchase] = useState(null);
   const [reviewForm, setReviewForm] = useState({ rating: "5", review: "" });
   const orderHistory = purchases;
   const orderHistoryTotal = orderHistory.reduce((total, purchase) => total + Number(purchase.total_amount || purchase.price), 0);
   const deliveryMethodLabel = (method) => (method === "delivery" ? "Delivery" : "Self Pickup");
+  const orderStageLabel = (purchase) => {
+    if (purchase.order_stage === "order_placed" && purchase.payment_status === "pending") {
+      return "Awaiting payment";
+    }
+    return {
+      payment_confirmed: "Payment confirmed",
+      preparing_item: "Seller preparing item",
+      ready_for_collection: "Ready for meetup or collection",
+      item_received: "Item received",
+      completed: "Completed",
+      cancelled: "Cancelled",
+    }[purchase.order_stage] || "Order placed";
+  };
 
   const formatPurchaseDate = (value) =>
     new Date(value).toLocaleString([], {
@@ -59,11 +81,25 @@ function PastPurchasesPage({ currentUser, purchases, onBack, onLogin, onSubmitRe
                           {deliveryMethodLabel(purchase.delivery_method)}
                           {Number(purchase.delivery_fee || 0) > 0 ? ` + $${Number(purchase.delivery_fee).toFixed(2)} delivery` : " - FREE"}
                         </small>
+                        <small>
+                          Payment: {purchase.payment_method === "mpaisa" ? "M-PAiSA" : purchase.payment_method === "mycash" ? "MyCash" : purchase.payment_method === "visa" ? "VISA" : "Cash"} -{" "}
+                          {purchase.payment_status === "paid"
+                            ? "Seller confirmed received"
+                            : purchase.payment_status === "approved"
+                              ? "Approved (demo)"
+                              : purchase.payment_status === "cancelled"
+                                ? "Cancelled"
+                                : "Awaiting payment"}
+                        </small>
+                        <small>Order status: {orderStageLabel(purchase)}</small>
+                        {purchase.payment_reference && <small>Payment reference: {purchase.payment_reference}</small>}
                       </div>
                       <time dateTime={purchase.purchased_at}>{formatPurchaseDate(purchase.purchased_at)}</time>
                       <div className="purchase-order-progress">
                         <div className="purchase-order-actions">
-                          {!["cancelled", "canceled"].includes(purchase.order_stage || purchase.status) && !purchase.has_review && (
+                          {!["cancelled", "canceled"].includes(purchase.order_stage || purchase.status) &&
+                            purchase.payment_status !== "pending" &&
+                            !purchase.has_review && (
                             <button
                               type="button"
                               className="secondary-button"
@@ -76,6 +112,19 @@ function PastPurchasesPage({ currentUser, purchases, onBack, onLogin, onSubmitRe
                             </button>
                           )}
                           {purchase.has_review && <span className="review-submitted-label">Review submitted</span>}
+                          {purchase.payment_status === "pending" && (
+                            <>
+                              <span className="review-submitted-label">Reserved - payment due directly to seller</span>
+                              <button
+                                type="button"
+                                className="secondary-button"
+                                onClick={() => onCancelOrder?.(purchase)}
+                                disabled={isSubmitting}
+                              >
+                                Cancel Order
+                              </button>
+                            </>
+                          )}
                           {["cancelled", "canceled"].includes(purchase.order_stage || purchase.status) && (
                             <span className="review-submitted-label cancelled">Cancelled</span>
                           )}

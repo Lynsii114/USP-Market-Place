@@ -98,6 +98,8 @@ class Purchase(models.Model):
     final_total = models.FloatField(default=0)
     status = models.CharField(max_length=32, default="completed")
     order_stage = models.CharField(max_length=32, default="payment_confirmed")
+    payment_status = models.CharField(max_length=20, default="", blank=True)
+    payment_reference = models.CharField(max_length=64, default="", blank=True)
     purchased_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -116,17 +116,27 @@ def item_detail(request, item_id):
 def purchase_item(request, item_id):
     if request.method != "POST":
         return method_not_allowed()
-    data = json_body(request)
-    return run(lambda: (services.purchase_item(
-        item_id,
-        request.GET.get("buyer_id"),
-        data.get("payment_method", "cash"),
-        data.get("delivery_method", "self_pickup"),
-        data.get("delivery_fee", 0),
-        data.get("subtotal"),
-        data.get("included_tax_amount"),
-        data.get("final_total"),
-    ), True))
+    body = json_body(request)
+    data = {
+        "payment_method": "cash",
+        "delivery_method": "self_pickup",
+        **body,
+        "items": [{
+            "item_id": item_id,
+            "quantity": body.get("quantity", 1),
+        }],
+    }
+    return run(lambda: (services.checkout_cart(request.GET.get("buyer_id"), data), True))
+
+
+@csrf_exempt
+def checkout_cart(request):
+    if request.method != "POST":
+        return method_not_allowed()
+    return run(lambda: (
+        services.checkout_cart(request.GET.get("buyer_id"), json_body(request)),
+        True,
+    ))
 
 
 @csrf_exempt
@@ -213,6 +223,25 @@ def seller_order_stage(request, purchase_id):
         return method_not_allowed()
     data = json_body(request)
     return run(lambda: (services.update_seller_order_stage(purchase_id, data.get("seller_id"), data.get("stage")), True))
+
+
+@csrf_exempt
+def confirm_payment_received(request, purchase_id):
+    if request.method != "POST":
+        return method_not_allowed()
+    data = json_body(request)
+    return run(lambda: (services.confirm_payment_received(purchase_id, data.get("seller_id")), True))
+
+
+confirm_cash_payment = confirm_payment_received
+
+
+@csrf_exempt
+def cancel_order(request, purchase_id):
+    if request.method != "POST":
+        return method_not_allowed()
+    data = json_body(request)
+    return run(lambda: (services.cancel_order(purchase_id, data.get("user_id")), True))
 
 
 @csrf_exempt

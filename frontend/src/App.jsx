@@ -1113,19 +1113,19 @@ function Home() {
     setReceipt(null);
   };
 
-  const paymentMethodLabels = {
-    mycash: "MyCash",
-    mpaisa: "M-PAiSA",
-    cash: "Cash",
-    visa: "Visa Card",
-  };
-
   const deliveryMethodLabels = {
     self_pickup: "Self Pickup",
     delivery: "Delivery",
   };
 
-  const checkoutCart = async (paymentMethod, checkoutSummary = {}) => {
+  const paymentMethodLabels = {
+    mpaisa: "M-PAiSA",
+    mycash: "MyCash",
+    visa: "VISA",
+    cash: "Cash",
+  };
+
+  const checkoutCart = async (paymentMethod, checkoutSummary = {}, paymentDetails = {}, forceFailure = false) => {
     if (!currentUser) {
       showToast("Please login to purchase items.", "error");
       openAuth("login");
@@ -1157,44 +1157,28 @@ function Home() {
     setIsSubmitting(true);
 
     try {
-      const purchasedItems = [];
-      const deliveryFee = Number(checkoutSummary.delivery_fee || 0);
-      const deliveryFeeInCents = Math.round(deliveryFee * 100);
-      const baseFeeShareInCents = Math.floor(deliveryFeeInCents / availableItems.length);
-      const feeRemainderInCents = deliveryFeeInCents - baseFeeShareInCents * availableItems.length;
-
-      for (const [index, item] of availableItems.entries()) {
-        const itemQuantity = Number(item.quantity || 1);
-        const itemSubtotal = Number(item.price) * itemQuantity;
-        const itemDeliveryFee = (baseFeeShareInCents + (index < feeRemainderInCents ? 1 : 0)) / 100;
-        const itemFinalTotal = itemSubtotal + itemDeliveryFee;
-        const response = await fetch(`${API_URL}/items/${item.id}/purchase?buyer_id=${currentUser.id}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            payment_method: paymentMethod,
-            delivery_method: deliveryMethod,
-            quantity: itemQuantity,
-            delivery_fee: itemDeliveryFee,
-            subtotal: itemSubtotal,
-            final_total: itemFinalTotal,
-          }),
-        });
-        const purchasedItem = await parseResponse(response, `Unable to purchase ${item.name}`);
-        purchasedItems.push(purchasedItem);
-      }
-
-      const purchasedIds = purchasedItems.map((item) => item.id);
+      await new Promise((resolve) => window.setTimeout(resolve, 1500));
+      const response = await fetch(`${API_URL}/checkout?buyer_id=${currentUser.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          payment_method: paymentMethod,
+          delivery_method: deliveryMethod,
+          payment_details: paymentDetails,
+          force_failure: forceFailure,
+          items: availableItems.map((item) => ({ item_id: item.id, quantity: Number(item.quantity || 1) })),
+        }),
+      });
+      const checkout = await parseResponse(response, "Unable to process checkout");
+      const orders = checkout.orders || [];
+      const purchasedIds = orders.map((order) => order.item_id);
       setCartItems((currentItems) => currentItems.filter((item) => !purchasedIds.includes(item.id)));
-      setListings((currentListings) =>
-        currentListings.map((listing) => purchasedItems.find((item) => item.id === listing.id) || listing)
-      );
+      await loadListings();
       const updatedPurchaseHistory = await loadPurchaseHistory(currentUser.id);
-      const purchasedListingsById = new Map(availableItems.map((item) => [item.id, item]));
       const reviewItems = updatedPurchaseHistory
         .filter((purchase) => purchasedIds.includes(purchase.item_id) && !purchase.has_review)
         .map((purchase) => {
-          const listing = purchasedListingsById.get(purchase.item_id);
+          const listing = availableItems.find((item) => item.id === purchase.item_id);
           return {
             ...purchase,
             name: purchase.item_name,
@@ -1202,11 +1186,23 @@ function Home() {
             seller_username: purchase.seller_username,
           };
         });
-      setReceipt(null);
+      setReceipt({
+        id: orders.map((order) => `ORDER-${order.id}`).join(", "),
+        items: orders.map((order) => ({
+          ...order,
+          name: order.item_name,
+        })),
+        total: checkout.total,
+        paymentMethod: paymentMethodLabels[paymentMethod],
+        paymentStatus: checkout.payment.status,
+        paymentReference: checkout.payment.reference,
+        paymentMessage: checkout.payment.message,
+        purchasedAt: new Date().toLocaleString(),
+      });
       setShowAdminDashboard(false);
       setShowSellerPanel(false);
       setShowShopPage(false);
-      setShowCartPanel(false);
+      setShowCartPanel(true);
       setShowPurchasesPage(false);
       setActiveCategoryPage(null);
       setActiveLegalPage(null);
@@ -1215,10 +1211,10 @@ function Home() {
       setCheckoutReviewForm({ rating: "5", review: "" });
       await loadSellerOrders(currentUser.id);
       await loadUserNotifications(currentUser.id);
-      showToast("Checkout successful. Please rate your item.");
+      showToast("Payment successful.");
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "Unable to checkout", "error");
       await loadListings();
+      throw error;
     } finally {
       setIsSubmitting(false);
     }
@@ -1575,6 +1571,36 @@ function Home() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const confirmPaymentReceived = async (order) => {
+    if (!currentUser) {
+      openAuth("login");
+      return;
+    }
+    if (!window.confirm(`Confirm that you received $${Number(order.total_amount).toFixed(2)} cash from ${order.buyer_username}?`)) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`${API_URL}/orders/${order.id}/payment-confirmation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ seller_id: currentUser.id }),
+      });
+      const data = await parseResponse(response, "Unable to confirm cash payment");
+      await loadSellerOrders(currentUser.id);
+      await loadPurchaseHistory(currentUser.id);
+      await loadListings();
+      await loadSellerListings(currentUser.id);
+      await loadUserNotifications(currentUser.id);
+      showToast(`Payment receipt recorded. Confirmation reference: ${data.payment_reference}`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to confirm cash payment", "error");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const activeNavPage = showCartPanel
     ? "cart"
     : showPurchasesPage || (showSellerPanel && activeSellerTab === "my-listings") || activeAccountPage === "sales"
@@ -1690,6 +1716,7 @@ function Home() {
           onLogin={() => openAuth("login")}
           onSubmitReview={submitRatingReview}
           onViewSeller={handleViewSellerListings}
+          onCancelOrder={cancelOrder}
           isSubmitting={isSubmitting}
         />
       )}
@@ -1761,6 +1788,7 @@ function Home() {
           onResetForm={resetListingForm}
           onSubmit={handleListingSubmit}
           onUpdateOrderStage={updateSellerOrderStage}
+          onConfirmPaymentReceived={confirmPaymentReceived}
           onCancelOrder={cancelOrder}
         />
       )}
