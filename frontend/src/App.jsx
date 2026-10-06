@@ -94,16 +94,22 @@ function Home() {
   }, [toastMessage]);
 
   const parseResponse = async (response, fallbackMessage) => {
-    let data;
-
+    const responseBody = await response.text();
+    let data = null;
     try {
-      data = await response.json();
+      data = responseBody ? JSON.parse(responseBody) : null;
     } catch {
-      throw new Error("Invalid response from server");
+      throw new Error(
+        `Server returned an unreadable response (HTTP ${response.status}). Check the backend terminal for details.`
+      );
     }
 
     if (!response.ok) {
       throw new Error(data?.detail || data?.message || fallbackMessage);
+    }
+
+    if (data === null) {
+      throw new Error("Server returned an empty response");
     }
 
     return data;
@@ -169,14 +175,14 @@ function Home() {
     }
   };
 
-  const validateUSPEmail = (email) => {
+  const validateEmail = (email) => {
     if (!email) {
       setEmailError("");
       return true;
     }
 
-    const isValid = /^S\d+@student\.usp\.ac\.fj$/i.test(email.trim());
-    setEmailError(isValid ? "" : "Use your USP student email, for example S12345678@student.usp.ac.fj");
+    const isValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+    setEmailError(isValid ? "" : "Enter a valid email address");
     return isValid;
   };
 
@@ -191,7 +197,7 @@ function Home() {
     setFormMessage("");
 
     if (name === "email" && authMode === "signup") {
-      validateUSPEmail(value);
+      validateEmail(value);
     }
   };
 
@@ -245,8 +251,8 @@ function Home() {
       }
 
       if (authMode === "forgot-password") {
-        if (!validateUSPEmail(authForm.email)) {
-          setFormMessage("Please enter your USP student email address");
+        if (!validateEmail(authForm.email)) {
+          setFormMessage("Please enter a valid email address");
           return;
         }
         const response = await fetch(`${API_URL}/users/request-password-reset`, {
@@ -289,8 +295,8 @@ function Home() {
         return;
       }
 
-      if (authMode === "signup" && !validateUSPEmail(authForm.email)) {
-        setFormMessage("Please enter your USP student email address");
+      if (authMode === "signup" && !validateEmail(authForm.email)) {
+        setFormMessage("Please enter a valid email address");
         return;
       }
 
@@ -329,7 +335,7 @@ function Home() {
         setVerificationEmail(authForm.email.trim());
         setAuthForm((previous) => ({ ...previous, verification_code: "" }));
         setAuthMode("verify-email");
-        showToast("Registration started. Check your USP email for the verification code.");
+        showToast("Registration started. Check your email for the verification code.");
         return;
       }
 

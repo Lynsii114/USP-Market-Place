@@ -1,5 +1,7 @@
 import hashlib
 import base64
+import logging
+import smtplib
 from io import BytesIO
 import json
 import secrets
@@ -22,7 +24,9 @@ from .exceptions import ApiError
 from .models import EmailVerification, Item, PasswordReset, PendingRegistration, Purchase, User
 from .queries import find_student, find_user_by_login, item_status, public_items, visible_items, visible_purchases
 from .serializers import serialize_item, serialize_purchase, serialize_user
-from .validators import validate_item_payload, validate_signup
+from .validators import is_usp_student_email, validate_item_payload, validate_signup
+
+logger = logging.getLogger(__name__)
 
 
 def hash_password(password):
@@ -86,11 +90,34 @@ def authenticator_setup(secret, email):
 
 
 def send_email(subject, message, recipient):
-    if settings.EMAIL_HOST:
-        send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [recipient])
+    use_smtp = settings.EMAIL_PROVIDER == "smtp" or (
+        settings.EMAIL_PROVIDER == "auto" and bool(settings.EMAIL_HOST)
+    )
+    if use_smtp:
+        if not settings.EMAIL_HOST:
+            raise ApiError("EMAIL_PROVIDER=smtp requires EMAIL_HOST in backend/.env", 500)
+        try:
+            send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [recipient])
+        except smtplib.SMTPAuthenticationError as exc:
+            logger.exception("Gmail rejected the SMTP authentication")
+            raise ApiError(
+                "Gmail rejected the SMTP login. Check EMAIL_HOST_USER and use a current 16-character Google App Password for EMAIL_HOST_PASSWORD.",
+                502,
+            ) from exc
+        except (smtplib.SMTPException, OSError) as exc:
+            logger.exception("SMTP email delivery failed")
+            raise ApiError(
+                f"SMTP email delivery failed ({type(exc).__name__}). Check the backend terminal for details.",
+                502,
+            ) from exc
         return
 
-    if settings.RESEND_API_KEY:
+    use_resend = settings.EMAIL_PROVIDER == "resend" or (
+        settings.EMAIL_PROVIDER == "auto" and bool(settings.RESEND_API_KEY)
+    )
+    if use_resend:
+        if not settings.RESEND_API_KEY:
+            raise ApiError("EMAIL_PROVIDER=resend requires RESEND_API_KEY in backend/.env", 500)
         request = Request(
             "https://api.resend.com/emails",
             data=json.dumps({
@@ -123,7 +150,13 @@ def send_email(subject, message, recipient):
             raise ApiError("Unable to connect to Resend. Check your network connection.", 502) from exc
         return
 
-    send_mail(subject, message, None, [recipient])
+    try:
+        send_mail(subject, message, None, [recipient])
+    except (smtplib.SMTPException, OSError) as exc:
+        raise ApiError(
+            "Unable to send email. Check the email settings in backend/.env.",
+            502,
+        ) from exc
 
 
 def send_verification_code(registration):
@@ -143,7 +176,7 @@ def signup_user(data):
     validate_signup(data)
     username = data["username"].strip()
     email = data["email"].strip()
-    student_id = email.split("@", 1)[0]
+    student_id = email.split("@", 1)[0] if is_usp_student_email(email) else None
 
     username_registered = User.objects.filter(username__iexact=username).exists()
     username_pending = PendingRegistration.objects.filter(username__iexact=username).exists()
@@ -229,7 +262,7 @@ def resend_verification(data):
     if not registration:
         raise ApiError("Verification request not found", 404)
     send_verification_code(registration)
-    return {"message": "A new verification code was sent to your USP email."}
+    return {"message": "A new verification code was sent to your email."}
 
 
 def cancel_verification(data):
@@ -256,7 +289,7 @@ def request_password_reset(data):
             f"Your USP Marketplace password reset code is {code}. It expires in 10 minutes.",
             user.email,
         )
-    return {"message": "If that USP email is registered, a password reset code has been sent."}
+    return {"message": "If that email is registered, a password reset code has been sent."}
 
 
 def reset_password(data):
@@ -297,7 +330,7 @@ def login_user(data):
     if not user or user.password_hash != hash_password(password):
         raise ApiError("Invalid username or password", 401)
     if user.status == "pending_verification":
-        raise ApiError("Please verify your USP email before logging in", 403)
+        raise ApiError("Please verify your email before logging in", 403)
     if user.status == "suspended":
         raise ApiError("Account is suspended", 403)
     if not user.authenticator_secret or not user.authenticator_enabled:
