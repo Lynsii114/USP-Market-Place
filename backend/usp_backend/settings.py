@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import certifi
 from dotenv import load_dotenv
@@ -65,13 +65,35 @@ LOGGING = {
 
 
 def database_config():
+    db_host = os.getenv("DB_HOST")
+    if db_host:
+        config = {
+            "default": {
+                "ENGINE": "usp_backend.mysql_backend",
+                "NAME": os.getenv("DB_DATABASE", ""),
+                "USER": os.getenv("DB_USERNAME", ""),
+                "PASSWORD": os.getenv("DB_PASSWORD", ""),
+                "HOST": db_host,
+                "PORT": os.getenv("DB_PORT", "3306"),
+            }
+        }
+        ssl_mode = os.getenv("DB_SSL", "").upper()
+        if ssl_mode in {"1", "TRUE", "REQUIRED"}:
+            config["default"]["OPTIONS"] = {"ssl": {}}
+        elif ssl_mode in {"VERIFY_CA", "VERIFY_IDENTITY"}:
+            ssl_options = {"ca": os.getenv("DB_SSL_CA", certifi.where())}
+            if ssl_mode == "VERIFY_IDENTITY":
+                ssl_options["check_hostname"] = True
+            config["default"]["OPTIONS"] = {"ssl": ssl_options}
+        return config
+
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
-        raise RuntimeError("DATABASE_URL is required. Set it to your MySQL database URL in backend/.env")
+        raise RuntimeError("DATABASE_URL or DB_HOST is required. Set your MySQL database details in backend/.env")
 
     parsed = urlparse(database_url)
     if parsed.scheme.startswith("mysql"):
-        return {
+        config = {
             "default": {
                 "ENGINE": "usp_backend.mysql_backend",
                 "NAME": parsed.path.lstrip("/"),
@@ -81,6 +103,16 @@ def database_config():
                 "PORT": str(parsed.port or 3306),
             }
         }
+        query = parse_qs(parsed.query)
+        ssl_value = query.get("ssl", query.get("sslmode", [""]))[0].upper()
+        if ssl_value in {"1", "TRUE", "REQUIRED", "REQUIRE"}:
+            config["default"]["OPTIONS"] = {"ssl": {}}
+        elif ssl_value in {"VERIFY_CA", "VERIFY_IDENTITY"}:
+            ssl_options = {"ca": query.get("ssl_ca", [certifi.where()])[0]}
+            if ssl_value == "VERIFY_IDENTITY":
+                ssl_options["check_hostname"] = True
+            config["default"]["OPTIONS"] = {"ssl": ssl_options}
+        return config
 
     raise RuntimeError("SQLite has been disabled. DATABASE_URL must use mysql+pymysql://")
 

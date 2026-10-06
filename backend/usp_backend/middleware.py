@@ -1,3 +1,5 @@
+import os
+
 from django.http import HttpResponse
 
 
@@ -14,12 +16,20 @@ class JsonCorsMiddleware:
         from marketplace.schema import ensure_schema
 
         ensure_schema()
+        if os.getenv("LOCAL_DB_SYNC_ON_START", "0") == "1":
+            from marketplace.db_sync import sync_cloud_to_local
+
+            sync_cloud_to_local()
 
     def __call__(self, request):
         if request.method == "OPTIONS":
             response = HttpResponse()
         else:
             response = self.get_response(request)
+            from marketplace.db_sync import should_sync_request, sync_cloud_to_local
+
+            if should_sync_request(request, response):
+                sync_cloud_to_local()
 
         origin = request.headers.get("Origin")
         if origin in self.allowed_origins:
