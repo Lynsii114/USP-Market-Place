@@ -1,10 +1,14 @@
 from django.db import DatabaseError
 from django.http import HttpResponse
+import logging
+
 from django.views.decorators.csrf import csrf_exempt
 
 from . import reporting, services
 from .exceptions import ApiError
 from .responses import api_response, error_response, handle_api_error, json_body, method_not_allowed
+
+logger = logging.getLogger(__name__)
 
 
 def get_admin_id(request):
@@ -22,6 +26,9 @@ def run(action):
             {"detail": "Marketplace database is temporarily unavailable. Start MySQL in XAMPP, then refresh the page."},
             status=503,
         )
+    except Exception:
+        logger.exception("Unexpected error while handling marketplace API request")
+        return handle_api_error(ApiError("Unexpected server error. Check the backend terminal for details.", 500))
 
 
 def health(request):

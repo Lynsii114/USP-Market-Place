@@ -29,22 +29,36 @@ DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
 USE_TZ = True
 TIME_ZONE = "UTC"
 STATIC_URL = "static/"
-EMAIL_BACKEND = os.getenv(
-    "EMAIL_BACKEND",
-    "django.core.mail.backends.smtp.EmailBackend" if os.getenv("EMAIL_HOST") else "django.core.mail.backends.console.EmailBackend",
-)
 EMAIL_HOST = os.getenv("EMAIL_HOST", "")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "1") == "1"
 EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "0") == "1"
+if EMAIL_USE_TLS and EMAIL_USE_SSL:
+    raise RuntimeError("Set only one of EMAIL_USE_TLS or EMAIL_USE_SSL to 1")
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "").replace(" ", "")
-DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "no-reply@usp-marketplace.local")
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "no-reply@usp-marketplace.local")
 EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "20"))
+SMTP_EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+CONSOLE_EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "auto").strip().lower()
+if EMAIL_PROVIDER not in {"auto", "smtp", "resend", "console"}:
+    raise RuntimeError("EMAIL_PROVIDER must be auto, smtp, resend, or console")
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND",
+    SMTP_EMAIL_BACKEND if EMAIL_HOST else CONSOLE_EMAIL_BACKEND,
+)
+if EMAIL_PROVIDER == "smtp":
+    EMAIL_BACKEND = SMTP_EMAIL_BACKEND
+elif EMAIL_PROVIDER in {"console", "resend"}:
+    EMAIL_BACKEND = CONSOLE_EMAIL_BACKEND
+elif DEBUG and EMAIL_HOST and not (EMAIL_HOST_USER and EMAIL_HOST_PASSWORD) and EMAIL_BACKEND == SMTP_EMAIL_BACKEND:
+    EMAIL_BACKEND = CONSOLE_EMAIL_BACKEND
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", DEFAULT_FROM_EMAIL)
 MICROSOFT_CLIENT_ID = os.getenv("MICROSOFT_CLIENT_ID", "")
 MICROSOFT_TENANT_ID = os.getenv("MICROSOFT_TENANT_ID", "")
+ALLOW_NON_USP_EMAILS = os.getenv("ALLOW_NON_USP_EMAILS", "1") == "1"
 
 LOGGING = {
     "version": 1,

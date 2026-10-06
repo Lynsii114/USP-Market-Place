@@ -119,7 +119,7 @@ function AuthModal({
                     ? "Choose a new password"
                     : "Welcome back"}
           </h2>
-          {authMode === "signup" && <p className="auth-subtitle">Use your USP student email to get started.</p>}
+          {authMode === "signup" && <p className="auth-subtitle">Enter your email address to get started.</p>}
           {authMode === "authenticator-setup" && (
             <p className="auth-subtitle">Add this account to Microsoft Authenticator, then enter the six-digit code.</p>
           )}
@@ -127,7 +127,7 @@ function AuthModal({
             <p className="auth-subtitle">Enter the six-digit code sent to {verificationEmail}.</p>
           )}
           {authMode === "forgot-password" && (
-            <p className="auth-subtitle">Enter your USP student email and we will send a reset code.</p>
+            <p className="auth-subtitle">Enter your email and we will send a reset code.</p>
           )}
           {authMode === "verify-reset-code" && (
             <p className="auth-subtitle">Enter the six-digit reset code sent to {verificationEmail}.</p>
@@ -213,13 +213,13 @@ function AuthModal({
         ) : (
           <>
             <label>
-              {authMode === "signup" ? "Marketplace username" : authMode === "forgot-password" ? "USP student email" : "Username or Email"}
+              {authMode === "signup" ? "Marketplace username" : authMode === "forgot-password" ? "Email address" : "Username or Email"}
               <input
                 type={authMode === "forgot-password" ? "email" : "text"}
                 name={authMode === "forgot-password" ? "email" : "username"}
                 value={authMode === "forgot-password" ? authForm.email : authForm.username}
                 onChange={onFieldChange}
-                placeholder={authMode === "forgot-password" ? "S12345678@student.usp.ac.fj" : ""}
+                placeholder={authMode === "forgot-password" ? "you@example.com" : ""}
                 required
               />
             </label>
@@ -234,7 +234,7 @@ function AuthModal({
                     value={authForm.email}
                     onChange={onFieldChange}
                     className={emailError ? "input-error" : ""}
-                    placeholder="S12345678@student.usp.ac.fj"
+                    placeholder="you@example.com"
                     required
                   />
                 </label>

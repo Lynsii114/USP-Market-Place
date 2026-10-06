@@ -4,7 +4,7 @@ import re
 import smtplib
 import ssl
 from datetime import timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "usp_backend.settings")
 
@@ -56,8 +56,10 @@ def test_health_check():
     assert response.json() == {"status": "ok"}
 
 
+@override_settings(ALLOW_NON_USP_EMAILS=True)
 def test_signup_login_and_create_hidden_listing():
     payload = unique_student_payload()
+    payload["email"] = f"test{payload['username'].rsplit('_', 1)[-1]}@gmail.com"
     with patch("marketplace.services.send_email") as send_email:
         signup = client.post("/api/users/signup", payload, content_type="application/json")
         verification_message = send_email.call_args.args[1]
@@ -815,26 +817,15 @@ def test_cancel_verification_without_token_removes_in_memory_registration():
     assert signup.json()["pending_token"] not in PENDING_REGISTRATIONS
 
 
-def test_signup_rejects_non_usp_email():
+@override_settings(ALLOW_NON_USP_EMAILS=False)
+def test_signup_rejects_non_usp_email_when_testing_option_is_disabled():
     payload = unique_student_payload()
     payload["email"] = "person@gmail.com"
 
     response = client.post("/api/users/signup", payload, content_type="application/json")
 
     assert response.status_code == 422
-    assert response.json()["detail"] == "SXXXXXXXX@student.usp.ac.fj"
-    assert not User.objects.filter(username=payload["username"]).exists()
-    assert not PendingRegistration.objects.filter(username=payload["username"]).exists()
-
-
-def test_signup_rejects_student_email_without_eight_digits():
-    payload = unique_student_payload()
-    payload["email"] = "S1234567@student.usp.ac.fj"
-
-    response = client.post("/api/users/signup", payload, content_type="application/json")
-
-    assert response.status_code == 422
-    assert response.json()["detail"] == "SXXXXXXXX@student.usp.ac.fj"
+    assert "USP student email" in response.json()["detail"]
     assert not User.objects.filter(username=payload["username"]).exists()
     assert not PendingRegistration.objects.filter(username=payload["username"]).exists()
 
@@ -857,7 +848,7 @@ def test_send_email_requires_smtp_provider():
         send_email("Subject", "Message", "S12345678@student.usp.ac.fj", "Failed to send verification email")
 
     assert exc_info.value.status == 500
-    assert "SMTP is not configured" in exc_info.value.detail
+    assert "Email is not configured" in exc_info.value.detail
 
 
 @override_settings(
@@ -917,6 +908,109 @@ def test_resend_verification_waits_one_minute():
     assert resend_after_countdown.status_code == 200
     assert resend_after_countdown.json()["message"] == "Verification code sent successfully"
     assert send_email.call_count == 2
+
+
+@override_settings(ALLOW_NON_USP_EMAILS=True)
+def test_signup_rejects_invalid_email_format():
+    payload = unique_student_payload()
+    payload["email"] = "not-an-email"
+
+    response = client.post("/api/users/signup", payload, content_type="application/json")
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Enter a valid email address"
+
+
+@override_settings(ALLOW_NON_USP_EMAILS=True, EMAIL_HOST="smtp.gmail.com")
+def test_signup_returns_json_error_when_smtp_fails():
+    payload = unique_student_payload()
+    payload["email"] = "person@gmail.com"
+
+    with patch(
+        "marketplace.services.send_mail",
+        side_effect=smtplib.SMTPAuthenticationError(535, b"authentication failed"),
+    ):
+        response = client.post("/api/users/signup", payload, content_type="application/json")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == (
+        "Gmail rejected the SMTP login. Check EMAIL_HOST_USER and use a current "
+        "16-character Google App Password for EMAIL_HOST_PASSWORD."
+    )
+    assert not PendingRegistration.objects.filter(email=payload["email"]).exists()
+
+
+@override_settings(ALLOW_NON_USP_EMAILS=True, EMAIL_HOST="smtp.gmail.com")
+def test_signup_identifies_smtp_connection_failures_without_exposing_details():
+    payload = unique_student_payload()
+    payload["email"] = "person@gmail.com"
+
+    with patch("marketplace.services.send_mail", side_effect=smtplib.SMTPServerDisconnected("closed")):
+        response = client.post("/api/users/signup", payload, content_type="application/json")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "SMTP email delivery failed (SMTPServerDisconnected). Check the backend terminal for details."
+    assert not PendingRegistration.objects.filter(email=payload["email"]).exists()
+
+
+@override_settings(
+    EMAIL_PROVIDER="resend",
+    EMAIL_HOST="smtp.gmail.com",
+    RESEND_API_KEY="test-api-key",
+    RESEND_FROM_EMAIL="sender@example.com",
+)
+def test_email_provider_can_select_resend_even_when_smtp_is_configured():
+    from marketplace.services import send_email
+
+    response = MagicMock()
+    response.__enter__.return_value.status = 200
+    with patch("marketplace.services.urlopen", return_value=response) as urlopen:
+        send_email("Test", "Test message", "recipient@example.com")
+
+    request = urlopen.call_args.args[0]
+    assert request.full_url == "https://api.resend.com/emails"
+    assert request.get_header("Authorization") == "Bearer test-api-key"
+
+
+@override_settings(EMAIL_PROVIDER="resend", RESEND_API_KEY="")
+def test_resend_provider_reports_missing_api_key():
+    from marketplace.exceptions import ApiError
+    from marketplace.services import send_email
+
+    with pytest.raises(ApiError, match="EMAIL_PROVIDER=resend requires RESEND_API_KEY"):
+        send_email("Test", "Test message", "recipient@example.com")
+
+
+@override_settings(
+    EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend",
+    EMAIL_HOST="smtp.gmail.com",
+    EMAIL_PORT=465,
+    EMAIL_USE_TLS=False,
+    EMAIL_USE_SSL=True,
+)
+def test_gmail_implicit_ssl_configuration_is_supported():
+    from django.core.mail import get_connection
+
+    connection = get_connection()
+
+    assert connection.host == "smtp.gmail.com"
+    assert connection.port == 465
+    assert connection.use_tls is False
+    assert connection.use_ssl is True
+
+
+def test_unexpected_api_errors_return_json_and_log_traceback(caplog):
+    with patch("marketplace.views.services.login_user", side_effect=RuntimeError("test failure")):
+        response = client.post(
+            "/api/users/login",
+            {"username": "missing", "password": "secret"},
+            content_type="application/json",
+        )
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Unexpected server error. Check the backend terminal for details."
+    assert "Unexpected error while handling marketplace API request" in caplog.text
+    assert "RuntimeError: test failure" in caplog.text
 
 
 def test_password_reset_code_changes_password_once():

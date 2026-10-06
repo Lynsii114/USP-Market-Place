@@ -1,10 +1,10 @@
 import hashlib
 import base64
+import logging
+import smtplib
 from io import BytesIO
 import json
-import logging
 import math
-import smtplib
 import secrets
 import re
 import ssl
@@ -31,7 +31,9 @@ from .exceptions import ApiError
 from .models import AdminNotification, Conversation, EmailVerification, Item, Message, PasswordReset, PendingRegistration, Purchase, RatingReview, User, UserNotification, UserReport
 from .queries import find_student, find_user_by_login, item_status, public_items, visible_items, visible_purchases
 from .serializers import serialize_conversation, serialize_item, serialize_message, serialize_notification, serialize_purchase, serialize_rating_review, serialize_user, serialize_user_report
-from .validators import validate_item_payload, validate_signup
+from .validators import is_usp_student_email, validate_item_payload, validate_signup
+
+logger = logging.getLogger(__name__)
 
 
 email_logger = logging.getLogger("marketplace.email")
@@ -222,7 +224,12 @@ def require_smtp_settings(failure_prefix):
 
 
 def send_email(subject, message, recipient, failure_prefix="Failed to send email"):
-    if settings.EMAIL_HOST:
+    use_smtp = settings.EMAIL_PROVIDER == "smtp" or (
+        settings.EMAIL_PROVIDER == "auto" and bool(settings.EMAIL_HOST)
+    )
+    if use_smtp:
+        if not settings.EMAIL_HOST:
+            raise ApiError(f"{failure_prefix}: EMAIL_PROVIDER=smtp requires EMAIL_HOST in backend/.env", 500)
         require_smtp_settings(failure_prefix)
         email_logger.info(
             "[email-debug] SMTP connection stage: host=%s port=%s tls=%s ssl=%s user=%s from=%s recipient=%s",
@@ -247,7 +254,12 @@ def send_email(subject, message, recipient, failure_prefix="Failed to send email
         email_logger.info("[email-debug] Email sent successfully to %s", recipient)
         return
 
-    if settings.RESEND_API_KEY:
+    use_resend = settings.EMAIL_PROVIDER == "resend" or (
+        settings.EMAIL_PROVIDER == "auto" and bool(settings.RESEND_API_KEY)
+    )
+    if use_resend:
+        if not settings.RESEND_API_KEY:
+            raise ApiError("EMAIL_PROVIDER=resend requires RESEND_API_KEY in backend/.env", 500)
         request = Request(
             "https://api.resend.com/emails",
             data=json.dumps({
@@ -284,8 +296,18 @@ def send_email(subject, message, recipient, failure_prefix="Failed to send email
         email_logger.info("[email-debug] Email sent successfully to %s", recipient)
         return
 
+    if settings.EMAIL_PROVIDER == "console" or settings.EMAIL_BACKEND == settings.CONSOLE_EMAIL_BACKEND:
+        try:
+            send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [recipient])
+        except (smtplib.SMTPException, OSError) as exc:
+            raise ApiError(
+                f"{failure_prefix}: Unable to send email. Check the email settings in backend/.env.",
+                502,
+            ) from exc
+        return
+
     email_logger.error("[email-debug] No SMTP provider configured for %s", recipient)
-    raise ApiError(f"{failure_prefix}: SMTP is not configured. Set EMAIL_HOST, EMAIL_HOST_USER, EMAIL_HOST_PASSWORD, and DEFAULT_FROM_EMAIL in backend/.env.", 500)
+    raise ApiError(f"{failure_prefix}: Email is not configured. Set EMAIL_PROVIDER=smtp with SMTP settings, EMAIL_PROVIDER=resend with RESEND_API_KEY, or EMAIL_PROVIDER=console for local testing.", 500)
 
 
 def pending_value(registration, key):
@@ -389,7 +411,7 @@ def signup_user(data):
     validate_signup(data)
     username = data["username"].strip()
     email = data["email"].strip()
-    student_id = email.split("@", 1)[0]
+    student_id = email.split("@", 1)[0] if is_usp_student_email(email) else None
 
     username_registered = User.objects.filter(username__iexact=username).exists()
     email_registered = User.objects.filter(email__iexact=email).exists()
@@ -533,7 +555,7 @@ def request_password_reset(data):
             f"Your USP Marketplace password reset code is {code}. It expires in 10 minutes.",
             user.email,
         )
-    return {"message": "If that USP email is registered, a password reset code has been sent."}
+    return {"message": "If that email is registered, a password reset code has been sent."}
 
 
 def find_active_password_reset(email):
@@ -590,7 +612,7 @@ def login_user(data):
     if not user or user.password_hash != hash_password(password):
         raise ApiError("Invalid username or password", 401)
     if user.status == "pending_verification":
-        raise ApiError("Please verify your USP email before logging in", 403)
+        raise ApiError("Please verify your email before logging in", 403)
     if user.status == "suspended":
         raise ApiError("Account is suspended", 403)
     if not user.authenticator_secret or not user.authenticator_enabled:
@@ -650,7 +672,7 @@ def microsoft_login(data):
         raise ApiError("Microsoft sign-in could not be verified", 401) from exc
 
     email = str(claims.get("preferred_username") or claims.get("email") or "").strip().lower()
-    if not re.match(r"^s\d+@(?:[a-z0-9-]+\.)*usp\.ac\.fj$", email):
+    if not re.match("^s\\d+@(?:[a-z0-9-]+\\.)*usp\\.ac\\.fj$", email):
         raise ApiError("Only verified USP student Microsoft accounts can sign in", 403)
 
     student_id = email.split("@", 1)[0].upper()

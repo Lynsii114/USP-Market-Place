@@ -178,12 +178,14 @@ function Home() {
   };
 
   const parseResponse = async (response, fallbackMessage) => {
-    let data;
-
+    const responseBody = await response.text();
+    let data = null;
     try {
-      data = await response.json();
+      data = responseBody ? JSON.parse(responseBody) : null;
     } catch {
-      throw new Error("Invalid response from server");
+      throw new Error(
+        `Server returned an unreadable response (HTTP ${response.status}). Check the backend terminal for details.`
+      );
     }
 
     if (!response.ok) {
@@ -192,6 +194,10 @@ function Home() {
         throw new Error("Marketplace database is unavailable. Start MySQL in XAMPP, then refresh the page.");
       }
       throw new Error(detail);
+    }
+
+    if (data === null) {
+      throw new Error("Server returned an empty response");
     }
 
     return data;
@@ -286,14 +292,14 @@ function Home() {
     }
   };
 
-  const validateUSPEmail = (email) => {
+  const validateEmail = (email) => {
     if (!email) {
       setEmailError("");
       return true;
     }
 
-    const isValid = /^S\d{8}@student\.usp\.ac\.fj$/i.test(email.trim());
-    setEmailError(isValid ? "" : "SXXXXXXXX@student.usp.ac.fj");
+    const isValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+    setEmailError(isValid ? "" : "Enter a valid email address");
     return isValid;
   };
 
@@ -308,7 +314,7 @@ function Home() {
     setFormMessage("");
 
     if (name === "email" && authMode === "signup") {
-      validateUSPEmail(value);
+      validateEmail(value);
     }
   };
 
@@ -367,8 +373,8 @@ function Home() {
       }
 
       if (authMode === "forgot-password") {
-        if (!validateUSPEmail(authForm.email)) {
-          setFormMessage("SXXXXXXXX@student.usp.ac.fj");
+        if (!validateEmail(authForm.email)) {
+          setFormMessage("Please enter a valid email address");
           return;
         }
         const response = await fetch(`${API_URL}/users/request-password-reset`, {
@@ -427,8 +433,8 @@ function Home() {
         return;
       }
 
-      if (authMode === "signup" && !validateUSPEmail(authForm.email)) {
-        setFormMessage("SXXXXXXXX@student.usp.ac.fj");
+      if (authMode === "signup" && !validateEmail(authForm.email)) {
+        setFormMessage("Please enter a valid email address");
         return;
       }
 
