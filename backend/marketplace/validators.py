@@ -50,3 +50,11 @@ def validate_item_payload(data, partial=False):
             float(data["price"])
         except (TypeError, ValueError) as exc:
             raise ApiError("Price must be a number", 422) from exc
+
+    payment_method = str(data.get("payment_method", "cash")).strip().lower()
+    if payment_method not in {"mpaisa", "mycash", "cash"}:
+        raise ApiError("Choose M-PAiSA, MyCash, or Cash as the seller payment method", 422)
+    if payment_method in {"mpaisa", "mycash"}:
+        payment_number = re.sub(r"[ ()-]", "", str(data.get("payment_number", "")).strip())
+        if not re.fullmatch(r"\+?\d{7,15}", payment_number):
+            raise ApiError("Enter a valid phone number for the selected mobile payment method", 422)

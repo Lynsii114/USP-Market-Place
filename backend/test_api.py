@@ -16,7 +16,7 @@ from django.utils import timezone
 
 django.setup()
 
-from marketplace.models import AdminNotification, Item, PasswordReset, PendingRegistration, Purchase, RatingReview, User, UserNotification
+from marketplace.models import AdminNotification, Conversation, Item, Message, PasswordReset, PendingRegistration, Purchase, RatingReview, User, UserNotification
 from marketplace.exceptions import ApiError
 from marketplace.schema import ensure_schema
 from marketplace.services import PENDING_REGISTRATIONS, VERIFICATION_CODE_TTL, hash_verification_code, send_email
@@ -194,6 +194,94 @@ def create_test_item(seller, suffix, name=None):
     )
 
 
+@pytest.mark.parametrize(
+    ("payment_method", "payment_number", "expected_status"),
+    [
+        ("mpaisa", "", 422),
+        ("mycash", "not a phone number", 422),
+        ("mpaisa", "+679 9000000", 200),
+        ("cash", "", 200),
+    ],
+)
+def test_listing_payment_number_validation(payment_method, payment_number, expected_status):
+    suffix = random.randint(10_000_000, 99_999_999)
+    seller = create_active_test_user("payment_listing_seller", suffix)
+    payload = {
+        "name": f"__test_payment_listing_{suffix}",
+        "price": 10,
+        "description": "Payment details validation test",
+        "category": "Books",
+        "contact": "+679 9000000",
+        "stock": 1,
+        "seller_id": seller.id,
+        "payment_method": payment_method,
+        "payment_number": payment_number,
+    }
+
+    response = client.post("/api/items", payload, content_type="application/json")
+
+    assert response.status_code == expected_status
+    if expected_status == 200:
+        saved_item = Item.objects.get(name=payload["name"])
+        assert saved_item.payment_method == payment_method
+        assert saved_item.payment_number == (payment_number if payment_method != "cash" else "")
+
+
+def test_payment_number_is_visible_only_to_seller_or_active_reserved_buyer():
+    suffix = random.randint(10_000_000, 99_999_999)
+    seller = create_active_test_user("payment_privacy_seller", suffix)
+    buyer = create_active_test_user("payment_privacy_buyer", suffix + 1)
+    unrelated_user = create_active_test_user("payment_privacy_other", suffix + 2)
+    item = create_test_item(seller, suffix, name=f"Private payment listing {suffix}")
+    item.payment_method = "mpaisa"
+    item.payment_number = "+679 9000000"
+    item.save(update_fields=["payment_method", "payment_number"])
+
+    try:
+        public_response = client.get("/api/items")
+        unrelated_response = client.get(f"/api/items?user_id={unrelated_user.id}")
+        seller_response = client.get(f"/api/users/{seller.id}/items?viewer_id={seller.id}")
+        detail_response = client.get(f"/api/items/{item.id}")
+        assert public_response.status_code == 200
+        assert unrelated_response.status_code == 200
+        assert seller_response.status_code == 200
+        assert detail_response.status_code == 200
+        public_item = next(listing for listing in public_response.json() if listing["id"] == item.id)
+        unrelated_item = next(listing for listing in unrelated_response.json() if listing["id"] == item.id)
+        seller_item = next(listing for listing in seller_response.json() if listing["id"] == item.id)
+        assert "payment_number" not in detail_response.json()
+        assert "payment_number" not in public_item
+        assert "payment_number" not in unrelated_item
+        assert seller_item["payment_number"] == item.payment_number
+
+        conversation_response = client.post(
+            f"/api/items/{item.id}/conversation",
+            {"buyer_id": buyer.id},
+            content_type="application/json",
+        )
+        assert conversation_response.status_code == 200
+        reservation_response = client.post(
+            f"/api/items/{item.id}/reserve",
+            {"seller_id": seller.id, "buyer_id": buyer.id},
+            content_type="application/json",
+        )
+        assert reservation_response.status_code == 200
+
+        reserved_for_buyer = client.get(f"/api/items?user_id={buyer.id}")
+        still_hidden_from_unrelated = client.get(f"/api/items?user_id={unrelated_user.id}")
+        buyer_item = next(listing for listing in reserved_for_buyer.json() if listing["id"] == item.id)
+        unrelated_item = next(
+            listing for listing in still_hidden_from_unrelated.json() if listing["id"] == item.id
+        )
+        assert buyer_item["payment_number"] == item.payment_number
+        assert "payment_number" not in unrelated_item
+    finally:
+        conversation_ids = Conversation.objects.filter(item_id=item.id).values_list("id", flat=True)
+        Message.objects.filter(conversation_id__in=conversation_ids).delete()
+        Conversation.objects.filter(item_id=item.id).delete()
+        Item.objects.filter(id=item.id).delete()
+
+
 def test_order_notifications_go_to_buyer_and_seller_not_admin():
     suffix = random.randint(10_000_000, 99_999_999)
     buyer = create_active_test_user("buyer", suffix)
@@ -207,7 +295,10 @@ def test_order_notifications_go_to_buyer_and_seller_not_admin():
     seller_notifications = client.get(f"/api/users/{seller.id}/notifications")
     assert buyer_notifications.status_code == 200
     assert seller_notifications.status_code == 200
-    assert any(notification["title"] == "Order confirmed" for notification in buyer_notifications.json())
+    assert any(
+        notification["title"] in {"Order confirmed", "Order placed — payment due"}
+        for notification in buyer_notifications.json()
+    )
     assert any(
         notification["title"] == "New order placed" and notification["category"] == "sale"
         for notification in seller_notifications.json()
@@ -215,7 +306,7 @@ def test_order_notifications_go_to_buyer_and_seller_not_admin():
     assert not AdminNotification.objects.filter(actor_username=buyer.username, category="checkout").exists()
 
 
-def test_cash_checkout_records_success_and_decrements_purchased_quantity():
+def test_cash_checkout_reserves_stock_until_seller_confirms_payment():
     suffix = random.randint(10_000_000, 99_999_999)
     buyer = create_active_test_user("quantity_buyer", suffix)
     seller = create_active_test_user("quantity_seller", suffix + 1)
@@ -234,18 +325,31 @@ def test_cash_checkout_records_success_and_decrements_purchased_quantity():
     )
 
     assert response.status_code == 200
+    assert response.json()["payment"]["status"] == "pending"
+    item.refresh_from_db()
+    assert item.stock == 3
+    assert item.status == "reserved"
+    assert item.reserved_buyer_id == buyer.id
+    purchase = Purchase.objects.get(item_id=item.id, buyer_id=buyer.id)
+    assert purchase.quantity == 2
+    assert purchase.total_amount == 20
+    assert purchase.order_stage == "order_placed"
+    assert purchase.payment_status == "pending"
+    confirmed = client.post(
+        f"/api/orders/{purchase.id}/payment-confirmation",
+        {"seller_id": seller.id},
+        content_type="application/json",
+    )
+    assert confirmed.status_code == 200
     item.refresh_from_db()
     assert item.stock == 1
     assert item.status == "available"
     assert item.reserved_buyer_id is None
-    purchase = Purchase.objects.get(item_id=item.id, buyer_id=buyer.id)
-    assert purchase.quantity == 2
-    assert purchase.total_amount == 20
-    assert purchase.order_stage == "payment_confirmed"
-    assert purchase.payment_status == "approved"
     purchase_history = client.get(f"/api/users/{buyer.id}/purchases")
     assert purchase_history.status_code == 200
-    assert any(order["item_id"] == item.id and order["quantity"] == 2 for order in purchase_history.json())
+    purchase_data = next(order for order in purchase_history.json() if order["item_id"] == item.id)
+    assert purchase_data["quantity"] == 2
+    assert purchase_data["payment_status"] == "paid"
 
 
 @pytest.mark.parametrize(("payment_method", "payment_details"), [
@@ -257,7 +361,6 @@ def test_cash_checkout_records_success_and_decrements_purchased_quantity():
         "expiry": "12/30",
         "security_code": "123",
     }),
-    ("cash", {}),
 ])
 def test_checkout_simulates_success_and_marks_listing_sold(payment_method, payment_details):
     suffix = random.randint(10_000_000, 99_999_999)
@@ -281,6 +384,11 @@ def test_checkout_simulates_success_and_marks_listing_sold(payment_method, payme
     assert response.json()["payment"]["method"] == payment_method
     assert response.json()["payment"]["reference"].startswith("DEMO-")
     assert response.json()["total"] == 10
+    response_item = response.json()["items"][0]
+    assert response_item["payment_method"] == payment_method
+    assert response_item["purchased_quantity"] == 1
+    assert response_item["item"]["stock"] == 0
+    assert response_item["item"]["status"] == "sold"
     purchase = Purchase.objects.get(item_id=item.id, buyer_id=buyer.id)
     assert purchase.payment_status == "approved"
     assert purchase.payment_method == payment_method
@@ -318,17 +426,43 @@ def test_forced_payment_failure_does_not_create_order_or_change_stock(payment_me
             "payment_method": payment_method,
             "payment_details": payment_details,
             "delivery_method": "self_pickup",
-            "force_failure": True,
+            "simulate_failure": True,
             "items": [{"item_id": item.id, "quantity": 1}],
         },
         content_type="application/json",
     )
 
     assert response.status_code == 402
-    assert "simulated failure" in response.json()["detail"]
+    assert "Payment failed" in response.json()["detail"]
     assert Purchase.objects.filter(item_id=item.id, buyer_id=buyer.id).count() == 0
     item.refresh_from_db()
     assert item.stock == 3
+    assert item.status == "available"
+
+
+def test_single_item_purchase_endpoint_simulate_failure_leaves_item_untouched():
+    suffix = random.randint(10_000_000, 99_999_999)
+    buyer = create_active_test_user("single_failure_buyer", suffix)
+    seller = create_active_test_user("single_failure_seller", suffix + 1)
+    item = create_test_item(seller, suffix, name=f"__test_single_failure_{suffix}")
+    item.stock = 2
+    item.save(update_fields=["stock"])
+
+    response = client.post(
+        f"/api/items/{item.id}/purchase?buyer_id={buyer.id}",
+        {
+            "payment_method": "visa",
+            "simulate_failure": True,
+            "quantity": 1,
+        },
+        content_type="application/json",
+    )
+
+    assert response.status_code == 402
+    assert "Payment failed" in response.json()["detail"]
+    assert not Purchase.objects.filter(item_id=item.id, buyer_id=buyer.id).exists()
+    item.refresh_from_db()
+    assert item.stock == 2
     assert item.status == "available"
 
 
@@ -396,7 +530,40 @@ def test_failed_multi_item_payment_does_not_partially_create_orders_or_reduce_st
     assert first_item.status == second_item.status == "available"
 
 
-def test_checkout_cash_payment_is_simulated_and_marks_listing_sold():
+def test_checkout_rejects_quantity_above_current_stock_without_order_or_stock_change():
+    suffix = random.randint(10_000_000, 99_999_999)
+    buyer = create_active_test_user("stale_cart_buyer", suffix)
+    seller = create_active_test_user("stale_cart_seller", suffix + 1)
+    item = create_test_item(seller, suffix, name=f"__test_stale_cart_item_{suffix}")
+    item.stock = 1
+    item.save(update_fields=["stock"])
+
+    response = client.post(
+        f"/api/checkout?buyer_id={buyer.id}",
+        {
+            "payment_method": "visa",
+            "payment_details": {
+                "cardholder_name": "Demo Buyer",
+                "card_number": "4242 4242 4242 4242",
+                "expiry": "12/30",
+                "security_code": "123",
+            },
+            "delivery_method": "self_pickup",
+            "items": [{"item_id": item.id, "quantity": 2}],
+        },
+        content_type="application/json",
+    )
+
+    assert response.status_code == 400
+    assert "Only 1 unit is available" in response.json()["detail"]
+    assert not Purchase.objects.filter(item_id=item.id, buyer_id=buyer.id).exists()
+    item.refresh_from_db()
+    assert item.stock == 1
+    assert item.status == "available"
+
+
+@pytest.mark.parametrize("delivery_method", ["self_pickup", "delivery"])
+def test_cash_checkout_reserves_until_seller_confirms_handoff(delivery_method):
     suffix = random.randint(10_000_000, 99_999_999)
     buyer = create_active_test_user("cash_buyer", suffix)
     seller = create_active_test_user("cash_seller", suffix + 1)
@@ -406,27 +573,77 @@ def test_checkout_cash_payment_is_simulated_and_marks_listing_sold():
         f"/api/checkout?buyer_id={buyer.id}",
         {
             "payment_method": "cash",
-            "delivery_method": "delivery",
+            "delivery_method": delivery_method,
             "items": [{"item_id": item.id, "quantity": 1}],
         },
         content_type="application/json",
     )
 
     assert response.status_code == 200
-    assert response.json()["payment"]["status"] == "approved"
-    assert response.json()["total"] == 15
+    assert response.json()["payment"]["status"] == "pending"
+    assert response.json()["payment"]["reference"] == ""
+    assert response.json()["total"] == (15 if delivery_method == "delivery" else 10)
+    assert "due to the seller" in response.json()["payment"]["message"]
     purchase = Purchase.objects.get(item_id=item.id, buyer_id=buyer.id)
-    assert purchase.order_stage == "payment_confirmed"
-    assert purchase.payment_status == "approved"
-    assert purchase.payment_reference.startswith("DEMO-")
-    assert purchase.total_amount == 15
+    assert purchase.order_stage == "order_placed"
+    assert purchase.payment_status == "pending"
+    assert purchase.payment_reference == ""
+    assert purchase.total_amount == response.json()["total"]
+    item.refresh_from_db()
+    assert item.status == "reserved"
+    assert item.stock == 1
+    assert item.reserved_buyer_id == buyer.id
+
+    confirmed = client.post(
+        f"/api/orders/{purchase.id}/payment-confirmation",
+        {"seller_id": seller.id},
+        content_type="application/json",
+    )
+
+    assert confirmed.status_code == 200
     item.refresh_from_db()
     assert item.status == "sold"
     assert item.stock == 0
     assert item.reserved_buyer_id is None
+    purchase.refresh_from_db()
+    assert purchase.payment_status == "paid"
+    assert purchase.order_stage == "payment_confirmed"
+    assert purchase.payment_reference.startswith("SELLER-CONFIRMED-")
 
 
-def test_cash_order_is_ready_for_seller_progress_after_simulated_payment():
+def test_seller_can_release_cash_order_reservation_without_changing_stock():
+    suffix = random.randint(10_000_000, 99_999_999)
+    buyer = create_active_test_user("cash_release_buyer", suffix)
+    seller = create_active_test_user("cash_release_seller", suffix + 1)
+    item = create_test_item(seller, suffix, name=f"__test_cash_release_item_{suffix}")
+
+    checkout = client.post(
+        f"/api/checkout?buyer_id={buyer.id}",
+        {
+            "payment_method": "cash",
+            "delivery_method": "delivery",
+            "items": [{"item_id": item.id, "quantity": 1}],
+        },
+        content_type="application/json",
+    )
+    purchase = Purchase.objects.get(item_id=item.id, buyer_id=buyer.id)
+
+    released = client.post(
+        f"/api/orders/{purchase.id}/cancel",
+        {"user_id": seller.id},
+        content_type="application/json",
+    )
+
+    assert checkout.status_code == 200
+    assert released.status_code == 200
+    assert released.json()["payment_status"] == "cancelled"
+    item.refresh_from_db()
+    assert item.stock == 1
+    assert item.status == "available"
+    assert item.reserved_buyer_id is None
+
+
+def test_cash_order_requires_seller_confirmation_before_preparing():
     suffix = random.randint(10_000_000, 99_999_999)
     buyer = create_active_test_user("cash_confirm_buyer", suffix)
     seller = create_active_test_user("cash_confirm_seller", suffix + 1)
@@ -459,11 +676,12 @@ def test_cash_order_is_ready_for_seller_progress_after_simulated_payment():
     )
 
     assert checkout.status_code == 200
-    assert stage_before_payment.status_code == 200
+    assert stage_before_payment.status_code == 400
     assert rejected_confirmation.status_code == 403
-    assert confirmed.status_code == 400
-    assert purchase.payment_status == "approved"
-    assert purchase.payment_reference.startswith("DEMO-")
+    assert confirmed.status_code == 200
+    purchase.refresh_from_db()
+    assert purchase.payment_status == "paid"
+    assert purchase.payment_reference.startswith("SELLER-CONFIRMED-")
     preparing = client.post(
         f"/api/orders/{purchase.id}/seller-stage",
         {"seller_id": seller.id, "stage": "preparing_item"},
@@ -475,8 +693,8 @@ def test_cash_order_is_ready_for_seller_progress_after_simulated_payment():
     assert item.stock == 0
     buyer_history = client.get(f"/api/users/{buyer.id}/purchases")
     assert buyer_history.status_code == 200
-    assert buyer_history.json()[0]["payment_status"] == "approved"
-    assert buyer_history.json()[0]["payment_reference"].startswith("DEMO-")
+    assert buyer_history.json()[0]["payment_status"] == "paid"
+    assert buyer_history.json()[0]["payment_reference"].startswith("SELLER-CONFIRMED-")
 
 
 def test_failed_cash_checkout_creates_no_order_and_leaves_listing_available():
@@ -530,7 +748,7 @@ def test_sold_listing_cannot_be_purchased_twice():
     )
 
     assert first_checkout.status_code == 200
-    assert repeated_checkout.status_code == 400
+    assert repeated_checkout.status_code == 409
     assert Purchase.objects.filter(item_id=item.id, buyer_id=buyer.id).count() == 1
 
 
@@ -552,7 +770,17 @@ def test_cash_checkout_decrements_only_purchased_quantity():
         content_type="application/json",
     )
     assert checkout.status_code == 200
-    assert checkout.json()["payment"]["status"] == "approved"
+    assert checkout.json()["payment"]["status"] == "pending"
+    item.refresh_from_db()
+    assert item.stock == 3
+    assert item.status == "reserved"
+    purchase = Purchase.objects.get(item_id=item.id, buyer_id=buyer.id)
+    confirmed = client.post(
+        f"/api/orders/{purchase.id}/payment-confirmation",
+        {"seller_id": seller.id},
+        content_type="application/json",
+    )
+    assert confirmed.status_code == 200
     item.refresh_from_db()
     assert item.stock == 1
     assert item.status == "available"

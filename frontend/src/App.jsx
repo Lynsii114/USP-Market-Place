@@ -118,6 +118,7 @@ function Home() {
 
   useEffect(() => {
     if (currentUser) {
+      loadListings();
       loadSellerListings(currentUser.id);
       loadPurchaseHistory(currentUser.id);
       loadSellerOrders(currentUser.id);
@@ -193,7 +194,9 @@ function Home() {
       if (response.status === 503 || /database unavailable/i.test(detail)) {
         throw new Error("Marketplace database is unavailable. Start MySQL in XAMPP, then refresh the page.");
       }
-      throw new Error(detail);
+      const error = new Error(detail);
+      error.status = response.status;
+      throw error;
     }
 
     if (data === null) {
@@ -218,9 +221,17 @@ function Home() {
     setIsLoadingListings(true);
 
     try {
-      const response = await fetch(`${API_URL}/items`);
+      const viewerId = currentUser?.id;
+      const query = viewerId ? `?user_id=${viewerId}` : "";
+      const response = await fetch(`${API_URL}/items${query}`);
       const data = await parseResponse(response, "Unable to load listings");
       setListings(data);
+      setCartItems((items) =>
+        items.map((cartItem) => {
+          const latestListing = data.find((listing) => listing.id === cartItem.id);
+          return latestListing ? { ...latestListing, quantity: cartItem.quantity } : cartItem;
+        })
+      );
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to load listings", "error");
     } finally {
@@ -242,7 +253,9 @@ function Home() {
 
   const loadSellerListings = async (sellerId) => {
     try {
-      const response = await fetch(`${API_URL}/users/${sellerId}/items`);
+      const viewerId = currentUser?.id;
+      const query = viewerId ? `?viewer_id=${viewerId}` : "";
+      const response = await fetch(`${API_URL}/users/${sellerId}/items${query}`);
       const data = await parseResponse(response, "Unable to load your listings");
       setSellerListings(data);
     } catch (error) {
@@ -586,7 +599,28 @@ function Home() {
 
   const handleListingFieldChange = (event) => {
     const { name, value } = event.target;
-    setListingForm((previous) => ({ ...previous, [name]: value }));
+    setListingForm((previous) => {
+      if (name === "payment_method") {
+        const usesMobilePayment = value === "mpaisa" || value === "mycash";
+        return {
+          ...previous,
+          payment_method: value,
+          payment_number: usesMobilePayment ? previous.payment_number || previous.contact : "",
+        };
+      }
+      if (name === "contact") {
+        return {
+          ...previous,
+          contact: value,
+          payment_number:
+            ["mpaisa", "mycash"].includes(previous.payment_method) &&
+            (!previous.payment_number || previous.payment_number === previous.contact)
+              ? value
+              : previous.payment_number,
+        };
+      }
+      return { ...previous, [name]: value };
+    });
   };
 
   const handlePhotoChange = (event) => {
@@ -695,6 +729,8 @@ function Home() {
       description: listing.description,
       contact: listing.contact,
       category: listing.category,
+      payment_method: listing.payment_method || "cash",
+      payment_number: listing.payment_number || "",
       photo: listing.photo || "",
     });
     document.getElementById("seller-listings")?.scrollIntoView({ behavior: "smooth" });
@@ -1171,7 +1207,7 @@ function Home() {
           payment_method: paymentMethod,
           delivery_method: deliveryMethod,
           payment_details: paymentDetails,
-          force_failure: forceFailure,
+          simulate_failure: forceFailure,
           items: availableItems.map((item) => ({ item_id: item.id, quantity: Number(item.quantity || 1) })),
         }),
       });
@@ -1182,7 +1218,12 @@ function Home() {
       await loadListings();
       const updatedPurchaseHistory = await loadPurchaseHistory(currentUser.id);
       const reviewItems = updatedPurchaseHistory
-        .filter((purchase) => purchasedIds.includes(purchase.item_id) && !purchase.has_review)
+        .filter(
+          (purchase) =>
+            checkout.payment.status !== "pending" &&
+            purchasedIds.includes(purchase.item_id) &&
+            !purchase.has_review
+        )
         .map((purchase) => {
           const listing = availableItems.find((item) => item.id === purchase.item_id);
           return {
@@ -1203,7 +1244,9 @@ function Home() {
         paymentStatus: checkout.payment.status,
         paymentReference: checkout.payment.reference,
         paymentMessage: checkout.payment.message,
-        purchasedAt: new Date().toLocaleString(),
+        purchasedAt: orders[0]?.purchased_at
+          ? new Date(orders[0].purchased_at).toLocaleString()
+          : new Date().toLocaleString(),
       });
       setShowAdminDashboard(false);
       setShowSellerPanel(false);
@@ -1217,9 +1260,16 @@ function Home() {
       setCheckoutReviewForm({ rating: "5", review: "" });
       await loadSellerOrders(currentUser.id);
       await loadUserNotifications(currentUser.id);
-      showToast("Payment successful.");
+      showToast(
+        checkout.payment.status === "pending"
+          ? "Cash order placed. Payment is due to the seller at handoff."
+          : "Payment successful."
+      );
     } catch (error) {
       await loadListings();
+      if (error?.status === 402) {
+        throw new Error("Payment failed. No money was taken and your items were not changed. Check your details or try another payment method.");
+      }
       throw error;
     } finally {
       setIsSubmitting(false);

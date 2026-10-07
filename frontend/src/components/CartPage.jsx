@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 
 function CartPage({
   cartItems,
@@ -19,6 +19,7 @@ function CartPage({
   const [paymentDetails, setPaymentDetails] = useState({});
   const [forceFailure, setForceFailure] = useState(false);
   const [paymentError, setPaymentError] = useState("");
+  const checkoutInProgress = useRef(false);
   const deliveryOptions = [
     { value: "self_pickup", label: "Self Pickup", detail: "FREE", fee: 0 },
     { value: "delivery", label: "Delivery", detail: "Delivery fee applies", fee: 5 },
@@ -29,14 +30,24 @@ function CartPage({
     { value: "visa", label: "VISA", icon: "V", detail: "Card (demo)" },
     { value: "cash", label: "Cash", icon: "$", detail: "Cash on handoff (demo)" },
   ];
-  const quantityFor = (item) => Math.min(Math.max(Number(item.quantity || 1), 1), Math.max(Number(item.stock) || 1, 1));
+  const quantityFor = (item) => Math.max(Number(item.quantity || 1), 1);
   const lineTotalFor = (item) => Number(item.price) * quantityFor(item);
   const itemCount = cartItems.reduce((total, item) => total + quantityFor(item), 0);
+  const issueFor = (item) => {
+    if (item.status === "sold" || Number(item.stock) <= 0) {
+      return "This item has sold out. Remove it to continue.";
+    }
+    if (item.status === "reserved" && item.reserved_buyer_id !== currentUser?.id) {
+      return "This item is reserved for another buyer. Remove it to continue.";
+    }
+    if (quantityFor(item) > Number(item.stock)) {
+      return `Only ${item.stock} unit${Number(item.stock) === 1 ? " is" : "s are"} available. Reduce the quantity or remove this item.`;
+    }
+    return "";
+  };
+  const unavailableItems = cartItems.filter((item) => issueFor(item));
   const availableItems = cartItems.filter(
-    (item) =>
-      item.status !== "sold" &&
-      Number(item.stock) > 0 &&
-      (item.status !== "reserved" || item.reserved_buyer_id === currentUser?.id)
+    (item) => !issueFor(item)
   );
   const hasAvailableItems = availableItems.length > 0;
   const itemsSubtotal = availableItems.reduce((total, item) => total + lineTotalFor(item), 0);
@@ -56,11 +67,21 @@ function CartPage({
       ? paymentDetails.cardholder_name && paymentDetails.card_number && paymentDetails.expiry && paymentDetails.security_code
       : paymentDetails.phone_number && paymentDetails.authorization_code);
   const handleCheckout = async () => {
+    if (checkoutInProgress.current || isSubmitting) {
+      return;
+    }
+    if (unavailableItems.length) {
+      setPaymentError("One or more items are no longer available in the requested quantity. Return to your cart and update it before trying again.");
+      return;
+    }
+    checkoutInProgress.current = true;
     setPaymentError("");
     try {
       await onCheckout(paymentMethod, checkoutSummary, paymentDetails, forceFailure);
     } catch (error) {
       setPaymentError(error instanceof Error ? error.message : "Unable to process simulated payment");
+    } finally {
+      checkoutInProgress.current = false;
     }
   };
 
@@ -68,11 +89,11 @@ function CartPage({
     <section className="cart-section cart-page" id="cart">
       <div className="cart-header">
         <div className="section-heading">
-          <span className="section-kicker">Saved Items</span>
+          <span className="section-kicker">Step 1 of 2 · Cart Review</span>
           <h2>Your Cart</h2>
           <p>Select a payment method to complete this simulated checkout.</p>
         </div>
-        <button type="button" className="close-panel-button" onClick={onClose} aria-label="Close cart">
+        <button type="button" className="close-panel-button" onClick={onClose} aria-label="Close cart" disabled={isSubmitting}>
           x
         </button>
       </div>
@@ -81,8 +102,10 @@ function CartPage({
         <div className="receipt-panel">
           <div className="receipt-header">
             <div>
-              <span className="section-kicker">Receipt</span>
-              <h3>Payment Successful</h3>
+              <span className="section-kicker">
+                {receipt.paymentStatus === "pending" ? "Order Confirmation" : "Receipt"}
+              </span>
+              <h3>{receipt.paymentStatus === "pending" ? "Order Placed - Cash Due" : "Payment Successful"}</h3>
               <p>{receipt.id}</p>
             </div>
             <span>{receipt.purchasedAt}</span>
@@ -96,10 +119,18 @@ function CartPage({
                   <small>Order #{item.id}</small>
                   <small>
                     Seller:{" "}
-                    <button type="button" className="seller-inline-link" onClick={() => onViewSeller?.(item)}>
+                    <button type="button" className="seller-inline-link" onClick={() => onViewSeller?.(item)} disabled={isSubmitting}>
                       {item.seller_username}
                     </button>
                   </small>
+                  {item.status === "reserved" &&
+                    item.reserved_buyer_id === currentUser?.id &&
+                    item.payment_number && (
+                      <small>
+                        {item.payment_method === "mpaisa" ? "M-PAiSA" : "MyCash"} seller payment number:{" "}
+                        {item.payment_number}
+                      </small>
+                    )}
                 </div>
                 <div>
                   <span>${Number(item.total_amount || item.price * item.quantity).toFixed(2)}</span>
@@ -111,7 +142,7 @@ function CartPage({
           </div>
 
           <div className="receipt-total">
-            <span>Total Paid (Simulated)</span>
+            <span>{receipt.paymentStatus === "pending" ? "Total Due at Handoff" : "Total Paid (Simulated)"}</span>
             <strong>${Number(receipt.total).toFixed(2)}</strong>
           </div>
           <div className="receipt-total">
@@ -124,12 +155,25 @@ function CartPage({
               <strong>{receipt.paymentReference}</strong>
             </div>
           )}
-          <p className="auth-subtitle">Payment recorded. Contact the seller to arrange meetup/collection.</p>
-          <p className="auth-subtitle">This is a simulated transaction; no real money was moved.</p>
+          {receipt.paymentStatus === "pending" ? (
+            <>
+              <p className="auth-subtitle">
+                Your order is reserved. Pay the seller in cash when the item is delivered or collected.
+                Payment remains pending until the seller confirms they received it.
+              </p>
+              <p className="auth-subtitle">The seller can release the reservation if you cancel before paying.</p>
+            </>
+          ) : (
+            <>
+              <p className="auth-subtitle">Payment recorded. Contact the seller to arrange meetup or collection.</p>
+              <p className="auth-subtitle">This is a simulated transaction; no real money was moved.</p>
+            </>
+          )}
 
           <button
             type="button"
             className="auth-submit"
+            disabled={isSubmitting}
             onClick={() => {
               setCheckoutStep("cart");
               setDeliveryMethod("");
@@ -143,55 +187,12 @@ function CartPage({
             Continue Shopping
           </button>
         </div>
-      ) : checkoutStep === "delivery" ? (
-        <div className="checkout-confirmation">
-          <div className="receipt-header">
-            <div>
-              <span className="section-kicker">Delivery Method</span>
-              <h3>Choose How You Receive Your Order</h3>
-              <p>Select one option before reviewing checkout costs.</p>
-            </div>
-            <span>
-              {itemCount} {itemCount === 1 ? "item" : "items"}
-            </span>
-          </div>
-
-          <div className="payment-method-panel">
-            <span>Delivery Method</span>
-            <div className="delivery-method-options">
-              {deliveryOptions.map((option) => (
-                <label className={deliveryMethod === option.value ? "payment-option selected" : "payment-option"} key={option.value}>
-                  <input
-                    type="radio"
-                    name="delivery_method"
-                    value={option.value}
-                    checked={deliveryMethod === option.value}
-                    onChange={(event) => setDeliveryMethod(event.target.value)}
-                  />
-                  <span>
-                    <strong>{option.label}</strong>
-                    <small>{option.detail}</small>
-                  </span>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <div className="checkout-actions">
-            <button type="button" className="secondary-button" onClick={() => setCheckoutStep("cart")}>
-              Back to Cart
-            </button>
-            <button type="button" className="auth-submit" onClick={() => setCheckoutStep("confirm")} disabled={!deliveryMethod}>
-              Continue to Confirm Checkout
-            </button>
-          </div>
-        </div>
       ) : checkoutStep === "confirm" ? (
         <div className="checkout-confirmation">
           <div className="receipt-header">
             <div>
-              <span className="section-kicker">Confirm Checkout</span>
-              <h3>Review Costs and Choose Payment</h3>
+              <span className="section-kicker">Step 2 of 2 · Review and Payment</span>
+              <h3>Review Order and Choose Payment</h3>
             </div>
             <span>
               {itemCount} {itemCount === 1 ? "item" : "items"}
@@ -205,7 +206,7 @@ function CartPage({
                   <strong>{item.name}</strong>
                   <small>
                     Seller:{" "}
-                    <button type="button" className="seller-inline-link" onClick={() => onViewSeller?.(item)}>
+                    <button type="button" className="seller-inline-link" onClick={() => onViewSeller?.(item)} disabled={isSubmitting}>
                       {item.seller_username}
                     </button>
                   </small>
@@ -225,6 +226,27 @@ function CartPage({
           <div className="receipt-total">
             <span>Items Subtotal</span>
             <strong>${itemsSubtotal.toFixed(2)}</strong>
+          </div>
+          <div className="payment-method-panel">
+            <span>Delivery Method</span>
+            <div className="delivery-method-options">
+              {deliveryOptions.map((option) => (
+                <label className={deliveryMethod === option.value ? "payment-option selected" : "payment-option"} key={option.value}>
+                  <input
+                    type="radio"
+                    name="delivery_method"
+                    value={option.value}
+                    checked={deliveryMethod === option.value}
+                    disabled={isSubmitting}
+                    onChange={(event) => setDeliveryMethod(event.target.value)}
+                  />
+                  <span>
+                    <strong>{option.label}</strong>
+                    <small>{option.detail}</small>
+                  </span>
+                </label>
+              ))}
+            </div>
           </div>
           <div className="receipt-total subtle-total">
             <span>Selected Delivery Method</span>
@@ -249,6 +271,7 @@ function CartPage({
                     name="payment_method"
                     value={option.value}
                     checked={paymentMethod === option.value}
+                    disabled={isSubmitting}
                     onChange={(event) => {
                       setPaymentMethod(event.target.value);
                       setPaymentDetails({});
@@ -273,7 +296,11 @@ function CartPage({
                     type="text"
                     autoComplete="off"
                     value={paymentDetails.cardholder_name || ""}
-                    onChange={(event) => setPaymentDetails((details) => ({ ...details, cardholder_name: event.target.value }))}
+                    disabled={isSubmitting}
+                    onChange={(event) => {
+                      setPaymentDetails((details) => ({ ...details, cardholder_name: event.target.value }));
+                      setPaymentError("");
+                    }}
                   />
                 </label>
                 <label>
@@ -284,7 +311,11 @@ function CartPage({
                     autoComplete="off"
                     placeholder="4242 4242 4242 4242"
                     value={paymentDetails.card_number || ""}
-                    onChange={(event) => setPaymentDetails((details) => ({ ...details, card_number: event.target.value }))}
+                    disabled={isSubmitting}
+                    onChange={(event) => {
+                      setPaymentDetails((details) => ({ ...details, card_number: event.target.value }));
+                      setPaymentError("");
+                    }}
                   />
                 </label>
                 <div className="payment-demo-inline-fields">
@@ -296,7 +327,11 @@ function CartPage({
                       autoComplete="off"
                       placeholder="12/30"
                       value={paymentDetails.expiry || ""}
-                      onChange={(event) => setPaymentDetails((details) => ({ ...details, expiry: event.target.value }))}
+                      disabled={isSubmitting}
+                      onChange={(event) => {
+                        setPaymentDetails((details) => ({ ...details, expiry: event.target.value }));
+                        setPaymentError("");
+                      }}
                     />
                   </label>
                   <label>
@@ -307,7 +342,11 @@ function CartPage({
                       autoComplete="off"
                       maxLength={3}
                       value={paymentDetails.security_code || ""}
-                      onChange={(event) => setPaymentDetails((details) => ({ ...details, security_code: event.target.value }))}
+                      disabled={isSubmitting}
+                      onChange={(event) => {
+                        setPaymentDetails((details) => ({ ...details, security_code: event.target.value }));
+                        setPaymentError("");
+                      }}
                     />
                   </label>
                 </div>
@@ -325,7 +364,11 @@ function CartPage({
                     autoComplete="off"
                     placeholder="+679 9000000"
                     value={paymentDetails.phone_number || ""}
-                    onChange={(event) => setPaymentDetails((details) => ({ ...details, phone_number: event.target.value }))}
+                    disabled={isSubmitting}
+                    onChange={(event) => {
+                      setPaymentDetails((details) => ({ ...details, phone_number: event.target.value }));
+                      setPaymentError("");
+                    }}
                   />
                 </label>
                 <label>
@@ -336,7 +379,11 @@ function CartPage({
                     autoComplete="off"
                     maxLength={6}
                     value={paymentDetails.authorization_code || ""}
-                    onChange={(event) => setPaymentDetails((details) => ({ ...details, authorization_code: event.target.value }))}
+                    disabled={isSubmitting}
+                    onChange={(event) => {
+                      setPaymentDetails((details) => ({ ...details, authorization_code: event.target.value }));
+                      setPaymentError("");
+                    }}
                   />
                 </label>
                 <small>Success code: 123456 · Insufficient funds: 000000.</small>
@@ -344,32 +391,44 @@ function CartPage({
             )}
 
             {paymentMethod === "cash" && (
-              <p className="auth-subtitle">This demo records a successful cash-on-handoff order. No real payment is taken.</p>
+              <p className="auth-subtitle">
+                Cash is not charged or marked as paid now. Your order will reserve the item until handoff;
+                the seller confirms payment only after receiving the cash. The total includes the selected
+                delivery fee, if any.
+              </p>
             )}
 
             <label className="payment-failure-toggle">
               <input
                 type="checkbox"
                 checked={forceFailure}
+                disabled={isSubmitting}
                 onChange={(event) => {
                   setForceFailure(event.target.checked);
                   setPaymentError("");
                 }}
               />
               <span>
-                <strong>Force payment failure</strong>
+                <strong>Simulate failed payment (for testing)</strong>
                 <small>Demo testing only — order will not be created and stock will not change.</small>
               </span>
             </label>
           </div>
 
+          {unavailableItems.length > 0 && (
+            <p className="cart-item-error" role="alert">
+              An item is no longer available as shown. Go back to your cart and remove it or reduce its quantity.
+            </p>
+          )}
           {paymentError && <p className="auth-message" role="alert">{paymentError}</p>}
           <div className="checkout-actions">
-            <button type="button" className="secondary-button" onClick={() => setCheckoutStep("delivery")}>
-              Back
+            <button type="button" className="secondary-button" onClick={() => setCheckoutStep("cart")} disabled={isSubmitting}>
+              Back to Cart
             </button>
-            <button type="button" className="auth-submit" onClick={handleCheckout} disabled={isSubmitting || !paymentMethod || !paymentDetailsComplete}>
-              {isSubmitting ? "Processing payment..." : "Pay Now"}
+            <button type="button" className="auth-submit" onClick={handleCheckout} disabled={isSubmitting || unavailableItems.length > 0 || !deliveryMethod || !paymentMethod || !paymentDetailsComplete}>
+              {isSubmitting ? (
+                <><span className="checkout-spinner" aria-hidden="true" /> Processing payment...</>
+              ) : paymentMethod === "cash" ? "Place Cash Order" : "Confirm Payment"}
             </button>
           </div>
         </div>
@@ -382,8 +441,10 @@ function CartPage({
               </strong>
               <span>Ready to reserve</span>
             </div>
-            {cartItems.map((item) => (
-              <div className="cart-item" key={item.id}>
+            {cartItems.map((item) => {
+              const itemIssue = issueFor(item);
+              return (
+              <div className={itemIssue ? "cart-item cart-item-unavailable" : "cart-item"} key={item.id}>
                 <div className="cart-item-image">
                   {item.photo ? <img src={item.photo} alt={item.name} /> : <span>{item.category}</span>}
                 </div>
@@ -391,10 +452,11 @@ function CartPage({
                   <div>
                     <strong>{item.name}</strong>
                     <small>{item.category}</small>
+                    {itemIssue && <small className="cart-item-error">{itemIssue}</small>}
                   </div>
                   <div className="cart-seller">
                     <span>Seller</span>
-                    <button type="button" className="seller-inline-link" onClick={() => onViewSeller?.(item)}>
+                    <button type="button" className="seller-inline-link" onClick={() => onViewSeller?.(item)} disabled={isSubmitting}>
                       {item.seller_username}
                     </button>
                   </div>
@@ -402,12 +464,17 @@ function CartPage({
                 <div className="cart-item-action">
                   <span>${Number(item.price).toFixed(2)}</span>
                   <small>{Number(item.stock) > 0 ? `${item.stock} in stock` : "Sold"}</small>
-                  {Number(item.stock) > 1 && (
+                  {(Number(item.stock) > 1 || quantityFor(item) > 1) && (
                     <div className="cart-quantity-control" aria-label={`Quantity for ${item.name}`}>
                       <button
                         type="button"
                         onClick={() => onQuantityChange(item.id, quantityFor(item) - 1)}
-                        disabled={quantityFor(item) <= 1}
+                        disabled={
+                          isSubmitting ||
+                          quantityFor(item) <= 1 ||
+                          item.status === "sold" ||
+                          (item.status === "reserved" && item.reserved_buyer_id !== currentUser?.id)
+                        }
                         aria-label={`Decrease quantity for ${item.name}`}
                       >
                         -
@@ -416,20 +483,26 @@ function CartPage({
                       <button
                         type="button"
                         onClick={() => onQuantityChange(item.id, quantityFor(item) + 1)}
-                        disabled={quantityFor(item) >= Number(item.stock)}
+                        disabled={
+                          isSubmitting ||
+                          quantityFor(item) >= Number(item.stock) ||
+                          item.status === "sold" ||
+                          (item.status === "reserved" && item.reserved_buyer_id !== currentUser?.id)
+                        }
                         aria-label={`Increase quantity for ${item.name}`}
                       >
                         +
                       </button>
                     </div>
                   )}
-                  {Number(item.stock) > 1 && <small>Line total ${lineTotalFor(item).toFixed(2)}</small>}
-                  <button type="button" className="secondary-button" onClick={() => onRemove(item.id)}>
+                  <small>Line total ${lineTotalFor(item).toFixed(2)}</small>
+                  <button type="button" className="secondary-button" onClick={() => onRemove(item.id)} disabled={isSubmitting}>
                     Remove
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="cart-summary">
@@ -437,13 +510,21 @@ function CartPage({
               <span>Cart Total</span>
               <strong>${cartTotal.toFixed(2)}</strong>
             </div>
+            {unavailableItems.length > 0 && (
+              <p className="cart-item-error" role="alert">
+                Resolve or remove the {unavailableItems.length === 1 ? "unavailable item" : `${unavailableItems.length} unavailable items`} before checkout.
+              </p>
+            )}
             <button
               type="button"
               className="auth-submit"
-              onClick={() => setCheckoutStep("delivery")}
-              disabled={isSubmitting || !hasAvailableItems}
+              onClick={() => {
+                setPaymentError("");
+                setCheckoutStep("confirm");
+              }}
+              disabled={isSubmitting || !hasAvailableItems || unavailableItems.length > 0}
             >
-              Checkout
+              Review Order
             </button>
           </div>
         </div>
@@ -451,7 +532,7 @@ function CartPage({
         <div className="cart-empty">
           <strong>Your cart is empty.</strong>
           <p>Add items from recent listings or categories to keep them here.</p>
-          <button type="button" className="auth-submit" onClick={onClose}>
+          <button type="button" className="auth-submit" onClick={onClose} disabled={isSubmitting}>
             Browse Items
           </button>
         </div>

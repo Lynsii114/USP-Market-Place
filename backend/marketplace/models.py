@@ -64,6 +64,8 @@ class Item(models.Model):
     description = models.CharField(max_length=1000)
     category = models.CharField(max_length=64)
     contact = models.CharField(max_length=128)
+    payment_method = models.CharField(max_length=16, default="cash")
+    payment_number = models.CharField(max_length=32, default="", blank=True)
     photo = models.TextField(null=True, blank=True)
     stock = models.IntegerField(default=1)
     status = models.CharField(max_length=32, default="available")

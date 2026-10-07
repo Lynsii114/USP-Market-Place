@@ -10,6 +10,8 @@ TABLE_COLUMNS = {
         "description": "VARCHAR(1000) NOT NULL DEFAULT ''",
         "category": "VARCHAR(64) NOT NULL DEFAULT 'Other'",
         "contact": "VARCHAR(128) NOT NULL DEFAULT ''",
+        "payment_method": "VARCHAR(16) NOT NULL DEFAULT 'cash'",
+        "payment_number": "VARCHAR(32) NOT NULL DEFAULT ''",
         "photo": "TEXT NULL",
         "stock": "INTEGER NOT NULL DEFAULT 1",
         "status": "VARCHAR(32) NOT NULL DEFAULT 'available'",

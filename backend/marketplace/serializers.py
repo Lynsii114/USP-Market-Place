@@ -21,6 +21,7 @@ def serialize_item(item):
         "description": item.description,
         "category": item.category,
         "contact": item.contact,
+        "payment_method": item.payment_method,
         "photo": item.photo,
         "stock": item.stock,
         "status": item.status,
@@ -31,6 +32,24 @@ def serialize_item(item):
         "removed_reason": item.removed_reason,
         "created_at": item.created_at,
     }
+
+
+def serialize_item_for_user(item, requesting_user_id=None):
+    data = serialize_item(item)
+    try:
+        viewer_id = int(requesting_user_id) if requesting_user_id is not None else None
+    except (TypeError, ValueError):
+        viewer_id = None
+
+    is_seller = viewer_id == item.seller_id
+    is_reserved_buyer = (
+        item.status == "reserved"
+        and item.reserved_buyer_id is not None
+        and viewer_id == item.reserved_buyer_id
+    )
+    if is_seller or is_reserved_buyer:
+        data["payment_number"] = item.payment_number
+    return data
 
 
 def serialize_purchase(purchase):
@@ -116,7 +135,7 @@ def serialize_conversation(conversation, item=None, buyer=None, seller=None, mes
         "seller_id": conversation.seller_id,
         "buyer_username": buyer.username if buyer else "",
         "seller_username": seller.username if seller else "",
-        "item": serialize_item(item) if item else None,
+        "item": serialize_item_for_user(item, current_user_id) if item else None,
         "messages": serialized_messages,
         "unread_count": unread_count,
         "created_at": conversation.created_at,

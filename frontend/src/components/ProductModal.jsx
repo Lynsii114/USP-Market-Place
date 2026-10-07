@@ -1,9 +1,55 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 
 function ProductModal({ listing, currentUser, onClose, onAddToCart, onMessageSeller, onReportListing, onViewSeller }) {
   const [reportReason, setReportReason] = useState("");
   const [reportTarget, setReportTarget] = useState("listing");
   const [reportMode, setReportMode] = useState(null);
+  const [reservedPaymentDetails, setReservedPaymentDetails] = useState(null);
+  const [isLoadingPaymentDetails, setIsLoadingPaymentDetails] = useState(false);
+  const [paymentDetailsError, setPaymentDetailsError] = useState("");
+
+  useEffect(() => {
+    let isCurrent = true;
+    setReservedPaymentDetails(null);
+    setPaymentDetailsError("");
+
+    if (!listing || !currentUser?.id) {
+      setIsLoadingPaymentDetails(false);
+      return () => {
+        isCurrent = false;
+      };
+    }
+
+    setIsLoadingPaymentDetails(true);
+    fetch(`http://localhost:8000/api/items/${listing.id}?user_id=${currentUser.id}`)
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || "Unable to refresh listing details");
+        }
+        return data;
+      })
+      .then((item) => {
+        if (isCurrent) {
+          setReservedPaymentDetails(item);
+        }
+      })
+      .catch((error) => {
+        if (isCurrent) {
+          setReservedPaymentDetails(null);
+          setPaymentDetailsError(error instanceof Error ? error.message : "Unable to load seller payment details");
+        }
+      })
+      .finally(() => {
+        if (isCurrent) {
+          setIsLoadingPaymentDetails(false);
+        }
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [listing?.id, listing?.status, listing?.reserved_buyer_id, currentUser?.id]);
 
   if (!listing) {
     return null;
@@ -13,6 +59,10 @@ function ProductModal({ listing, currentUser, onClose, onAddToCart, onMessageSel
   const isReserved = listing.status === "reserved";
   const isReservedForCurrentUser = isReserved && listing.reserved_buyer_id === currentUser?.id;
   const isOwnListing = currentUser?.id === listing.seller_id;
+  const showReservedPaymentDetails =
+    reservedPaymentDetails?.status === "reserved" &&
+    reservedPaymentDetails.reserved_buyer_id === currentUser?.id &&
+    Boolean(reservedPaymentDetails.payment_number);
 
   return (
     <div className="auth-modal-backdrop" onClick={onClose}>
@@ -73,6 +123,29 @@ function ProductModal({ listing, currentUser, onClose, onAddToCart, onMessageSel
             <strong>Contact</strong>
             <span>{listing.contact}</span>
           </div>
+          {showReservedPaymentDetails && (
+            <div className="seller-details">
+              <strong>
+                {reservedPaymentDetails.payment_method === "mpaisa" ? "M-PAiSA" : "MyCash"} Payment Number
+              </strong>
+              <span>{reservedPaymentDetails.payment_number}</span>
+            </div>
+          )}
+          {!isOwnListing &&
+            ["mpaisa", "mycash"].includes(listing.payment_method) &&
+            isReservedForCurrentUser &&
+            !showReservedPaymentDetails &&
+            isLoadingPaymentDetails && <p>Loading the seller's reserved payment details...</p>}
+          {!isOwnListing &&
+            ["mpaisa", "mycash"].includes(listing.payment_method) &&
+            isReservedForCurrentUser &&
+            !showReservedPaymentDetails &&
+            paymentDetailsError && <p role="alert">{paymentDetailsError}</p>}
+          {!isOwnListing &&
+            ["mpaisa", "mycash"].includes(listing.payment_method) &&
+            !isReservedForCurrentUser && (
+              <p className="product-meta">The seller's receiving number is shown after they reserve this item for you.</p>
+            )}
           {currentUser && !isOwnListing && (
             <button type="button" className="secondary-button" onClick={() => onMessageSeller(listing)} disabled={isSold}>
               Message Seller

@@ -17,7 +17,7 @@ function PastPurchasesPage({
   const deliveryMethodLabel = (method) => (method === "delivery" ? "Delivery" : "Self Pickup");
   const orderStageLabel = (purchase) => {
     if (purchase.order_stage === "order_placed" && purchase.payment_status === "pending") {
-      return "Awaiting payment";
+      return purchase.payment_method === "cash" ? "Cash due at handoff" : "Awaiting payment";
     }
     return {
       payment_confirmed: "Payment confirmed",

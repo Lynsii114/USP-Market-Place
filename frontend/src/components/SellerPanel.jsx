@@ -184,6 +184,30 @@ function SellerPanel({
                 />
               </label>
 
+              <label>
+                Preferred Payment Method
+                <select name="payment_method" value={listingForm.payment_method} onChange={onFieldChange} required>
+                  <option value="cash">Cash</option>
+                  <option value="mpaisa">M-PAiSA</option>
+                  <option value="mycash">MyCash</option>
+                </select>
+              </label>
+
+              {["mpaisa", "mycash"].includes(listingForm.payment_method) && (
+                <label>
+                  {listingForm.payment_method === "mpaisa" ? "M-PAiSA" : "MyCash"} Receiving Number
+                  <input
+                    type="tel"
+                    name="payment_number"
+                    value={listingForm.payment_number}
+                    onChange={onFieldChange}
+                    placeholder="e.g. +679 9000000"
+                    autoComplete="tel"
+                    required
+                  />
+                </label>
+              )}
+
               <label className="listing-description">
                 Description
                 <textarea
@@ -316,7 +340,7 @@ function SellerPanel({
                         </div>
                         {order.payment_status === "pending" && (
                           <p className="seller-order-payment-note">
-                            The listing is reserved. Confirm payment only after you receive it outside the app, or release the reservation if unpaid.
+                            The listing is reserved. Confirm cash only after you receive it at delivery or pickup, or release the reservation if the buyer cancels.
                           </p>
                         )}
                         <OrderProgressTracker stage={order.order_stage} />
@@ -328,7 +352,7 @@ function SellerPanel({
                               onClick={() => onConfirmPaymentReceived(order)}
                               disabled={isSubmitting}
                             >
-                              Confirm Payment Received
+                              {order.payment_method === "cash" ? "Confirm Cash Received" : "Confirm Payment Received"}
                             </button>
                           )}
                           <button

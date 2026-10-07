@@ -96,7 +96,7 @@ def verify_authenticator(request):
 @csrf_exempt
 def items_collection(request):
     if request.method == "GET":
-        return run(lambda: (services.list_items(), False))
+        return run(lambda: (services.list_items(request.GET.get("user_id")), False))
     if request.method == "POST":
         return run(lambda: (services.create_item(json_body(request)), True))
     return method_not_allowed()
@@ -105,13 +105,13 @@ def items_collection(request):
 def list_seller_items(request, seller_id):
     if request.method != "GET":
         return method_not_allowed()
-    return run(lambda: (services.list_seller_items(seller_id), False))
+    return run(lambda: (services.list_seller_items(seller_id, request.GET.get("viewer_id")), False))
 
 
 @csrf_exempt
 def item_detail(request, item_id):
     if request.method == "GET":
-        return run(lambda: (services.get_public_item(item_id), True))
+        return run(lambda: (services.get_public_item(item_id, request.GET.get("user_id")), True))
     if request.method == "PUT":
         return run(lambda: (services.update_item(item_id, request.GET.get("seller_id"), json_body(request)), True))
     if request.method == "DELETE":

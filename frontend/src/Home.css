@@ -2626,6 +2626,7 @@
   border-color: var(--usp-blue);
   background: #edf3ff;
   color: var(--usp-navy);
+  box-shadow: 0 0 0 2px rgba(29, 78, 216, 0.12);
 }
 
 .payment-method-options .payment-option {
@@ -2642,6 +2643,24 @@
   background: #edf3ff;
   color: var(--usp-blue);
   font-weight: 900;
+}
+
+.checkout-spinner {
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  margin-right: 8px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  vertical-align: -0.1em;
+  animation: checkout-spin 0.7s linear infinite;
+}
+
+@keyframes checkout-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .payment-option > span:last-child {
@@ -2746,6 +2765,18 @@
   margin-top: 5px;
   color: var(--usp-muted);
   font-weight: 800;
+}
+
+.cart-item-error {
+  display: block;
+  margin: 8px 0;
+  color: #b42318 !important;
+  font-weight: 800;
+}
+
+.cart-item-unavailable {
+  border-color: #e6a6a1;
+  background: #fff9f8;
 }
 
 .receipt-item span {
