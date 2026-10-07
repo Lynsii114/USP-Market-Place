@@ -513,6 +513,33 @@
   line-height: 1.45;
 }
 
+.authenticator-choice {
+  display: grid;
+  gap: 10px;
+}
+
+.auth-skip-button {
+  border: 1px solid #cfd9e4;
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--usp-navy);
+  padding: 12px 14px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.auth-skip-button:hover:not(:disabled),
+.auth-skip-button:focus-visible {
+  border-color: var(--usp-cyan-deep);
+  background: #f0f6ff;
+}
+
+.auth-skip-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .authenticator-setup {
   display: grid;
   gap: 8px;

@@ -80,6 +80,7 @@ def login(request):
 
 
 @csrf_exempt
+@csrf_exempt
 def verify_authenticator(request):
     if request.method != "POST":
         return method_not_allowed()

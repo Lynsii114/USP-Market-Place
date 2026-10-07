@@ -39,6 +39,8 @@ function AuthModal({
   authenticatorSecret,
   authenticatorUri,
   authenticatorQr,
+  onEnableAuthenticator,
+  onSkipAuthenticator,
 }) {
   const [setupAcknowledged, setSetupAcknowledged] = useState(false);
 
@@ -59,15 +61,20 @@ function AuthModal({
               ? "Create your account"
               : authMode === "verify-email"
                 ? "Verify your email"
-                : authMode === "forgot-password"
-                  ? "Reset your password"
-                  : authMode === "reset-password"
-                    ? "Choose a new password"
-                    : "Welcome back"}
+                : authMode === "authenticator-choice"
+                  ? "Extra account protection"
+                  : authMode === "forgot-password"
+                    ? "Reset your password"
+                    : authMode === "reset-password"
+                      ? "Choose a new password"
+                      : "Welcome back"}
           </h2>
           {authMode === "signup" && <p className="auth-subtitle">Enter your email address to get started.</p>}
           {authMode === "authenticator-setup" && (
             <p className="auth-subtitle">Add this account to Microsoft Authenticator, then enter the six-digit code.</p>
+          )}
+          {authMode === "authenticator-choice" && (
+            <p className="auth-subtitle">Would you like to link Microsoft Authenticator for extra protection? You can skip this and continue to the marketplace.</p>
           )}
           {authMode === "verify-email" && (
             <p className="auth-subtitle">Enter the six-digit code sent to {verificationEmail}.</p>
@@ -92,7 +99,16 @@ function AuthModal({
       </div>
 
       <form onSubmit={onSubmit} className="auth-form">
-        {authMode === "verify-email" || authMode === "authenticator" || authMode === "authenticator-setup" || authMode === "reset-password" ? (
+        {authMode === "authenticator-choice" ? (
+          <div className="authenticator-choice">
+            <button type="button" className="auth-submit" onClick={onEnableAuthenticator} disabled={isSubmitting}>
+              Link Microsoft Authenticator
+            </button>
+            <button type="button" className="auth-skip-button" onClick={onSkipAuthenticator} disabled={isSubmitting}>
+              Not now — continue to homepage
+            </button>
+          </div>
+        ) : authMode === "verify-email" || authMode === "authenticator" || authMode === "authenticator-setup" || authMode === "reset-password" ? (
           <>
             {authMode === "authenticator-setup" && (
               <div className="authenticator-setup">
@@ -190,31 +206,33 @@ function AuthModal({
             )}
 
             {authMode === "signup" && (
-              <p className="auth-verification-note">Your email and authenticator app will be used to verify your account.</p>
+              <p className="auth-verification-note">Verify your email to create your account. Linking Microsoft Authenticator is optional.</p>
             )}
           </>
         )}
 
         {formMessage && <p className="auth-message">{formMessage}</p>}
 
-        <button type="submit" className="auth-submit" disabled={isSubmitting}>
-          {isSubmitting
-            ? "Please wait..."
-            : authMode === "signup"
-              ? "Sign Up"
-              : authMode === "verify-email"
-                ? "Verify email"
-                : authMode === "forgot-password"
-                  ? "Send reset code"
-                  : authMode === "reset-password"
-                    ? "Reset password"
-                : ["authenticator", "authenticator-setup"].includes(authMode)
-                  ? "Confirm code"
-                  : "Login"}
-        </button>
+        {authMode !== "authenticator-choice" && (
+          <button type="submit" className="auth-submit" disabled={isSubmitting}>
+            {isSubmitting
+              ? "Please wait..."
+              : authMode === "signup"
+                ? "Sign Up"
+                : authMode === "verify-email"
+                  ? "Verify email"
+                  : authMode === "forgot-password"
+                    ? "Send reset code"
+                    : authMode === "reset-password"
+                      ? "Reset password"
+                      : ["authenticator", "authenticator-setup"].includes(authMode)
+                        ? "Confirm code"
+                        : "Login"}
+          </button>
+        )}
       </form>
 
-      {standalone && !["verify-email", "authenticator", "authenticator-setup", "forgot-password", "reset-password"].includes(authMode) && (
+      {standalone && !["verify-email", "authenticator", "authenticator-setup", "authenticator-choice", "forgot-password", "reset-password"].includes(authMode) && (
         <p className="auth-switch">
           {authMode === "login" ? "New to USP Marketplace?" : "Already have an account?"}{" "}
           <button type="button" onClick={() => onSwitchMode(authMode === "login" ? "signup" : "login")}>

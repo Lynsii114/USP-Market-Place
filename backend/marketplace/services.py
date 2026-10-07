@@ -248,11 +248,11 @@ def verify_email(data):
         )
         registration.delete()
     return {
-        "user": None,
-        "authenticator_setup_required": True,
+        "user": serialize_user(user),
+        "authenticator_setup_offer": True,
         "user_id": user.id,
         **authenticator_setup(user.authenticator_secret, user.email),
-        "message": "Email verified. Set up Microsoft Authenticator to finish creating your account.",
+        "message": "Email verified successfully.",
     }
 
 
@@ -333,16 +333,15 @@ def login_user(data):
         raise ApiError("Please verify your email before logging in", 403)
     if user.status == "suspended":
         raise ApiError("Account is suspended", 403)
-    if not user.authenticator_secret or not user.authenticator_enabled:
+    if not user.authenticator_enabled:
         user.authenticator_secret = pyotp.random_base32()
-        user.authenticator_enabled = False
-        user.save(update_fields=["authenticator_secret", "authenticator_enabled"])
+        user.save(update_fields=["authenticator_secret"])
         return {
-            "authenticator_setup_required": True,
+            "user": serialize_user(user),
+            "authenticator_setup_offer": True,
             "user_id": user.id,
-            "username": user.username,
             **authenticator_setup(user.authenticator_secret, user.email),
-            "message": "Set up Microsoft Authenticator to finish signing in",
+            "message": "Login successful.",
         }
     return {
         "authenticator_required": True,

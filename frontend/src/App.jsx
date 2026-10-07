@@ -26,6 +26,7 @@ function Home() {
   const [authMode, setAuthMode] = useState("login");
   const [verificationEmail, setVerificationEmail] = useState("");
   const [authenticatorUserId, setAuthenticatorUserId] = useState(null);
+  const [pendingAuthenticatorUser, setPendingAuthenticatorUser] = useState(null);
   const [authenticatorSecret, setAuthenticatorSecret] = useState("");
   const [authenticatorUri, setAuthenticatorUri] = useState("");
   const [authenticatorQr, setAuthenticatorQr] = useState("");
@@ -151,6 +152,7 @@ function Home() {
     setFormMessage("");
     setEmailError("");
     setAuthenticatorUserId(null);
+    setPendingAuthenticatorUser(null);
     setAuthenticatorSecret("");
     setAuthenticatorUri("");
     setAuthenticatorQr("");
@@ -201,6 +203,28 @@ function Home() {
     }
   };
 
+  const skipAuthenticatorSetup = () => {
+    if (!pendingAuthenticatorUser) {
+      setFormMessage("Unable to complete sign in. Please try again.");
+      return;
+    }
+    setCurrentUser(pendingAuthenticatorUser);
+    setPendingAuthenticatorUser(null);
+    setAuthForm(EMPTY_AUTH_FORM);
+    setAuthMode(null);
+    setVerificationEmail("");
+    setAuthenticatorUserId(null);
+    setAuthenticatorSecret("");
+    setAuthenticatorUri("");
+    setAuthenticatorQr("");
+    showToast("Welcome to USP Marketplace.");
+  };
+
+  const beginAuthenticatorSetup = () => {
+    setAuthForm((previous) => ({ ...previous, authenticator_code: "" }));
+    setAuthMode("authenticator-setup");
+  };
+
   const handleAuthSubmit = async (event) => {
     event.preventDefault();
     setIsSubmitting(true);
@@ -214,15 +238,18 @@ function Home() {
           body: JSON.stringify({ email: verificationEmail, code: authForm.verification_code }),
         });
         const data = await parseResponse(response, "Email verification failed");
-        if (data.authenticator_setup_required) {
+        if (data.authenticator_setup_offer) {
           setAuthenticatorUserId(data.user_id);
+          setPendingAuthenticatorUser(data.user);
           setAuthenticatorSecret(data.authenticator_secret);
           setAuthenticatorUri(data.authenticator_uri);
           setAuthenticatorQr(data.authenticator_qr);
-          setAuthForm((previous) => ({ ...previous, verification_code: "", authenticator_code: "" }));
-          setAuthMode("authenticator-setup");
+          setAuthForm(EMPTY_AUTH_FORM);
+          setVerificationEmail("");
+          setAuthMode("authenticator-choice");
         } else {
           setCurrentUser(data.user);
+          setPendingAuthenticatorUser(null);
           setAuthForm(EMPTY_AUTH_FORM);
           setAuthMode(null);
           setVerificationEmail("");
@@ -239,6 +266,7 @@ function Home() {
         });
         const data = await parseResponse(response, "Authenticator verification failed");
         setCurrentUser(data.user);
+        setPendingAuthenticatorUser(null);
         setAuthForm(EMPTY_AUTH_FORM);
         setAuthMode(null);
         setVerificationEmail("");
@@ -321,13 +349,21 @@ function Home() {
       });
       const data = await parseResponse(response, "Authentication failed");
 
-      if (data.authenticator_setup_required || data.authenticator_required) {
+      if (data.authenticator_required) {
         setAuthenticatorUserId(data.user_id);
-        setAuthenticatorSecret(data.authenticator_secret || "");
-        setAuthenticatorUri(data.authenticator_uri || "");
-        setAuthenticatorQr(data.authenticator_qr || "");
         setAuthForm((previous) => ({ ...previous, authenticator_code: "" }));
-        setAuthMode(data.authenticator_setup_required ? "authenticator-setup" : "authenticator");
+        setAuthMode("authenticator");
+        return;
+      }
+
+      if (data.authenticator_setup_offer) {
+        setAuthenticatorUserId(data.user_id);
+        setPendingAuthenticatorUser(data.user);
+        setAuthenticatorSecret(data.authenticator_secret);
+        setAuthenticatorUri(data.authenticator_uri);
+        setAuthenticatorQr(data.authenticator_qr);
+        setAuthForm(EMPTY_AUTH_FORM);
+        setAuthMode("authenticator-choice");
         return;
       }
 
@@ -431,6 +467,8 @@ function Home() {
         authenticatorSecret={authenticatorSecret}
         authenticatorUri={authenticatorUri}
         authenticatorQr={authenticatorQr}
+        onEnableAuthenticator={beginAuthenticatorSetup}
+        onSkipAuthenticator={skipAuthenticatorSetup}
       />
     );
   }
@@ -848,6 +886,11 @@ function Home() {
             onFieldChange={handleAuthFieldChange}
             onResendVerification={resendVerification}
             onCancelVerification={cancelVerification}
+            authenticatorSecret={authenticatorSecret}
+            authenticatorUri={authenticatorUri}
+            authenticatorQr={authenticatorQr}
+            onEnableAuthenticator={beginAuthenticatorSetup}
+            onSkipAuthenticator={skipAuthenticatorSetup}
           />
           <AdminDashboard
             apiUrl={API_URL}
@@ -889,6 +932,11 @@ function Home() {
         onFieldChange={handleAuthFieldChange}
         onResendVerification={resendVerification}
         onCancelVerification={cancelVerification}
+        authenticatorSecret={authenticatorSecret}
+        authenticatorUri={authenticatorUri}
+        authenticatorQr={authenticatorQr}
+        onEnableAuthenticator={beginAuthenticatorSetup}
+        onSkipAuthenticator={skipAuthenticatorSetup}
       />
 
       <CategoryPage

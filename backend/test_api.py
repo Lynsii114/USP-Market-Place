@@ -66,8 +66,11 @@ def test_signup_login_and_create_hidden_listing():
         content_type="application/json",
     )
     assert verification.status_code == 200
-    assert verification.json()["authenticator_setup_required"] is True
+    assert verification.json()["authenticator_setup_offer"] is True
     user = User.objects.get(id=verification.json()["user_id"])
+    assert verification.json()["authenticator_qr"].startswith("data:image/png;base64,")
+    assert user.authenticator_secret
+    assert user.authenticator_enabled is False
     assert User.objects.filter(email=payload["email"]).exists()
     assert not PendingRegistration.objects.filter(email=payload["email"]).exists()
 
@@ -78,15 +81,25 @@ def test_signup_login_and_create_hidden_listing():
     )
     assert login.status_code == 200
     login_data = login.json()
-    assert login_data["authenticator_setup_required"] is True
+    assert login_data["authenticator_setup_offer"] is True
+    assert login_data["user"]["id"] == user.id
     assert login_data["authenticator_qr"].startswith("data:image/png;base64,")
+
     authenticator = client.post(
         "/api/users/verify-authenticator",
-        {"user_id": login_data["user_id"], "code": __import__("pyotp").TOTP(login_data["authenticator_secret"]).now()},
+        {"user_id": user.id, "code": __import__("pyotp").TOTP(login_data["authenticator_secret"]).now()},
         content_type="application/json",
     )
     assert authenticator.status_code == 200
     assert authenticator.json()["user"]["id"] == user.id
+
+    mfa_login = client.post(
+        "/api/users/login",
+        {"username": payload["username"], "password": payload["password"]},
+        content_type="application/json",
+    )
+    assert mfa_login.status_code == 200
+    assert mfa_login.json()["authenticator_required"] is True
 
     listing = client.post(
         "/api/items",
