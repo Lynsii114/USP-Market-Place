@@ -13,6 +13,7 @@ urlpatterns = [
     path("users/login", views.login),
     path("users/verify-authenticator", views.verify_authenticator),
     path("users/<int:buyer_id>/purchases", views.list_buyer_purchases),
+    path("users/<int:seller_id>/orders", views.list_seller_orders),
     path("users/<int:seller_id>/items", views.list_seller_items),
     path("items", views.items_collection),
     path("items/<int:item_id>", views.item_detail),

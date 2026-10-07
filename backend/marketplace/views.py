@@ -126,6 +126,12 @@ def list_buyer_purchases(request, buyer_id):
     return run(lambda: (services.list_buyer_purchases(buyer_id), False))
 
 
+def list_seller_orders(request, seller_id):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.list_seller_orders(seller_id), False))
+
+
 def admin_dashboard(request):
     if request.method != "GET":
         return method_not_allowed()

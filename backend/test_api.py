@@ -13,7 +13,7 @@ from django.test.utils import override_settings
 
 django.setup()
 
-from marketplace.models import Item, PasswordReset, PendingRegistration, User
+from marketplace.models import Item, PasswordReset, PendingRegistration, Purchase, User
 from marketplace.schema import ensure_schema
 
 ensure_schema()
@@ -25,6 +25,8 @@ client = Client()
 def cleanup_test_records():
     yield
     Item.objects.filter(name__startswith="__test_").delete()
+    Purchase.objects.filter(buyer_username__startswith="__test_").delete()
+    Purchase.objects.filter(seller_username__startswith="__test_").delete()
     User.objects.filter(username__startswith="__test_").delete()
     PendingRegistration.objects.filter(username__startswith="__test_").delete()
     PasswordReset.objects.filter(user__username__startswith="__test_").delete()
@@ -45,10 +47,8 @@ def test_health_check():
     assert response.json() == {"status": "ok"}
 
 
-@override_settings(ALLOW_NON_USP_EMAILS=True)
 def test_signup_login_and_create_hidden_listing():
     payload = unique_student_payload()
-    payload["email"] = f"test{payload['username'].rsplit('_', 1)[-1]}@gmail.com"
     with patch("marketplace.services.send_email") as send_email:
         signup = client.post("/api/users/signup", payload, content_type="application/json")
         verification_message = send_email.call_args.args[1]
@@ -137,8 +137,45 @@ def test_cancel_verification_removes_pending_registration():
     assert not PendingRegistration.objects.filter(email=payload["email"]).exists()
 
 
-@override_settings(ALLOW_NON_USP_EMAILS=False)
-def test_signup_rejects_non_usp_email_when_testing_option_is_disabled():
+def test_seller_can_view_orders_for_their_listings():
+    seller_payload = unique_student_payload()
+    buyer_payload = unique_student_payload()
+    seller = User.objects.create(
+        username=seller_payload["username"],
+        student_id=seller_payload["email"].split("@", 1)[0],
+        email=seller_payload["email"],
+        password_hash="test",
+    )
+    buyer = User.objects.create(
+        username=buyer_payload["username"],
+        student_id=buyer_payload["email"].split("@", 1)[0],
+        email=buyer_payload["email"],
+        password_hash="test",
+    )
+    item = Item.objects.create(
+        name="Student dashboard order item",
+        price=25,
+        description="Test listing",
+        category="Books",
+        contact="test",
+        stock=1,
+        status="available",
+        seller_id=seller.id,
+        seller_username=seller.username,
+    )
+
+    checkout = client.post(f"/api/items/{item.id}/purchase?buyer_id={buyer.id}")
+    assert checkout.status_code == 200
+
+    response = client.get(f"/api/users/{seller.id}/orders")
+
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+    assert response.json()[0]["buyer_id"] == buyer.id
+    assert response.json()[0]["seller_id"] == seller.id
+
+
+def test_signup_rejects_non_usp_email():
     payload = unique_student_payload()
     payload["email"] = "person@gmail.com"
 
@@ -148,8 +185,7 @@ def test_signup_rejects_non_usp_email_when_testing_option_is_disabled():
     assert "USP student email" in response.json()["detail"]
 
 
-@override_settings(ALLOW_NON_USP_EMAILS=True)
-def test_signup_rejects_invalid_email_format():
+def test_signup_rejects_invalid_student_email_format():
     payload = unique_student_payload()
     payload["email"] = "not-an-email"
 
@@ -159,10 +195,9 @@ def test_signup_rejects_invalid_email_format():
     assert response.json()["detail"] == "Enter a valid email address"
 
 
-@override_settings(ALLOW_NON_USP_EMAILS=True, EMAIL_HOST="smtp.gmail.com")
+@override_settings(EMAIL_HOST="smtp.gmail.com")
 def test_signup_returns_json_error_when_smtp_fails():
     payload = unique_student_payload()
-    payload["email"] = "person@gmail.com"
 
     with patch(
         "marketplace.services.send_mail",
@@ -178,10 +213,9 @@ def test_signup_returns_json_error_when_smtp_fails():
     assert not PendingRegistration.objects.filter(email=payload["email"]).exists()
 
 
-@override_settings(ALLOW_NON_USP_EMAILS=True, EMAIL_HOST="smtp.gmail.com")
+@override_settings(EMAIL_HOST="smtp.gmail.com")
 def test_signup_identifies_smtp_connection_failures_without_exposing_details():
     payload = unique_student_payload()
-    payload["email"] = "person@gmail.com"
 
     with patch("marketplace.services.send_mail", side_effect=smtplib.SMTPServerDisconnected("closed")):
         response = client.post("/api/users/signup", payload, content_type="application/json")

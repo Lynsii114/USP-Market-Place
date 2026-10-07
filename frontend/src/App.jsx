@@ -6,6 +6,7 @@ import AuthModal from "./components/AuthModal";
 import CartPage from "./components/CartPage";
 import CategoriesSection from "./components/CategoriesSection";
 import CategoryPage from "./components/CategoryPage";
+import DashboardPage from "./components/DashboardPage";
 import Footer from "./components/Footer";
 import HeroSection from "./components/HeroSection";
 import InfoSection from "./components/InfoSection";
@@ -55,6 +56,8 @@ function Home() {
   const [showPurchasesPage, setShowPurchasesPage] = useState(false);
   const [receipt, setReceipt] = useState(null);
   const [purchaseHistory, setPurchaseHistory] = useState([]);
+  const [sellerOrders, setSellerOrders] = useState([]);
+  const [isLoadingUserActivity, setIsLoadingUserActivity] = useState(false);
   const [activeLegalPage, setActiveLegalPage] = useState(null);
   const [activeAccountPage, setActiveAccountPage] = useState(null);
   const [showAdminDashboard, setShowAdminDashboard] = useState(() =>
@@ -76,9 +79,13 @@ function Home() {
 
   useEffect(() => {
     if (currentUser) {
-      loadPurchaseHistory(currentUser.id);
+      setIsLoadingUserActivity(true);
+      Promise.all([loadPurchaseHistory(currentUser.id), loadSellerOrders(currentUser.id)]).finally(() => {
+        setIsLoadingUserActivity(false);
+      });
     } else {
       setPurchaseHistory([]);
+      setSellerOrders([]);
     }
   }, [currentUser]);
 
@@ -146,6 +153,16 @@ function Home() {
     }
   };
 
+  const loadSellerOrders = async (sellerId) => {
+    try {
+      const response = await fetch(`${API_URL}/users/${sellerId}/orders`);
+      const data = await parseResponse(response, "Unable to load orders on your listings");
+      setSellerOrders(data);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to load orders on your listings", "error");
+    }
+  };
+
   const resetAuth = () => {
     setAuthMode(null);
     setVerificationEmail("");
@@ -188,6 +205,17 @@ function Home() {
     return isValid;
   };
 
+  const validateSignupEmail = (email) => {
+    if (!email) {
+      setEmailError("");
+      return true;
+    }
+
+    const isValid = /^S\d+@student\.usp\.ac\.fj$/i.test(email.trim());
+    setEmailError(isValid ? "" : "Use your USP student email, e.g. S12345678@student.usp.ac.fj");
+    return isValid;
+  };
+
   const validateUsername = (username) => {
     const normalizedUsername = username.trim();
     return normalizedUsername.length >= 3 && /^[a-zA-Z0-9_-]+$/.test(normalizedUsername);
@@ -199,7 +227,7 @@ function Home() {
     setFormMessage("");
 
     if (name === "email" && authMode === "signup") {
-      validateEmail(value);
+      validateSignupEmail(value);
     }
   };
 
@@ -223,6 +251,53 @@ function Home() {
   const beginAuthenticatorSetup = () => {
     setAuthForm((previous) => ({ ...previous, authenticator_code: "" }));
     setAuthMode("authenticator-setup");
+  };
+
+  const handleAuthBack = () => {
+    setFormMessage("");
+    if (authMode === "authenticator-setup") {
+      setAuthForm((previous) => ({ ...previous, authenticator_code: "" }));
+      setAuthMode("authenticator-choice");
+      return;
+    }
+    if (authMode === "authenticator") {
+      setAuthForm((previous) => ({ ...previous, authenticator_code: "" }));
+      setAuthMode("login");
+      return;
+    }
+    if (authMode === "authenticator-choice") {
+      setPendingAuthenticatorUser(null);
+      setAuthenticatorUserId(null);
+      setAuthenticatorSecret("");
+      setAuthenticatorUri("");
+      setAuthenticatorQr("");
+      setAuthForm(EMPTY_AUTH_FORM);
+      setAuthMode("login");
+      return;
+    }
+    if (authMode === "verify-email") {
+      const email = verificationEmail;
+      resetAuth();
+      setAuthMode("signup");
+      if (email) {
+        fetch(`${API_URL}/users/cancel-verification`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        }).catch(() => {
+          showToast("Unable to cancel email verification. Please try again.", "error");
+        });
+      }
+      return;
+    }
+    if (authMode === "reset-password") {
+      setAuthForm((previous) => ({ ...previous, reset_code: "", new_password: "", new_password_confirmation: "" }));
+      setAuthMode("forgot-password");
+      return;
+    }
+    if (authMode === "forgot-password") {
+      setAuthMode("login");
+    }
   };
 
   const handleAuthSubmit = async (event) => {
@@ -323,8 +398,8 @@ function Home() {
         return;
       }
 
-      if (authMode === "signup" && !validateEmail(authForm.email)) {
-        setFormMessage("Please enter a valid email address");
+      if (authMode === "signup" && !validateSignupEmail(authForm.email)) {
+        setFormMessage("Use your USP student email, e.g. S12345678@student.usp.ac.fj");
         return;
       }
 
@@ -469,6 +544,7 @@ function Home() {
         authenticatorQr={authenticatorQr}
         onEnableAuthenticator={beginAuthenticatorSetup}
         onSkipAuthenticator={skipAuthenticatorSetup}
+        onBack={handleAuthBack}
       />
     );
   }
@@ -815,6 +891,7 @@ function Home() {
         currentListings.map((listing) => purchasedItems.find((item) => item.id === listing.id) || listing)
       );
       await loadPurchaseHistory(currentUser.id);
+      await loadSellerOrders(currentUser.id);
       setReceipt({
         id: `USP-${Date.now()}`,
         purchasedAt: new Date().toLocaleString(),
@@ -891,6 +968,7 @@ function Home() {
             authenticatorQr={authenticatorQr}
             onEnableAuthenticator={beginAuthenticatorSetup}
             onSkipAuthenticator={skipAuthenticatorSetup}
+            onBack={handleAuthBack}
           />
           <AdminDashboard
             apiUrl={API_URL}
@@ -937,6 +1015,7 @@ function Home() {
         authenticatorQr={authenticatorQr}
         onEnableAuthenticator={beginAuthenticatorSetup}
         onSkipAuthenticator={skipAuthenticatorSetup}
+        onBack={handleAuthBack}
       />
 
       <CategoryPage
@@ -969,12 +1048,24 @@ function Home() {
       )}
 
       <AccountPage
-        page={activeAccountPage}
+        page={activeAccountPage === "dashboard" ? null : activeAccountPage}
         currentUser={currentUser}
         myListings={myListings}
         purchaseHistory={purchaseHistory}
         onBack={hideActivePages}
       />
+
+      {activeAccountPage === "dashboard" && (
+        <DashboardPage
+          currentUser={currentUser}
+          myListings={myListings}
+          purchases={purchaseHistory}
+          sellerOrders={sellerOrders}
+          isLoading={isLoadingUserActivity || isLoadingListings}
+          onBack={hideActivePages}
+          onManageListings={() => openSellerTab("my-listings")}
+        />
+      )}
 
       <LegalPage page={activeLegalPage} onBack={hideActivePages} />
 

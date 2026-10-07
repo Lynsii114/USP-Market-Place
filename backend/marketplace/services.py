@@ -176,7 +176,7 @@ def signup_user(data):
     validate_signup(data)
     username = data["username"].strip()
     email = data["email"].strip()
-    student_id = email.split("@", 1)[0] if is_usp_student_email(email) else None
+    student_id = email.split("@", 1)[0]
 
     username_registered = User.objects.filter(username__iexact=username).exists()
     username_pending = PendingRegistration.objects.filter(username__iexact=username).exists()
@@ -474,6 +474,13 @@ def list_buyer_purchases(buyer_id):
         raise ApiError("User not found", 404)
     purchases = visible_purchases(include_test_records=True).filter(buyer_id=buyer_id).order_by("-id")
     return [serialize_purchase(purchase) for purchase in purchases]
+
+
+def list_seller_orders(seller_id):
+    if not User.objects.filter(id=seller_id).exists():
+        raise ApiError("User not found", 404)
+    orders = visible_purchases(include_test_records=True).filter(seller_id=seller_id).order_by("-id")
+    return [serialize_purchase(order) for order in orders]
 
 
 def dashboard(admin_id):

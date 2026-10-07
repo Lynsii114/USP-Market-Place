@@ -36,6 +36,9 @@ function Navbar({
               My Activity
             </button>
             <div className="nav-dropdown-menu activity-menu">
+              <button type="button" onClick={() => onOpenAccountPage("dashboard")}>
+                My Dashboard
+              </button>
               <button type="button" onClick={onOpenPurchases}>
                 My Purchases
               </button>
