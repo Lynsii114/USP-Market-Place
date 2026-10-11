@@ -1,4 +1,4 @@
-from django.db import DatabaseError
+from django.db import DatabaseError, connection
 from django.http import HttpResponse
 import logging
 
@@ -23,7 +23,7 @@ def run(action):
         return handle_api_error(exc)
     except DatabaseError:
         return api_response(
-            {"detail": "Marketplace database is temporarily unavailable. Start MySQL in XAMPP, then refresh the page."},
+            {"detail": "Marketplace database is temporarily unavailable. Check the backend database configuration."},
             status=503,
         )
     except Exception:
@@ -35,6 +35,21 @@ def health(request):
     if request.method != "GET":
         return method_not_allowed()
     return api_response({"status": "ok"})
+
+
+def database_health(request):
+    if request.method != "GET":
+        return method_not_allowed()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+    except DatabaseError:
+        logger.exception("Database health check failed")
+        return api_response({"status": "error", "database": "unavailable"}, status=503)
+
+    return api_response({"status": "ok", "database": "connected"})
 
 
 @csrf_exempt
@@ -379,7 +394,7 @@ def admin_reports_pdf(request):
     except ApiError as exc:
         return handle_api_error(exc)
     except DatabaseError:
-        return error_response("Marketplace database is temporarily unavailable. Start MySQL in XAMPP, then refresh the page.", 503)
+        return error_response("Marketplace database is temporarily unavailable. Check the backend database configuration.", 503)
     response = HttpResponse(pdf_bytes, content_type="application/pdf")
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
