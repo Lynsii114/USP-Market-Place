@@ -31,6 +31,8 @@ python manage.py runserver 127.0.0.1:8000
 
 API health check: `http://127.0.0.1:8000/api/health`
 
+Database health check: `http://127.0.0.1:8000/api/health/database`
+
 ## Frontend
 
 ```powershell
