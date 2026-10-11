@@ -465,11 +465,16 @@ function Home() {
               password: authForm.password,
             };
 
-      const response = await fetch(`${API_URL}${endpoint}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      let response;
+      try {
+        response = await fetch(`${API_URL}${endpoint}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } catch (error) {
+        throw new Error(`Cannot reach the marketplace API at ${API_URL}. Check the backend deployment, VITE_API_URL, and CORS settings.`);
+      }
       const data = await parseResponse(response, "Authentication failed");
 
       if (data.authenticator_setup_required || data.authenticator_required) {

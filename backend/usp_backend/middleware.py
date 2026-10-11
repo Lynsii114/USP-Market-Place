@@ -1,4 +1,3 @@
-import os
 from urllib.parse import urlparse
 
 from django.conf import settings
@@ -8,10 +7,12 @@ from django.http import HttpResponse
 class JsonCorsMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
-        from marketplace.schema import ensure_schema
 
-        ensure_schema()
-        if os.getenv("LOCAL_DB_SYNC_ON_START", "0") == "1":
+        if settings.AUTO_ENSURE_SCHEMA:
+            from marketplace.schema import ensure_schema
+
+            ensure_schema()
+        if settings.LOCAL_DB_SYNC_ON_START:
             from marketplace.db_sync import sync_cloud_to_local
 
             sync_cloud_to_local()
@@ -21,10 +22,11 @@ class JsonCorsMiddleware:
             response = HttpResponse()
         else:
             response = self.get_response(request)
-            from marketplace.db_sync import should_sync_request, sync_cloud_to_local
+            if settings.LOCAL_DB_SYNC:
+                from marketplace.db_sync import should_sync_request, sync_cloud_to_local
 
-            if should_sync_request(request, response):
-                sync_cloud_to_local()
+                if should_sync_request(request, response):
+                    sync_cloud_to_local()
 
         origin = request.headers.get("Origin")
         if self.is_origin_allowed(origin):
