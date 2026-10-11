@@ -65,5 +65,6 @@ DB_SSL=VERIFY_CA
 DB_SSL_CA_CERT=-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----
 DJANGO_ALLOWED_HOSTS=.vercel.app,your-backend-domain.vercel.app
 CORS_ALLOWED_ORIGINS=https://usp-market-place.vercel.app
+CORS_ALLOWED_ORIGIN_SUFFIXES=.vercel.app
 CSRF_TRUSTED_ORIGINS=https://usp-market-place.vercel.app
 ```
