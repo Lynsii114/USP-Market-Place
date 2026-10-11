@@ -1,4 +1,5 @@
 import os
+import tempfile
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -24,7 +25,7 @@ ALLOWED_HOSTS = env_list(
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS")
 CORS_ALLOWED_ORIGINS = env_list(
     "CORS_ALLOWED_ORIGINS",
-    "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174",
+    "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174,https://usp-market-place.vercel.app",
 )
 
 INSTALLED_APPS = [
@@ -93,6 +94,27 @@ LOGGING = {
 }
 
 
+def db_ssl_ca_path(default_ca):
+    ca_cert = os.getenv("DB_SSL_CA_CERT", "").strip()
+    if ca_cert:
+        ca_path = Path(tempfile.gettempdir()) / "aiven-ca.pem"
+        ca_path.write_text(ca_cert.replace("\\n", "\n"), encoding="utf-8")
+        return str(ca_path)
+    return os.getenv("DB_SSL_CA", default_ca)
+
+
+def db_ssl_options(ssl_mode, ca_path=None):
+    ssl_mode = ssl_mode.upper()
+    if ssl_mode in {"1", "TRUE", "REQUIRED", "REQUIRE"}:
+        return {"ssl": {}}
+    if ssl_mode in {"VERIFY_CA", "VERIFY_IDENTITY"}:
+        ssl_options = {"ca": ca_path or db_ssl_ca_path(certifi.where())}
+        if ssl_mode == "VERIFY_IDENTITY":
+            ssl_options["check_hostname"] = True
+        return {"ssl": ssl_options}
+    return None
+
+
 def database_config():
     db_host = os.getenv("DB_HOST")
     if db_host:
@@ -106,14 +128,9 @@ def database_config():
                 "PORT": os.getenv("DB_PORT", "3306"),
             }
         }
-        ssl_mode = os.getenv("DB_SSL", "").upper()
-        if ssl_mode in {"1", "TRUE", "REQUIRED"}:
-            config["default"]["OPTIONS"] = {"ssl": {}}
-        elif ssl_mode in {"VERIFY_CA", "VERIFY_IDENTITY"}:
-            ssl_options = {"ca": os.getenv("DB_SSL_CA", certifi.where())}
-            if ssl_mode == "VERIFY_IDENTITY":
-                ssl_options["check_hostname"] = True
-            config["default"]["OPTIONS"] = {"ssl": ssl_options}
+        ssl_options = db_ssl_options(os.getenv("DB_SSL", ""))
+        if ssl_options:
+            config["default"]["OPTIONS"] = ssl_options
         return config
 
     database_url = os.getenv("DATABASE_URL")
@@ -133,14 +150,10 @@ def database_config():
             }
         }
         query = parse_qs(parsed.query)
-        ssl_value = query.get("ssl", query.get("sslmode", [""]))[0].upper()
-        if ssl_value in {"1", "TRUE", "REQUIRED", "REQUIRE"}:
-            config["default"]["OPTIONS"] = {"ssl": {}}
-        elif ssl_value in {"VERIFY_CA", "VERIFY_IDENTITY"}:
-            ssl_options = {"ca": query.get("ssl_ca", [certifi.where()])[0]}
-            if ssl_value == "VERIFY_IDENTITY":
-                ssl_options["check_hostname"] = True
-            config["default"]["OPTIONS"] = {"ssl": ssl_options}
+        ssl_value = query.get("ssl", query.get("sslmode", [""]))[0]
+        ssl_options = db_ssl_options(ssl_value, query.get("ssl_ca", [None])[0])
+        if ssl_options:
+            config["default"]["OPTIONS"] = ssl_options
         return config
 
     raise RuntimeError("SQLite has been disabled. DATABASE_URL must use mysql+pymysql://")
