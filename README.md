@@ -7,6 +7,18 @@ This project is split into two isolated parts:
 
 Keep Python files and backend dependencies inside `backend/`. Keep React files and Node dependencies inside `frontend/`.
 
+## Project structure
+
+```text
+usp-marketplace/
+├── frontend/
+├── backend/
+├── Dockerfile
+├── README.md
+├── backend.cmd
+└── frontend.cmd
+```
+
 ## Backend
 
 ```powershell
