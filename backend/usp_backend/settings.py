@@ -118,6 +118,10 @@ def db_ssl_options(ssl_mode, ca_path=None):
 def database_config():
     db_host = os.getenv("DB_HOST")
     if db_host:
+        required_db_env = ["DB_DATABASE", "DB_USERNAME", "DB_PASSWORD", "DB_SSL"]
+        missing_db_env = [name for name in required_db_env if not os.getenv(name)]
+        if missing_db_env:
+            raise RuntimeError(f"Missing required database environment variables: {', '.join(missing_db_env)}")
         config = {
             "default": {
                 "ENGINE": "usp_backend.mysql_backend",
