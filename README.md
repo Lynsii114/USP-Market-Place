@@ -48,7 +48,7 @@ App URL: `http://localhost:5173/`
 Frontend project:
 
 ```text
-VITE_API_URL=https://your-backend-domain.vercel.app/api
+VITE_API_URL=https://usp-market-place-h5f5-gm540cfl3-usp-marketplace.vercel.app/api
 VITE_MICROSOFT_CLIENT_ID=your-entra-application-client-id
 VITE_MICROSOFT_TENANT_ID=your-usp-tenant-id
 ```
@@ -65,6 +65,13 @@ DB_USERNAME=your-aiven-username
 DB_PASSWORD=your-aiven-password
 DB_SSL=VERIFY_CA
 DB_SSL_CA_CERT=-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----
+AUTO_ENSURE_SCHEMA=0
+LOCAL_DB_SYNC=0
+LOCAL_DB_SYNC_ON_START=0
+DB_CONNECT_TIMEOUT=10
+DB_READ_TIMEOUT=10
+DB_WRITE_TIMEOUT=10
+DB_CONN_MAX_AGE=60
 DJANGO_ALLOWED_HOSTS=.vercel.app,your-backend-domain.vercel.app
 CORS_ALLOWED_ORIGINS=https://usp-market-place.vercel.app
 CORS_ALLOWED_ORIGIN_SUFFIXES=.vercel.app

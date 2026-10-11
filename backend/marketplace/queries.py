@@ -1,5 +1,3 @@
-from django.db.models import Q
-
 from .models import Item, Purchase, User
 
 
@@ -20,7 +18,11 @@ def visible_purchases(include_test_records=False):
 
 
 def find_user_by_login(login_name):
-    return User.objects.filter(Q(username=login_name) | Q(email=login_name)).first()
+    if "@" in login_name:
+        user = User.objects.filter(email=login_name).first()
+        if user:
+            return user
+    return User.objects.filter(username=login_name).first()
 
 
 def find_student(student_id):

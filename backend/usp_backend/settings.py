@@ -28,6 +28,9 @@ CORS_ALLOWED_ORIGINS = env_list(
     "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174,https://usp-market-place.vercel.app",
 )
 CORS_ALLOWED_ORIGIN_SUFFIXES = env_list("CORS_ALLOWED_ORIGIN_SUFFIXES")
+AUTO_ENSURE_SCHEMA = os.getenv("AUTO_ENSURE_SCHEMA", "1" if DEBUG else "0") == "1"
+LOCAL_DB_SYNC = os.getenv("LOCAL_DB_SYNC", "0") == "1"
+LOCAL_DB_SYNC_ON_START = os.getenv("LOCAL_DB_SYNC_ON_START", "0") == "1"
 
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
@@ -116,6 +119,18 @@ def db_ssl_options(ssl_mode, ca_path=None):
     return None
 
 
+def db_options(ssl_mode, ca_path=None):
+    options = {
+        "connect_timeout": int(os.getenv("DB_CONNECT_TIMEOUT", "10")),
+        "read_timeout": int(os.getenv("DB_READ_TIMEOUT", "10")),
+        "write_timeout": int(os.getenv("DB_WRITE_TIMEOUT", "10")),
+    }
+    ssl_options = db_ssl_options(ssl_mode, ca_path)
+    if ssl_options:
+        options.update(ssl_options)
+    return options
+
+
 def database_config():
     db_host = os.getenv("DB_HOST")
     if db_host:
@@ -131,11 +146,10 @@ def database_config():
                 "PASSWORD": os.getenv("DB_PASSWORD", ""),
                 "HOST": db_host,
                 "PORT": os.getenv("DB_PORT", "3306"),
+                "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "60")),
             }
         }
-        ssl_options = db_ssl_options(os.getenv("DB_SSL", ""))
-        if ssl_options:
-            config["default"]["OPTIONS"] = ssl_options
+        config["default"]["OPTIONS"] = db_options(os.getenv("DB_SSL", ""))
         return config
 
     database_url = os.getenv("DATABASE_URL")
@@ -152,13 +166,12 @@ def database_config():
                 "PASSWORD": parsed.password or "",
                 "HOST": parsed.hostname or "localhost",
                 "PORT": str(parsed.port or 3306),
+                "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "60")),
             }
         }
         query = parse_qs(parsed.query)
         ssl_value = query.get("ssl", query.get("sslmode", [""]))[0]
-        ssl_options = db_ssl_options(ssl_value, query.get("ssl_ca", [None])[0])
-        if ssl_options:
-            config["default"]["OPTIONS"] = ssl_options
+        config["default"]["OPTIONS"] = db_options(ssl_value, query.get("ssl_ca", [None])[0])
         return config
 
     raise RuntimeError("SQLite has been disabled. DATABASE_URL must use mysql+pymysql://")
