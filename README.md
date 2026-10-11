@@ -56,7 +56,11 @@ Backend project:
 ```text
 DEBUG=0
 SECRET_KEY=your-long-random-django-secret
-DATABASE_URL=mysql+pymysql://USER:PASSWORD@HOST:PORT/DATABASE
+DB_HOST=your-aiven-mysql-host
+DB_PORT=your-aiven-mysql-port
+DB_DATABASE=your-aiven-database-name
+DB_USERNAME=your-aiven-username
+DB_PASSWORD=your-aiven-password
 DB_SSL=VERIFY_CA
 DB_SSL_CA_CERT=-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----
 DJANGO_ALLOWED_HOSTS=.vercel.app,your-backend-domain.vercel.app
