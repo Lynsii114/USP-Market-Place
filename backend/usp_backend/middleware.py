@@ -1,4 +1,5 @@
 import os
+from urllib.parse import urlparse
 
 from django.conf import settings
 from django.http import HttpResponse
@@ -26,9 +27,18 @@ class JsonCorsMiddleware:
                 sync_cloud_to_local()
 
         origin = request.headers.get("Origin")
-        if origin in settings.CORS_ALLOWED_ORIGINS:
+        if self.is_origin_allowed(origin):
             response["Access-Control-Allow-Origin"] = origin
             response["Access-Control-Allow-Credentials"] = "true"
             response["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
             response["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return response
+
+    @staticmethod
+    def is_origin_allowed(origin):
+        if not origin:
+            return False
+        if origin in settings.CORS_ALLOWED_ORIGINS:
+            return True
+        hostname = urlparse(origin).hostname or ""
+        return any(hostname == suffix.lstrip(".") or hostname.endswith(suffix) for suffix in settings.CORS_ALLOWED_ORIGIN_SUFFIXES)
