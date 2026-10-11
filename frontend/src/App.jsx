@@ -25,7 +25,7 @@ import { EMPTY_AUTH_FORM, EMPTY_LISTING_FORM } from "./constants/forms";
 import { categories } from "./data/categories";
 import logo from "../logo.png";
 
-const API_URL = "http://localhost:8000/api";
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000/api";
 const PENDING_VERIFICATION_STORAGE_KEY = "usp-marketplace-pending-verification";
 
 function readPendingVerification() {

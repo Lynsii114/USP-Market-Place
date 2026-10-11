@@ -11,7 +11,21 @@ os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
 DEBUG = os.getenv("DEBUG", "1") == "1"
-ALLOWED_HOSTS = ["127.0.0.1", "localhost", "testserver"]
+
+
+def env_list(name, default=""):
+    return [value.strip() for value in os.getenv(name, default).split(",") if value.strip()]
+
+
+ALLOWED_HOSTS = env_list(
+    "DJANGO_ALLOWED_HOSTS",
+    "127.0.0.1,localhost,testserver,.vercel.app",
+)
+CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS")
+CORS_ALLOWED_ORIGINS = env_list(
+    "CORS_ALLOWED_ORIGINS",
+    "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174",
+)
 
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
@@ -25,6 +39,7 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = "usp_backend.urls"
+WSGI_APPLICATION = "usp_backend.wsgi.application"
 DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
 USE_TZ = True
 TIME_ZONE = "UTC"

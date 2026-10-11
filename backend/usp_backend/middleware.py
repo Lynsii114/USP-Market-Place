@@ -1,16 +1,10 @@
 import os
 
+from django.conf import settings
 from django.http import HttpResponse
 
 
 class JsonCorsMiddleware:
-    allowed_origins = {
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:5174",
-    }
-
     def __init__(self, get_response):
         self.get_response = get_response
         from marketplace.schema import ensure_schema
@@ -32,7 +26,7 @@ class JsonCorsMiddleware:
                 sync_cloud_to_local()
 
         origin = request.headers.get("Origin")
-        if origin in self.allowed_origins:
+        if origin in settings.CORS_ALLOWED_ORIGINS:
             response["Access-Control-Allow-Origin"] = origin
             response["Access-Control-Allow-Credentials"] = "true"
             response["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"

@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from "react";
 
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000/api";
+
 function ProductModal({ listing, currentUser, onClose, onAddToCart, onMessageSeller, onReportListing, onViewSeller }) {
   const [reportReason, setReportReason] = useState("");
   const [reportTarget, setReportTarget] = useState("listing");
@@ -21,7 +23,7 @@ function ProductModal({ listing, currentUser, onClose, onAddToCart, onMessageSel
     }
 
     setIsLoadingPaymentDetails(true);
-    fetch(`http://localhost:8000/api/items/${listing.id}?user_id=${currentUser.id}`)
+    fetch(`${API_URL}/items/${listing.id}?user_id=${currentUser.id}`)
       .then(async (response) => {
         const data = await response.json();
         if (!response.ok) {
