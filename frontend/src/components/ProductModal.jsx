@@ -25,7 +25,14 @@ function ProductModal({ listing, currentUser, onClose, onAddToCart, onMessageSel
     setIsLoadingPaymentDetails(true);
     fetch(`${API_URL}/items/${listing.id}?user_id=${currentUser.id}`)
       .then(async (response) => {
-        const data = await response.json();
+        const responseBody = await response.text();
+        let data = null;
+        try {
+          data = responseBody ? JSON.parse(responseBody) : null;
+        } catch {
+          const preview = responseBody.replace(/\s+/g, " ").trim().slice(0, 160) || response.statusText || "No response body";
+          throw new Error(`Server returned a non-JSON response (HTTP ${response.status}) from ${response.url}. ${preview}`);
+        }
         if (!response.ok) {
           throw new Error(data.detail || "Unable to refresh listing details");
         }

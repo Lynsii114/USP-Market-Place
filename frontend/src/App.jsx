@@ -23,7 +23,7 @@ import Toast from "./components/Toast";
 // const microsoftLoginAvailable = true;
 import { EMPTY_AUTH_FORM, EMPTY_LISTING_FORM } from "./constants/forms";
 import { API_URL } from "./config/api";
-import { categories } from "./data/categories";
+import { categories as defaultCategories } from "./data/categories";
 import logo from "../logo.png";
 
 const PENDING_VERIFICATION_STORAGE_KEY = "usp-marketplace-pending-verification";
@@ -75,6 +75,7 @@ function Home() {
   const [openListingMenuId, setOpenListingMenuId] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
+  const [marketplaceCategories, setMarketplaceCategories] = useState(defaultCategories);
   const [sortOption, setSortOption] = useState("newest");
   const [selectedListing, setSelectedListing] = useState(null);
   const [selectedSeller, setSelectedSeller] = useState(null);
@@ -105,11 +106,35 @@ function Home() {
 
   useEffect(() => {
     loadListings();
+    loadCategories();
   }, []);
 
   useEffect(() => {
+    const applyRouteState = (state = window.history.state || {}) => {
+      const pathname = window.location.pathname;
+      const view = state.view || (pathname.startsWith("/admin") ? "admin" : "home");
+
+      setShowAdminDashboard(view === "admin");
+      setShowSellerPanel(view === "seller");
+      setShowShopPage(view === "shop");
+      setShowCartPanel(view === "cart");
+      setShowPurchasesPage(view === "purchases");
+      setActiveCategoryPage(view === "category" ? state.category || null : null);
+      setActiveLegalPage(view === "legal" ? state.page || null : null);
+      setActiveAccountPage(view === "account" ? state.page || null : null);
+      setActiveSalesView(state.salesView || "active");
+      if (view === "seller") {
+        setActiveSellerTab(state.tab || "my-listings");
+      }
+      setOpenListingMenuId(null);
+    };
+
+    if (!window.history.state) {
+      window.history.replaceState({ view: window.location.pathname.startsWith("/admin") ? "admin" : "home" }, "", window.location.pathname);
+    }
+
     const handleRouteChange = () => {
-      setShowAdminDashboard(window.location.pathname.startsWith("/admin"));
+      applyRouteState();
     };
 
     window.addEventListener("popstate", handleRouteChange);
@@ -124,7 +149,7 @@ function Home() {
       loadSellerOrders(currentUser.id);
       loadConversations(currentUser.id);
       loadUnreadMessageCount(currentUser.id);
-      loadUserNotifications(currentUser.id);
+      loadUserNotifications(currentUser.id, { silent: true });
     } else {
       setSellerListings([]);
       setPurchaseHistory([]);
@@ -184,8 +209,9 @@ function Home() {
     try {
       data = responseBody ? JSON.parse(responseBody) : null;
     } catch {
+      const preview = responseBody.replace(/\s+/g, " ").trim().slice(0, 160) || response.statusText || "No response body";
       throw new Error(
-        `Server returned an unreadable response (HTTP ${response.status}). Check the backend terminal for details.`
+        `Server returned a non-JSON response (HTTP ${response.status}) from ${response.url}. ${preview}`
       );
     }
 
@@ -237,6 +263,50 @@ function Home() {
     } finally {
       setIsLoadingListings(false);
     }
+  };
+
+  const mergeCategories = (storedCategories) => {
+    const merged = [...defaultCategories];
+    storedCategories.forEach((category) => {
+      if (!merged.some((existingCategory) => existingCategory.name.toLowerCase() === category.name.toLowerCase())) {
+        merged.push(category);
+      }
+    });
+    return merged;
+  };
+
+  const loadCategories = async () => {
+    try {
+      const response = await fetch(`${API_URL}/categories`);
+      const data = await parseResponse(response, "Unable to load categories");
+      setMarketplaceCategories(mergeCategories(Array.isArray(data) ? data : []));
+    } catch {
+      setMarketplaceCategories(defaultCategories);
+    }
+  };
+
+  const addMarketplaceCategory = (category) => {
+    setMarketplaceCategories((currentCategories) => mergeCategories([...currentCategories, category]));
+  };
+
+  const updateMarketplaceCategory = (category) => {
+    setMarketplaceCategories((currentCategories) => {
+      const updatedCategories = currentCategories.map((currentCategory) =>
+        currentCategory.created_at && currentCategory.id === category.id ? category : currentCategory
+      );
+      if (!updatedCategories.some((currentCategory) => currentCategory.created_at && currentCategory.id === category.id)) {
+        updatedCategories.push(category);
+      }
+      return mergeCategories(updatedCategories);
+    });
+  };
+
+  const deleteMarketplaceCategory = (category) => {
+    setMarketplaceCategories((currentCategories) =>
+      currentCategories.filter(
+        (currentCategory) => !(currentCategory.created_at && currentCategory.id === category.id)
+      )
+    );
   };
 
   const loadPurchaseHistory = async (buyerId) => {
@@ -509,7 +579,7 @@ function Home() {
       if (data.user?.role === "admin") {
         hideActivePages();
         setShowAdminDashboard(true);
-        window.history.pushState({}, "", "/admin/dashboard");
+        pushViewState({ view: "admin" }, "/admin/dashboard");
       }
       showToast(authMode === "signup" ? "Registration successful. Welcome to USP Marketplace!" : data.message || "Login successful!");
     } catch (error) {
@@ -551,6 +621,10 @@ function Home() {
     setEditingListingId(null);
   };
 
+  const pushViewState = (state, path = "/") => {
+    window.history.pushState(state, "", path);
+  };
+
   const hideActivePages = () => {
     setShowAdminDashboard(false);
     setShowSellerPanel(false);
@@ -568,13 +642,13 @@ function Home() {
     setCurrentUser(null);
     setAuthMode("login");
     hideActivePages();
-    window.history.pushState({}, "", "/");
+    pushViewState({ view: "home" });
     showToast("Logged out successfully.");
   };
 
   const openMarketplace = () => {
     hideActivePages();
-    window.history.pushState({}, "", "/");
+    pushViewState({ view: "home" });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -867,7 +941,7 @@ function Home() {
       return;
     }
 
-    await Promise.all(
+    await Promise.allSettled(
       unreadMatchingNotifications.map((notification) =>
         fetch(`${API_URL}/users/${currentUser.id}/notifications/${notification.id}`, {
           method: "POST",
@@ -1020,6 +1094,7 @@ function Home() {
     event.preventDefault();
     hideActivePages();
     setShowShopPage(true);
+    pushViewState({ view: "shop" });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -1033,11 +1108,13 @@ function Home() {
     setSelectedCategory(categoryName);
     if (categoryName === "All") {
       setActiveCategoryPage(null);
+      pushViewState({ view: "home" });
       document.getElementById("categories")?.scrollIntoView({ behavior: "smooth" });
       return;
     }
 
     setActiveCategoryPage(categoryName);
+    pushViewState({ view: "category", category: categoryName });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -1047,6 +1124,7 @@ function Home() {
     setSelectedCategory("All");
     setSortOption("newest");
     setShowShopPage(true);
+    pushViewState({ view: "shop" });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -1069,6 +1147,7 @@ function Home() {
     setActiveLegalPage(null);
     setActiveAccountPage(null);
     setActiveSellerTab(tabName);
+    pushViewState({ view: "seller", tab: tabName });
     window.setTimeout(() => {
       document.getElementById("seller-listings")?.scrollIntoView({ behavior: "smooth" });
     }, 0);
@@ -1083,6 +1162,7 @@ function Home() {
     setActiveLegalPage(null);
     setActiveAccountPage(null);
     setShowCartPanel(true);
+    pushViewState({ view: "cart" });
     window.setTimeout(() => {
       document.getElementById("cart")?.scrollIntoView({ behavior: "smooth" });
     }, 0);
@@ -1100,6 +1180,7 @@ function Home() {
     if (!currentUser) {
       openAuth("login");
     }
+    pushViewState({ view: "purchases" });
     window.setTimeout(() => {
       document.getElementById("past-purchases")?.scrollIntoView({ behavior: "smooth" });
     }, 0);
@@ -1588,6 +1669,7 @@ function Home() {
     setSearchQuery(listing.name);
     hideActivePages();
     setShowShopPage(true);
+    pushViewState({ view: "shop" });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -1606,6 +1688,7 @@ function Home() {
     setActiveCategoryPage(null);
     setActiveLegalPage(page);
     setActiveAccountPage(null);
+    pushViewState({ view: "legal", page });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -1629,6 +1712,7 @@ function Home() {
     setActiveCategoryPage(null);
     setActiveLegalPage(null);
     setActiveAccountPage(page);
+    pushViewState({ view: "account", page, salesView });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -1699,8 +1783,12 @@ function Home() {
           />
           <AdminDashboard
             apiUrl={API_URL}
+            categories={marketplaceCategories}
             currentUser={currentUser}
             logo={logo}
+            onCategoryCreated={addMarketplaceCategory}
+            onCategoryDeleted={deleteMarketplaceCategory}
+            onCategoryUpdated={updateMarketplaceCategory}
             onLogin={() => openAuth("login")}
             onLogout={handleLogout}
             onMarketplace={openMarketplace}
@@ -1803,7 +1891,7 @@ function Home() {
 
       {showShopPage && !activeCategoryPage && !showCartPanel && !showPurchasesPage && !activeLegalPage && !activeAccountPage && !showSellerPanel && (
         <ListingsSection
-          categories={categories}
+          categories={marketplaceCategories}
           filteredListings={filteredListings}
           isLoadingListings={isLoadingListings}
           searchQuery={searchQuery}
@@ -1822,7 +1910,7 @@ function Home() {
       {showSellerPanel && !showShopPage && !activeCategoryPage && !showCartPanel && !showPurchasesPage && !activeLegalPage && !activeAccountPage && (
         <SellerPanel
           activeSellerTab={activeSellerTab}
-          categories={categories}
+          categories={marketplaceCategories}
           currentUser={currentUser}
           editingListingId={editingListingId}
           isSubmitting={isSubmitting}
@@ -1865,13 +1953,13 @@ function Home() {
           />
 
           <CategoriesSection
-            categories={categories}
+            categories={marketplaceCategories}
             selectedCategory={selectedCategory}
             onChooseCategory={chooseCategory}
           />
 
           <ListingsSection
-            categories={categories}
+            categories={marketplaceCategories}
             filteredListings={filteredListings}
             isLoadingListings={isLoadingListings}
             searchQuery={searchQuery}

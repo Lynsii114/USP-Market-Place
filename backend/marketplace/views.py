@@ -117,6 +117,30 @@ def items_collection(request):
     return method_not_allowed()
 
 
+def categories_collection(request):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.list_categories(), False))
+
+
+@csrf_exempt
+def admin_categories(request):
+    if request.method == "GET":
+        return run(lambda: (services.list_categories(), False))
+    if request.method == "POST":
+        return run(lambda: (services.create_category(get_admin_id(request), json_body(request)), True))
+    return method_not_allowed()
+
+
+@csrf_exempt
+def admin_category_detail(request, category_id):
+    if request.method == "PUT":
+        return run(lambda: (services.update_category(get_admin_id(request), category_id, json_body(request)), True))
+    if request.method == "DELETE":
+        return run(lambda: (services.delete_category(get_admin_id(request), category_id), True))
+    return method_not_allowed()
+
+
 def list_seller_items(request, seller_id):
     if request.method != "GET":
         return method_not_allowed()
@@ -205,6 +229,21 @@ def user_unread_messages(request, user_id):
     if request.method != "GET":
         return method_not_allowed()
     return run(lambda: (services.get_unread_message_count(user_id), True))
+
+
+def user_notifications(request, user_id):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.list_user_notifications(user_id), False))
+
+
+@csrf_exempt
+def user_notification_detail(request, user_id, notification_id):
+    if request.method == "POST":
+        return run(lambda: (services.mark_user_notification_viewed(user_id, notification_id), True))
+    if request.method == "DELETE":
+        return run(lambda: (services.delete_user_notification(user_id, notification_id), True))
+    return method_not_allowed()
 
 
 @csrf_exempt

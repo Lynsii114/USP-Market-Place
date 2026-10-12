@@ -1,9 +1,21 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReportsPanel from "./ReportsPanel";
 
-const adminTabs = ["Dashboard", "Students", "Listings", "Orders", "Reports", "Flags", "Reviews"];
+const adminTabs = ["Dashboard", "Students", "Listings", "Orders", "Categories", "Reports", "Flags", "Reviews"];
 
-function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarketplace, showToast }) {
+function AdminDashboard({
+  apiUrl,
+  categories = [],
+  currentUser,
+  logo,
+  onCategoryCreated,
+  onCategoryDeleted,
+  onCategoryUpdated,
+  onLogin,
+  onLogout,
+  onMarketplace,
+  showToast,
+}) {
   const [activeTab, setActiveTab] = useState("Dashboard");
   const [dashboard, setDashboard] = useState(null);
   const [students, setStudents] = useState([]);
@@ -12,7 +24,6 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
   const [studentSearch, setStudentSearch] = useState("");
   const [listingSearch, setListingSearch] = useState("");
   const [orderSearch, setOrderSearch] = useState("");
-  const [orderStatus, setOrderStatus] = useState("");
   const [orderDate, setOrderDate] = useState("");
   const [userReports, setUserReports] = useState([]);
   const [ratingReviews, setRatingReviews] = useState([]);
@@ -24,16 +35,40 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [openStudentActionId, setOpenStudentActionId] = useState(null);
   const [openListingActionId, setOpenListingActionId] = useState(null);
+  const [openCategoryActionId, setOpenCategoryActionId] = useState(null);
+  const [editingCategoryId, setEditingCategoryId] = useState(null);
+  const [categoryForm, setCategoryForm] = useState({ name: "", image: "" });
+  const [categoryImageName, setCategoryImageName] = useState("");
+  const loadedTabsRef = useRef(new Set());
+  const prefetchStartedRef = useRef(false);
 
   const isAdmin = currentUser?.role === "admin";
   const adminId = currentUser?.id;
+  const uniqueCategories = useMemo(() => {
+    const seenCategories = new Set();
+    return categories.filter((category) => {
+      const key = category.name.toLowerCase();
+      if (seenCategories.has(key)) {
+        return false;
+      }
+      seenCategories.add(key);
+      return true;
+    });
+  }, [categories]);
 
   const parseResponse = async (response, fallbackMessage) => {
-    const data = await response.json();
+    const responseBody = await response.text();
+    let data = null;
+    try {
+      data = responseBody ? JSON.parse(responseBody) : null;
+    } catch {
+      const preview = responseBody.replace(/\s+/g, " ").trim().slice(0, 160) || response.statusText || "No response body";
+      throw new Error(`Server returned a non-JSON response (HTTP ${response.status}) from ${response.url}. ${preview}`);
+    }
     if (!response.ok) {
       const detail = data?.detail || fallbackMessage;
       if (response.status === 503 || /database unavailable/i.test(detail)) {
-        throw new Error("Marketplace database is unavailable. Start MySQL in XAMPP, then refresh the page.");
+        throw new Error("Marketplace database is unavailable. Check the backend database configuration.");
       }
       throw new Error(detail);
     }
@@ -42,33 +77,42 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
 
   const fetchAdmin = async (path, fallbackMessage, options = {}) => {
     const joiner = path.includes("?") ? "&" : "?";
-    const response = await fetch(`${apiUrl}${path}${joiner}admin_id=${adminId}`, options);
+    const url = `${apiUrl}${path}${joiner}admin_id=${adminId}`;
+    let response;
+    try {
+      response = await fetch(url, options);
+    } catch {
+      throw new Error(`Cannot reach the admin API at ${apiUrl}. Check the backend deployment, API URL, and CORS settings.`);
+    }
     return parseResponse(response, fallbackMessage);
   };
 
   const loadDashboard = async () => {
     const data = await fetchAdmin("/admin/dashboard", "Unable to load dashboard");
     setDashboard(data);
+    loadedTabsRef.current.add("Dashboard");
   };
 
   const loadStudents = async () => {
     const data = await fetchAdmin(`/admin/students?search=${encodeURIComponent(studentSearch)}`, "Unable to load students");
     setStudents(data);
+    loadedTabsRef.current.add("Students");
   };
 
   const loadListings = async () => {
     const data = await fetchAdmin(`/admin/listings?search=${encodeURIComponent(listingSearch)}`, "Unable to load listings");
     setListings(data);
+    loadedTabsRef.current.add("Listings");
   };
 
   const loadOrders = async () => {
     const params = new URLSearchParams({
       search: orderSearch,
-      status: orderStatus,
       order_date: orderDate,
     });
     const data = await fetchAdmin(`/admin/orders?${params.toString()}`, "Unable to load orders");
     setOrders(data);
+    loadedTabsRef.current.add("Orders");
   };
 
   const loadNotifications = async () => {
@@ -79,15 +123,145 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
   const loadUserReports = async () => {
     const data = await fetchAdmin("/admin/user-reports", "Unable to load user reports");
     setUserReports(data);
+    loadedTabsRef.current.add("Flags");
   };
 
   const loadRatingReviews = async () => {
     const data = await fetchAdmin("/admin/ratings", "Unable to load ratings and reviews");
     setRatingReviews(data);
+    loadedTabsRef.current.add("Reviews");
+  };
+
+  const readCompressedImageFile = (file) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const image = new Image();
+        image.onload = () => {
+          const maxSize = 900;
+          const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, Math.round(image.width * scale));
+          canvas.height = Math.max(1, Math.round(image.height * scale));
+          const context = canvas.getContext("2d");
+          if (!context) {
+            reject(new Error("Unable to process category image"));
+            return;
+          }
+          context.drawImage(image, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL("image/jpeg", 0.82));
+        };
+        image.onerror = () => reject(new Error("Unable to read category image"));
+        image.src = reader.result;
+      };
+      reader.onerror = () => reject(new Error("Unable to read category image"));
+      reader.readAsDataURL(file);
+    });
+
+  const handleCategoryImageChange = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      setCategoryImageName("");
+      setCategoryForm((currentForm) => ({ ...currentForm, image: "" }));
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      showToast("Please choose an image file.", "error");
+      event.target.value = "";
+      return;
+    }
+    try {
+      const image = await readCompressedImageFile(file);
+      setCategoryImageName(file.name);
+      setCategoryForm((currentForm) => ({ ...currentForm, image }));
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to read category image", "error");
+    }
+  };
+
+  const createCategory = async (event) => {
+    event.preventDefault();
+    const name = categoryForm.name.trim();
+    if (!name) {
+      showToast("Category name is required.", "error");
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const isEditing = Boolean(editingCategoryId);
+      const category = await fetchAdmin(
+        isEditing ? `/admin/categories/${editingCategoryId}` : "/admin/categories",
+        isEditing ? "Unable to update category" : "Unable to add category",
+        {
+          method: isEditing ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, image: categoryForm.image, icon: name.slice(0, 4) || "More" }),
+        }
+      );
+      if (isEditing) {
+        onCategoryUpdated?.(category);
+      } else {
+        onCategoryCreated?.(category);
+      }
+      setCategoryForm({ name: "", image: "" });
+      setCategoryImageName("");
+      setEditingCategoryId(null);
+      setActiveTab("Categories");
+      showToast(`${category.name} category ${isEditing ? "updated" : "added"}.`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to save category", "error");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const editCategory = (category) => {
+    if (!category.created_at) {
+      showToast("Built-in categories cannot be edited from this menu.", "error");
+      return;
+    }
+    setEditingCategoryId(category.id);
+    setCategoryForm({ name: category.name, image: category.image || "" });
+    setCategoryImageName("");
+    setOpenCategoryActionId(null);
+    setActiveTab("Edit Category");
+  };
+
+  const deleteCategory = async (category) => {
+    if (!category.created_at) {
+      showToast("Built-in categories cannot be deleted from this menu.", "error");
+      return;
+    }
+    if (!window.confirm(`Delete "${category.name}" from marketplace categories?`)) {
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      await fetchAdmin(`/admin/categories/${category.id}`, "Unable to delete category", { method: "DELETE" });
+      onCategoryDeleted?.(category);
+      setOpenCategoryActionId(null);
+      showToast(`${category.name} category deleted.`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to delete category", "error");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const refreshActiveTab = async () => {
     if (!isAdmin) {
+      return;
+    }
+
+    if (activeTab === "Reports" || activeTab === "Categories" || activeTab === "Add Category") {
+      loadNotifications().catch(() => {});
+      return;
+    }
+
+    if (loadedTabsRef.current.has(activeTab)) {
+      loadNotifications().catch(() => {});
       return;
     }
 
@@ -106,7 +280,7 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
       } else if (activeTab === "Reviews") {
         await loadRatingReviews();
       }
-      await loadNotifications();
+      loadNotifications().catch(() => {});
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to load admin data");
     } finally {
@@ -122,6 +296,26 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
     if (isAdmin) {
       loadNotifications().catch(() => {});
     }
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin || prefetchStartedRef.current) {
+      return;
+    }
+
+    prefetchStartedRef.current = true;
+    const timerId = window.setTimeout(() => {
+      Promise.allSettled([
+        loadDashboard(),
+        loadStudents(),
+        loadListings(),
+        loadOrders(),
+        loadUserReports(),
+        loadRatingReviews(),
+      ]).catch(() => {});
+    }, 250);
+
+    return () => window.clearTimeout(timerId);
   }, [isAdmin]);
 
   const stats = useMemo(
@@ -210,13 +404,17 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
     try {
       const data = await fetchAdmin(`/admin/students/${student.id}/${action}`, `Unable to ${verb} student`, { method: "POST" });
       const notificationMessage =
-        data?.message || `${student.username} was ${action === "suspend" ? "suspended" : "reactivated"}. Email notification sent.`;
-      await loadStudents();
-      await loadNotifications();
-      if (selectedStudent?.id === student.id && data?.user) {
-        setSelectedStudent(data.user);
+        data?.message || `${student.username} was ${action === "suspend" ? "suspended" : "reactivated"}.`;
+      if (data?.user) {
+        setStudents((currentStudents) =>
+          currentStudents.map((currentStudent) => (currentStudent.id === student.id ? data.user : currentStudent))
+        );
+        if (selectedStudent?.id === student.id) {
+          setSelectedStudent(data.user);
+        }
       }
       setOpenStudentActionId(null);
+      loadNotifications().catch(() => {});
       showToast(`${student.username} ${action === "suspend" ? "suspended" : "reactivated"}. ${notificationMessage}`);
     } catch (error) {
       showToast(error instanceof Error ? error.message : `Unable to ${verb} student`);
@@ -280,18 +478,33 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
     setIsLoading(true);
     try {
       const data = await fetchAdmin(`/admin/students/${student.id}`, "Unable to delete student", { method: "DELETE" });
-      await loadStudents();
-      await loadNotifications();
+      setStudents((currentStudents) => currentStudents.filter((currentStudent) => currentStudent.id !== student.id));
       if (selectedStudent?.id === student.id) {
         setSelectedStudent(null);
       }
       setOpenStudentActionId(null);
+      loadNotifications().catch(() => {});
       showToast(data.message || "Student permanently deleted.");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to delete student");
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const goBack = () => {
+    if (activeTab === "Add Category" || activeTab === "Edit Category") {
+      setCategoryForm({ name: "", image: "" });
+      setCategoryImageName("");
+      setEditingCategoryId(null);
+      setActiveTab("Categories");
+      return;
+    }
+    if (window.history.length > 1) {
+      window.history.back();
+      return;
+    }
+    onMarketplace();
   };
 
   if (!isAdmin) {
@@ -343,9 +556,17 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
 
       <section className="admin-content">
         <div className="admin-topbar">
-          <div>
-            <span className="section-kicker">Admin Panel</span>
-            <h1>{activeTab}</h1>
+          <button
+            type="button"
+            className="admin-back-button"
+            onClick={goBack}
+            aria-label="Go back"
+            title="Go back"
+          >
+            <span aria-hidden="true">‹</span>
+          </button>
+          <div className="admin-page-title">
+            {activeTab !== "Categories" && <h1>{activeTab}</h1>}
           </div>
           <div className="admin-topbar-actions">
             <div className="notification-popover-anchor">
@@ -363,7 +584,6 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
                 <div className="notification-center-modal">
                   <div className="notification-center-header">
                     <div>
-                      <span className="section-kicker">Admin notifications</span>
                       <h3>Notifications</h3>
                     </div>
                     <button
@@ -440,7 +660,15 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
 
         {activeTab === "Students" && (
           <div className="admin-table-card">
-            <AdminSearch value={studentSearch} onChange={setStudentSearch} onSearch={loadStudents} placeholder="Search name or email" />
+            <AdminSearch
+              value={studentSearch}
+              onChange={(value) => {
+                loadedTabsRef.current.delete("Students");
+                setStudentSearch(value);
+              }}
+              onSearch={loadStudents}
+              placeholder="Search name or email"
+            />
             <div className="admin-table">
               <div className="admin-table-head students-grid">
                 <span>Student ID</span>
@@ -506,7 +734,15 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
         {activeTab === "Listings" && (
           <div className="admin-table-card">
             <div className="admin-section-toolbar">
-              <AdminSearch value={listingSearch} onChange={setListingSearch} onSearch={loadListings} placeholder="Search listing, seller, or category" />
+              <AdminSearch
+                value={listingSearch}
+                onChange={(value) => {
+                  loadedTabsRef.current.delete("Listings");
+                  setListingSearch(value);
+                }}
+                onSearch={loadListings}
+                placeholder="Search listing, seller, or category"
+              />
               <span className="admin-record-count">
                 {listings.length} {listings.length === 1 ? "listing" : "listings"}
               </span>
@@ -599,17 +835,120 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
         {activeTab === "Orders" && (
           <div className="admin-table-card">
             <div className="admin-filters">
-              <input value={orderSearch} onChange={(event) => setOrderSearch(event.target.value)} placeholder="Order ID, buyer, seller, or item" />
-              <input type="date" value={orderDate} onChange={(event) => setOrderDate(event.target.value)} />
-              <select value={orderStatus} onChange={(event) => setOrderStatus(event.target.value)}>
-                <option value="">All statuses</option>
-                <option value="completed">Completed</option>
-              </select>
+              <input
+                value={orderSearch}
+                onChange={(event) => {
+                  loadedTabsRef.current.delete("Orders");
+                  setOrderSearch(event.target.value);
+                }}
+                placeholder="Order ID, buyer, seller, or item"
+              />
+              <input
+                type="date"
+                value={orderDate}
+                onChange={(event) => {
+                  loadedTabsRef.current.delete("Orders");
+                  setOrderDate(event.target.value);
+                }}
+              />
               <button type="button" className="auth-submit" onClick={loadOrders}>
                 Search
               </button>
             </div>
             <AdminOrdersTable orders={orders} formatDate={formatDate} onViewProfile={openUserProfile} />
+          </div>
+        )}
+
+        {activeTab === "Categories" && (
+          <div className="admin-table-card">
+            <div className="admin-section-toolbar">
+              <h2>Marketplace Categories</h2>
+              <div className="admin-section-actions">
+                <span className="admin-record-count">
+                  {uniqueCategories.length} {uniqueCategories.length === 1 ? "category" : "categories"}
+                </span>
+                <button type="button" className="auth-submit" onClick={() => setActiveTab("Add Category")}>
+                  Add Category
+                </button>
+              </div>
+            </div>
+            <div className="admin-category-grid">
+              {uniqueCategories.map((category) => (
+                <div className="admin-category-card" key={`${category.created_at ? "stored" : "default"}-${category.name}-${category.id}`}>
+                  <div className="admin-category-card-actions">
+                    <button
+                      type="button"
+                      className="admin-category-menu-trigger"
+                      onClick={() =>
+                        setOpenCategoryActionId((currentId) => (currentId === category.name ? null : category.name))
+                      }
+                      aria-label={`Actions for ${category.name}`}
+                      aria-expanded={openCategoryActionId === category.name}
+                    >
+                      ...
+                    </button>
+                    {openCategoryActionId === category.name && (
+                      <div className="admin-category-menu">
+                        <button type="button" onClick={() => editCategory(category)}>
+                          Edit
+                        </button>
+                        <button type="button" className="danger-action" onClick={() => deleteCategory(category)}>
+                          Delete
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {category.image ? <img src={category.image} alt={category.name} /> : <span>{category.icon || category.name.charAt(0)}</span>}
+                  <strong>{category.name}</strong>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {(activeTab === "Add Category" || activeTab === "Edit Category") && (
+          <div className="admin-table-card">
+            <div className="admin-section-toolbar">
+              <h2>{activeTab}</h2>
+            </div>
+            <form className="admin-category-form" onSubmit={createCategory}>
+              <label>
+                Category name
+                <input
+                  value={categoryForm.name}
+                  onChange={(event) => setCategoryForm((currentForm) => ({ ...currentForm, name: event.target.value }))}
+                  maxLength={64}
+                  placeholder="e.g. Sports"
+                />
+              </label>
+              <label>
+                Category image
+                <input type="file" accept="image/*" onChange={handleCategoryImageChange} />
+              </label>
+              {categoryForm.image ? (
+                <div className="admin-category-preview">
+                  <img src={categoryForm.image} alt={categoryForm.name || "Category preview"} />
+                  <span>{categoryImageName || "Selected image"}</span>
+                </div>
+              ) : null}
+              <div className="admin-category-form-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    setCategoryForm({ name: "", image: "" });
+                    setCategoryImageName("");
+                    setEditingCategoryId(null);
+                    setActiveTab("Categories");
+                  }}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="auth-submit" disabled={isLoading}>
+                  {activeTab === "Edit Category" ? "Update Category" : "Save Category"}
+                </button>
+              </div>
+            </form>
           </div>
         )}
 
@@ -870,7 +1209,6 @@ function AdminOrdersTable({ orders, formatDate, onViewProfile }) {
         <span>Qty</span>
         <span>Total</span>
         <span>Date</span>
-        <span>Status</span>
       </div>
       {orders.map((order) => (
         <div className="admin-table-row orders-grid" key={order.id}>
@@ -885,7 +1223,6 @@ function AdminOrdersTable({ orders, formatDate, onViewProfile }) {
           <span>{order.quantity}</span>
           <span>${Number(order.total_amount || order.price).toFixed(2)}</span>
           <span>{formatDate(order.purchased_at)}</span>
-          <span className={`status-pill ${order.status}`}>{order.status}</span>
         </div>
       ))}
     </div>

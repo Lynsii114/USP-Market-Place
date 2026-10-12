@@ -10,5 +10,4 @@ export const categories = [
   { id: 3, name: "Clothing", icon: "Wear", image: clothesImage },
   { id: 4, name: "Furniture", icon: "Home", image: homeLivingImage },
   { id: 5, name: "Footwares", icon: "Shoes", image: footwaresImage },
-  { id: 6, name: "Other", icon: "More" },
 ];

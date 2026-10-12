@@ -18,6 +18,9 @@ urlpatterns = [
     path("users/<int:seller_id>/items", views.list_seller_items),
     path("users/<int:user_id>/conversations", views.user_conversations),
     path("users/<int:user_id>/messages/unread", views.user_unread_messages),
+    path("users/<int:user_id>/notifications", views.user_notifications),
+    path("users/<int:user_id>/notifications/<int:notification_id>", views.user_notification_detail),
+    path("categories", views.categories_collection),
     path("items", views.items_collection),
     path("items/<int:item_id>", views.item_detail),
     path("checkout", views.checkout_cart),
@@ -50,4 +53,6 @@ urlpatterns = [
     path("admin/reports/pdf", views.admin_reports_pdf),
     path("admin/user-reports", views.admin_user_reports),
     path("admin/ratings", views.admin_rating_reviews),
+    path("admin/categories", views.admin_categories),
+    path("admin/categories/<int:category_id>", views.admin_category_detail),
 ]

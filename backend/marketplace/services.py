@@ -10,6 +10,7 @@ import re
 import ssl
 import pyotp
 import qrcode
+from threading import Thread
 from datetime import datetime
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -18,7 +19,7 @@ from datetime import date, timedelta
 
 from django.core.mail import BadHeaderError, send_mail
 from django.conf import settings
-from django.db import transaction
+from django.db import DatabaseError, OperationalError, connection, transaction
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -28,9 +29,9 @@ from django.utils.dateparse import parse_date
 
 from .constants import ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_USERNAME
 from .exceptions import ApiError
-from .models import AdminNotification, Conversation, EmailVerification, Item, Message, PasswordReset, PendingRegistration, Purchase, RatingReview, User, UserNotification, UserReport
+from .models import AdminNotification, Category, Conversation, EmailVerification, Item, Message, PasswordReset, PendingRegistration, Purchase, RatingReview, User, UserNotification, UserReport
 from .queries import find_student, find_user_by_login, item_status, public_items, visible_items, visible_purchases
-from .serializers import serialize_conversation, serialize_item, serialize_item_for_user, serialize_message, serialize_notification, serialize_purchase, serialize_rating_review, serialize_user, serialize_user_report
+from .serializers import serialize_category, serialize_conversation, serialize_item, serialize_item_for_user, serialize_message, serialize_notification, serialize_purchase, serialize_rating_review, serialize_user, serialize_user_report
 from .validators import is_usp_student_email, validate_item_payload, validate_signup
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,8 @@ email_logger = logging.getLogger("marketplace.email")
 VERIFICATION_CODE_TTL = timedelta(minutes=10)
 VERIFICATION_RESEND_COOLDOWN = timedelta(minutes=1)
 PENDING_REGISTRATIONS = {}
+DEFAULT_CATEGORY_NAMES = {"books", "electronics", "clothing", "furniture", "footwares"}
+CATEGORY_TABLE_READY = False
 
 
 def hash_password(password):
@@ -308,6 +311,16 @@ def send_email(subject, message, recipient, failure_prefix="Failed to send email
 
     email_logger.error("[email-debug] No SMTP provider configured for %s", recipient)
     raise ApiError(f"{failure_prefix}: Email is not configured. Set EMAIL_PROVIDER=smtp with SMTP settings, EMAIL_PROVIDER=resend with RESEND_API_KEY, or EMAIL_PROVIDER=console for local testing.", 500)
+
+
+def send_email_later(subject, message, recipient, failure_prefix="Failed to send email"):
+    def send_background_email():
+        try:
+            send_email(subject, message, recipient, failure_prefix)
+        except Exception as exc:
+            email_logger.warning("%s: %s", failure_prefix, describe_email_exception(exc))
+
+    Thread(target=send_background_email, daemon=True).start()
 
 
 def pending_value(registration, key):
@@ -712,6 +725,86 @@ def microsoft_login(data):
 
 def list_items(requesting_user_id=None):
     return [serialize_item_for_user(item, requesting_user_id) for item in public_items().order_by("-id")]
+
+
+def ensure_category_table():
+    global CATEGORY_TABLE_READY
+    if CATEGORY_TABLE_READY:
+        return
+    try:
+        if Category._meta.db_table not in connection.introspection.table_names():
+            with connection.schema_editor() as schema_editor:
+                schema_editor.create_model(Category)
+        CATEGORY_TABLE_READY = True
+    except (DatabaseError, OperationalError) as exc:
+        logger.warning("Could not ensure categories table: %s", exc)
+
+
+def list_categories():
+    ensure_category_table()
+    return [serialize_category(category) for category in Category.objects.order_by("name")]
+
+
+def create_category(admin_id, data):
+    require_admin(admin_id)
+    ensure_category_table()
+    name = str(data.get("name") or "").strip()
+    image = str(data.get("image") or "").strip()
+    icon = str(data.get("icon") or "More").strip()[:32] or "More"
+
+    if not name:
+        raise ApiError("Category name is required", 400)
+    if len(name) > 64:
+        raise ApiError("Category name must be 64 characters or fewer", 400)
+    if name.lower() in DEFAULT_CATEGORY_NAMES or Category.objects.filter(name__iexact=name).exists():
+        raise ApiError("Category already exists", 409)
+    if image and not image.startswith("data:image/"):
+        raise ApiError("Category image must be an uploaded image file", 400)
+
+    category = Category.objects.create(name=name, icon=icon, image=image or None)
+    notify_admin("Category added", f"{name} was added as a marketplace category.", "category")
+    return serialize_category(category)
+
+
+def update_category(admin_id, category_id, data):
+    require_admin(admin_id)
+    ensure_category_table()
+    category = Category.objects.filter(id=category_id).first()
+    if not category:
+        raise ApiError("Category not found", 404)
+
+    name = str(data.get("name") or "").strip()
+    image = str(data.get("image") or "").strip()
+    icon = str(data.get("icon") or category.icon or "More").strip()[:32] or "More"
+
+    if not name:
+        raise ApiError("Category name is required", 400)
+    if len(name) > 64:
+        raise ApiError("Category name must be 64 characters or fewer", 400)
+    if name.lower() in DEFAULT_CATEGORY_NAMES:
+        raise ApiError("Category already exists", 409)
+    if Category.objects.filter(name__iexact=name).exclude(id=category.id).exists():
+        raise ApiError("Category already exists", 409)
+    if image and not image.startswith("data:image/"):
+        raise ApiError("Category image must be an uploaded image file", 400)
+
+    category.name = name
+    category.icon = icon
+    category.image = image or None
+    category.save(update_fields=["name", "icon", "image"])
+    return serialize_category(category)
+
+
+def delete_category(admin_id, category_id):
+    require_admin(admin_id)
+    ensure_category_table()
+    category = Category.objects.filter(id=category_id).first()
+    if not category:
+        raise ApiError("Category not found", 404)
+    name = category.name
+    category.delete()
+    notify_admin("Category deleted", f"{name} was removed from marketplace categories.", "category")
+    return {"message": "Category deleted.", "id": category_id, "name": name}
 
 
 def list_seller_items(seller_id, requesting_user_id=None):
@@ -1548,7 +1641,7 @@ def set_student_status(admin_id, student_id, status):
             "You will not be able to use marketplace features while your account is suspended.\n\n"
             "If you believe this was a mistake, please contact the USP Marketplace admin team."
         )
-        notification = "Suspension email sent to the student."
+        notification = "Suspension email queued for the student."
     else:
         subject = "Your USP Marketplace account has been reactivated"
         message = (
@@ -1557,9 +1650,8 @@ def set_student_status(admin_id, student_id, status):
             "You can now sign in and use marketplace features again.\n\n"
             "Thank you for using USP Marketplace."
         )
-        notification = "Reactivation email sent to the student."
+        notification = "Reactivation email queued for the student."
 
-    send_email(subject, message, student.email)
     notify_user(
         student.id,
         "Account suspended" if status == "suspended" else "Account reactivated",
@@ -1568,10 +1660,11 @@ def set_student_status(admin_id, student_id, status):
         else "Your USP Marketplace account has been reactivated by an administrator.",
         "administration",
     )
+    send_email_later(subject, message, student.email, "Failed to send account status email")
     return {
         "user": serialize_user(student),
         "message": notification,
-        "email_sent": True,
+        "email_queued": True,
     }
 
 

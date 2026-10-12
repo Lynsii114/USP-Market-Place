@@ -3,6 +3,9 @@ import React, { useEffect, useState } from "react";
 const money = (value) =>
   `$${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+const previewResponseBody = (body, fallback) =>
+  body.replace(/\s+/g, " ").trim().slice(0, 160) || fallback || "No response body";
+
 // Reporting & Analytics tab (FR4.1 - FR4.5). All figures come from the backend
 // (/admin/reports), which only counts completed orders and checks admin access.
 function ReportsPanel({ apiUrl, adminId, showToast }) {
@@ -20,6 +23,42 @@ function ReportsPanel({ apiUrl, adminId, showToast }) {
     return params.toString();
   };
 
+  const parseReportResponse = async (response, fallbackMessage) => {
+    const responseBody = await response.text();
+    let data = null;
+    try {
+      data = responseBody ? JSON.parse(responseBody) : null;
+    } catch {
+      const preview = previewResponseBody(responseBody, response.statusText);
+      throw new Error(`Server returned a non-JSON response (HTTP ${response.status}) from ${response.url}. ${preview}`);
+    }
+
+    if (!response.ok) {
+      const detail = data?.detail || fallbackMessage;
+      if (response.status === 503 || /database unavailable/i.test(detail)) {
+        throw new Error("Marketplace database is unavailable. Check the backend database configuration.");
+      }
+      throw new Error(detail);
+    }
+
+    if (!data) {
+      throw new Error("Server returned an empty response.");
+    }
+
+    return data;
+  };
+
+  const fetchReport = async (path, fallbackMessage) => {
+    const url = `${apiUrl}${path}`;
+    let response;
+    try {
+      response = await fetch(url);
+    } catch {
+      throw new Error(`Cannot reach the admin API at ${apiUrl}. Check the backend deployment, API URL, and CORS settings.`);
+    }
+    return parseReportResponse(response, fallbackMessage);
+  };
+
   const loadReport = async (announce = false) => {
     if (fromDate && toDate && fromDate > toDate) {
       showToast("From date cannot be after To date.", "error");
@@ -27,15 +66,7 @@ function ReportsPanel({ apiUrl, adminId, showToast }) {
     }
     setIsLoading(true);
     try {
-      const response = await fetch(`${apiUrl}/admin/reports?${buildQuery()}`);
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(
-          response.status === 503
-            ? "Marketplace database is unavailable. Start MySQL in XAMPP, then refresh the page."
-            : data?.detail || "Unable to load report"
-        );
-      }
+      const data = await fetchReport(`/admin/reports?${buildQuery()}`, "Unable to load report");
       setReport(data);
       if (announce) showToast("Report generated successfully.");
     } catch (error) {
@@ -52,20 +83,25 @@ function ReportsPanel({ apiUrl, adminId, showToast }) {
   const exportPdf = async () => {
     setIsConfirmingExport(false);
     try {
-      const response = await fetch(`${apiUrl}/admin/reports/pdf?${buildQuery()}`);
+      const url = `${apiUrl}/admin/reports/pdf?${buildQuery()}`;
+      let response;
+      try {
+        response = await fetch(url);
+      } catch {
+        throw new Error(`Cannot reach the admin API at ${apiUrl}. Check the backend deployment, API URL, and CORS settings.`);
+      }
       if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data?.detail || "Unable to export PDF");
+        await parseReportResponse(response, "Unable to export PDF");
       }
       const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
+      const downloadUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
-      link.href = url;
+      link.href = downloadUrl;
       link.download = `usp-sales-report-${new Date().toISOString().slice(0, 10)}.pdf`;
       document.body.appendChild(link);
       link.click();
       link.remove();
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(downloadUrl);
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to export PDF", "error");
     }
