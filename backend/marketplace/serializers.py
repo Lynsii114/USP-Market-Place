@@ -34,6 +34,16 @@ def serialize_item(item):
     }
 
 
+def serialize_category(category):
+    return {
+        "id": category.id,
+        "name": category.name,
+        "icon": category.icon,
+        "image": category.image,
+        "created_at": category.created_at,
+    }
+
+
 def serialize_item_for_user(item, requesting_user_id=None):
     data = serialize_item(item)
     try:

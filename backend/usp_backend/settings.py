@@ -29,11 +29,10 @@ CORS_ALLOWED_ORIGINS = env_list(
 )
 CORS_ALLOWED_ORIGIN_SUFFIXES = env_list("CORS_ALLOWED_ORIGIN_SUFFIXES")
 AUTO_ENSURE_SCHEMA = os.getenv("AUTO_ENSURE_SCHEMA", "1" if DEBUG else "0") == "1"
-LOCAL_DB_SYNC = os.getenv("LOCAL_DB_SYNC", "0") == "1"
-LOCAL_DB_SYNC_ON_START = os.getenv("LOCAL_DB_SYNC_ON_START", "0") == "1"
+LOCAL_DB_SYNC = DEBUG and os.getenv("LOCAL_DB_SYNC", "0") == "1"
+LOCAL_DB_SYNC_ON_START = DEBUG and os.getenv("LOCAL_DB_SYNC_ON_START", "0") == "1"
 
 INSTALLED_APPS = [
-    "django.contrib.contenttypes",
     "django.contrib.staticfiles",
     "marketplace.apps.MarketplaceConfig",
 ]

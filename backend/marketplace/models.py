@@ -80,6 +80,16 @@ class Item(models.Model):
         db_table = "items"
 
 
+class Category(models.Model):
+    name = models.CharField(max_length=64, unique=True, db_index=True)
+    icon = models.CharField(max_length=32, default="More", blank=True)
+    image = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "categories"
+
+
 class Purchase(models.Model):
     buyer_id = models.IntegerField(db_index=True)
     buyer_username = models.CharField(max_length=64)

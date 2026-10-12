@@ -24,6 +24,10 @@ APP_TABLES = [
 ]
 
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+SKIP_SYNC_PATHS = {
+    "/api/users/login",
+    "/api/users/verify-authenticator",
+}
 _sync_lock = threading.Lock()
 
 
@@ -36,6 +40,7 @@ def should_sync_request(request, response):
         local_sync_enabled()
         and request.method in MUTATING_METHODS
         and response.status_code < 400
+        and request.path not in SKIP_SYNC_PATHS
     )
 
 
