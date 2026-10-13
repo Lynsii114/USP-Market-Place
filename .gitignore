@@ -15,3 +15,7 @@ dist/
 
 *.pyc
 *.log
+
+# Local database recovery artifacts
+usp_marketplace_recovered_*.sql
+xampp_*_backup_*/
