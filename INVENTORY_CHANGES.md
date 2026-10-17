@@ -46,6 +46,8 @@ Local administrator: `Admin@usp.ac.fj` / `Admin12345`. After login choose **Go b
 
 The original seeded listings have no photos. Add a photo when editing one under the updated validation rules.
 
+The seed command also adds 75 fictional showcase listings across all nine categories (69 available, three sold, three inactive). These use representative category photos, not individual product photography. It preserves existing records on reruns. The three extra student accounts are `showcase_seller_1`, `showcase_seller_2` and `showcase_seller_3`, with password `Demo314!` and the normal authenticator setup. Admin owns a share of the available listings plus all six showcase sold/inactive examples. Showcase descriptions start with `[IS314 showcase demo]`; no purchase history is fabricated.
+
 Student accounts: `demo_seller` or `demo_buyer`, password `Demo314!`. First login displays authenticator setup; use an authenticator app as in the existing project. These accounts are local samples, not team or production accounts. For the student purchase flow, sign out of the administrator account, sign into demo_buyer, then buy a sample listing with cash. Sign back in as administrator to confirm payment under My Sales.
 
 ## Verify

@@ -1,0 +1,14 @@
+"""Fictional catalogue for the isolated local presentation database."""
+DEMO_MARKER = "[IS314 showcase demo]"
+# Names and FJD prices. Photos are representative category images, not item photos.
+DEMO_CATALOG = {
+    "Books": ("Booky.jfif", [("Introduction to Accounting textbook", 30), ("Business Statistics textbook", 28), ("Python programming guide", 35), ("Economics revision book", 18), ("Academic writing handbook", 15), ("Fiji short stories collection", 12), ("Calculus practice workbook", 20), ("Environmental science textbook", 32), ("Database systems textbook", 38)]),
+    "Electronics": ("Electronics.webp", [("Wireless mouse", 18), ("USB keyboard", 22), ("Portable power bank", 30), ("USB-C charging cable", 8), ("Laptop cooling stand", 25), ("Bluetooth speaker", 45), ("Scientific calculator with case", 40), ("USB flash drive 32GB", 12), ("Adjustable phone stand", 10)]),
+    "Clothing": ("Clothes.jfif", [("Blue campus hoodie size M", 25), ("White polo shirt size L", 15), ("Denim jacket size M", 35), ("Black formal trousers size 32", 22), ("Rain jacket size L", 30), ("Floral shirt size S", 18), ("Plain T-shirt bundle size M", 20), ("Graduation outfit size M", 45), ("Sports shorts size L", 12)]),
+    "Furniture": ("Home and LIving.jpg", [("Compact study desk", 90), ("Adjustable office chair", 75), ("Small bookshelf", 55), ("Bedside table", 35), ("Folding chair", 20), ("Desk organiser shelf", 25), ("Floor cushion", 15), ("Single bed frame", 120)]),
+    "Footwear": ("footwares.jfif", [("Running shoes size 9", 45), ("Black formal shoes size 8", 40), ("Beach sandals size 7", 15), ("White sneakers size 6", 30), ("Football boots size 10", 55), ("Canvas shoes size 8", 22), ("Walking shoes size 7", 35), ("Indoor slippers size 9", 10)]),
+    "Study Supplies": ("src/assets/categories/study-supplies.jpg", [("A4 notebook bundle", 8), ("Highlighter set", 6), ("Geometry instrument set", 10), ("Ring binder with dividers", 9), ("Mechanical pencil set", 5), ("Index cards pack", 4), ("Whiteboard and marker", 18), ("Document folder bundle", 7)]),
+    "Sports & Fitness": ("src/assets/categories/sports-fitness.jpg", [("Yoga mat", 22), ("Resistance band set", 18), ("Pair of 5kg dumbbells", 45), ("Football", 25), ("Badminton racket", 30), ("Skipping rope", 8), ("Tennis racket", 40), ("Gym duffel bag", 28)]),
+    "Personal Care": ("src/assets/categories/personal-care.jpg", [("Sealed moisturiser", 12), ("Unopened sunscreen SPF50", 18), ("New travel toiletry bag", 15), ("Sealed shampoo bottle", 9), ("Unopened body wash", 8), ("New hair brush", 6), ("Sealed hand cream", 7), ("New grooming pouch", 14)]),
+    "Other": ("src/assets/categories/other.jpg", [("Board game set", 25), ("Reusable shopping bag bundle", 8), ("Travel suitcase", 65), ("Insulated lunch bag", 15), ("Umbrella", 12), ("Craft supplies box", 20), ("Plant pot set", 18), ("Bicycle helmet", 30)]),
+}
