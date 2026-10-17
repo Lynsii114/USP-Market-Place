@@ -1,4 +1,8 @@
-ADMIN_EMAIL = "Admin@usp.ac.fj"
-ADMIN_PASSWORD = "Admin12345"
+import os
+
+from django.conf import settings
+
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "Admin@usp.ac.fj")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Admin12345" if settings.DEBUG else "")
 ADMIN_USERNAME = "Admin"
 

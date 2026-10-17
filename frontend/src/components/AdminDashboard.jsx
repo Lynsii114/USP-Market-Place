@@ -1,3 +1,4 @@
+import { apiFetch as fetch } from "../config/request";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReportsPanel from "./ReportsPanel";
 
@@ -875,7 +876,7 @@ function AdminDashboard({
             <div className="admin-category-grid">
               {uniqueCategories.map((category) => (
                 <div className="admin-category-card" key={`${category.created_at ? "stored" : "default"}-${category.name}-${category.id}`}>
-                  <div className="admin-category-card-actions">
+                  {category.created_at && !category.built_in && <div className="admin-category-card-actions">
                     <button
                       type="button"
                       className="admin-category-menu-trigger"
@@ -897,8 +898,8 @@ function AdminDashboard({
                         </button>
                       </div>
                     )}
-                  </div>
-                  {category.image ? <img src={category.image} alt={category.name} /> : <span>{category.icon || category.name.charAt(0)}</span>}
+                  </div>}
+                  {category.image ? <img src={category.image} alt={category.name} style={{ objectPosition: category.imagePosition || "center" }} /> : <span>{category.icon || category.name.charAt(0)}</span>}
                   <strong>{category.name}</strong>
                 </div>
               ))}

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { sellerListingStatus } from "../utils/inventory.mjs";
 
 function AccountPage({
   page,
@@ -17,6 +18,24 @@ function AccountPage({
   onBack,
 }) {
   const [salesFilter, setSalesFilter] = useState("active");
+  const [salesPage, setSalesPage] = useState(1);
+  const soldListings = myListings.filter((listing) => sellerListingStatus(listing) === "sold");
+  const activeListings = myListings.filter((listing) => ["available", "reserved"].includes(sellerListingStatus(listing)));
+  const salesHistory = sellerOrders;
+  const salesRows = salesFilter === "history" ? salesHistory : salesFilter === "sold" ? soldListings : activeListings;
+  const salesPageCount = Math.max(1, Math.ceil(salesRows.length / 10));
+  const currentSalesPage = Math.min(salesPage, salesPageCount);
+  const salesStart = (currentSalesPage - 1) * 10;
+  const visibleSalesRows = salesRows.slice(salesStart, salesStart + 10);
+  const salesPageNumbers = [...new Set([1, currentSalesPage - 1, currentSalesPage, currentSalesPage + 1, salesPageCount])]
+    .filter((number) => number >= 1 && number <= salesPageCount).sort((a, b) => a - b);
+
+  useEffect(() => { setSalesPage(1); }, [salesFilter, page, currentUser?.id]);
+  useEffect(() => { setSalesPage((number) => Math.min(number, salesPageCount)); }, [salesPageCount]);
+  const changeSalesPage = (number) => {
+    setSalesPage(number);
+    document.getElementById("sales-results")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   useEffect(() => {
     if (page === "sales") {
@@ -28,9 +47,6 @@ function AccountPage({
     return null;
   }
 
-  const soldListings = myListings.filter((listing) => listing.status === "sold" || Number(listing.stock) <= 0);
-  const activeListings = myListings.filter((listing) => listing.status !== "sold" && Number(listing.stock) > 0);
-  const salesHistory = sellerOrders;
 
   const content = {
     profile: {
@@ -228,10 +244,13 @@ function AccountPage({
                 ? "Sold Out Listings"
                 : "Active Listings"}
           </h3>
+          <p className="inventory-result-count" id="sales-results" role="status">
+            {salesRows.length ? `Showing ${salesStart + 1}–${salesStart + visibleSalesRows.length} of ${salesRows.length} ${salesFilter === "history" ? "orders" : "listings"}` : `Showing 0 ${salesFilter === "history" ? "orders" : "listings"}`}
+          </p>
           {salesFilter === "history" ? (
             salesHistory.length ? (
               <div className="sales-list">
-                {salesHistory.map((order) => (
+                {visibleSalesRows.map((order) => (
                   <div className="sales-list-item sales-history-item" key={order.id}>
                     <div>
                       <strong>{order.item_name}</strong>
@@ -262,7 +281,7 @@ function AccountPage({
             )
           ) : selectedSalesListings.length ? (
             <div className="sales-list">
-              {selectedSalesListings.map((listing) => (
+              {visibleSalesRows.map((listing) => (
                 <button type="button" className="sales-list-item" onClick={() => onViewConversationListing(listing)} key={listing.id}>
                   <div>
                     <strong>{listing.name}</strong>
@@ -270,13 +289,25 @@ function AccountPage({
                   </div>
                   <div>
                     <strong>${Number(listing.price).toFixed(2)}</strong>
-                    <span>{listing.status === "sold" || Number(listing.stock) <= 0 ? "Sold out" : `${listing.stock} in stock`}</span>
+                    <span>{listing.status === "sold" || Number(listing.stock) <= 0 ? "Sold out" : listing.status === "reserved" ? "Reserved" : `${listing.stock} in stock`}</span>
                   </div>
                 </button>
               ))}
             </div>
           ) : (
             <p className="empty-state">No {salesFilter === "sold" ? "sold out" : "active"} listings found.</p>
+          )}
+          {salesPageCount > 1 && (
+            <nav className="inventory-pagination" aria-label="My Sales pages">
+              <button type="button" className="secondary-button" disabled={currentSalesPage === 1} onClick={() => changeSalesPage(currentSalesPage - 1)}>Previous</button>
+              {salesPageNumbers.map((number, index) => (
+                <React.Fragment key={number}>
+                  {index > 0 && number - salesPageNumbers[index - 1] > 1 && <span aria-hidden="true">…</span>}
+                  <button type="button" className="secondary-button" aria-label={`Page ${number}`} aria-current={number === currentSalesPage ? "page" : undefined} onClick={() => changeSalesPage(number)}>{number}</button>
+                </React.Fragment>
+              ))}
+              <button type="button" className="secondary-button" disabled={currentSalesPage === salesPageCount} onClick={() => changeSalesPage(currentSalesPage + 1)}>Next</button>
+            </nav>
           )}
         </div>
       )}

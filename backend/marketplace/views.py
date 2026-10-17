@@ -88,6 +88,13 @@ def request_password_reset(request):
 
 
 @csrf_exempt
+def verify_password_reset_code(request):
+    if request.method != "POST":
+        return method_not_allowed()
+    return run(lambda: (services.verify_password_reset_code(json_body(request)), True))
+
+
+@csrf_exempt
 def reset_password(request):
     if request.method != "POST":
         return method_not_allowed()
@@ -203,6 +210,12 @@ def list_buyer_purchases(request, buyer_id):
     if request.method != "GET":
         return method_not_allowed()
     return run(lambda: (services.list_buyer_purchases(buyer_id), False))
+
+
+def seller_reviews(request, seller_id):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.list_seller_reviews(seller_id), True))
 
 
 def list_seller_orders(request, seller_id):

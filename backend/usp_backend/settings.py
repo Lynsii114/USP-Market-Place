@@ -40,6 +40,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "usp_backend.middleware.JsonCorsMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "marketplace.authentication.ApiIdentityMiddleware",
 ]
 
 ROOT_URLCONF = "usp_backend.urls"

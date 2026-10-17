@@ -20,10 +20,13 @@ from marketplace.models import AdminNotification, Conversation, Item, Message, P
 from marketplace.exceptions import ApiError
 from marketplace.schema import ensure_schema
 from marketplace.services import PENDING_REGISTRATIONS, VERIFICATION_CODE_TTL, hash_verification_code, send_email
+from testing_images import TEST_PHOTO
 
 ensure_schema()
 
-client = Client()
+from testing_client import ActingUserClient
+
+client = ActingUserClient()
 
 
 @pytest.fixture(autouse=True)
@@ -96,7 +99,7 @@ def test_signup_login_and_create_hidden_listing():
     assert login_data["authenticator_qr"].startswith("data:image/png;base64,")
     authenticator = client.post(
         "/api/users/verify-authenticator",
-        {"user_id": login_data["user_id"], "code": __import__("pyotp").TOTP(login_data["authenticator_secret"]).now()},
+        {"user_id": login_data["user_id"], "code": __import__("pyotp").TOTP(login_data["authenticator_secret"]).now(), "login_challenge": login_data["login_challenge"]},
         content_type="application/json",
     )
     assert authenticator.status_code == 200
@@ -106,6 +109,7 @@ def test_signup_login_and_create_hidden_listing():
         "/api/items",
         {
             "name": "__test_django_listing",
+            "photo": TEST_PHOTO,
             "price": 10,
             "description": "Hidden test listing",
             "category": "Books",
@@ -148,6 +152,7 @@ def test_public_items_show_listings_from_all_accounts():
                 "/api/items",
                 {
                     "name": name,
+                    "photo": TEST_PHOTO,
                     "price": 10,
                     "description": "Cross-account visibility test listing",
                     "category": "Books",
@@ -208,6 +213,7 @@ def test_listing_payment_number_validation(payment_method, payment_number, expec
     seller = create_active_test_user("payment_listing_seller", suffix)
     payload = {
         "name": f"__test_payment_listing_{suffix}",
+        "photo": TEST_PHOTO,
         "price": 10,
         "description": "Payment details validation test",
         "category": "Books",
@@ -866,6 +872,12 @@ def test_admin_dashboard_total_sales_uses_purchase_totals():
         )
         assert purchase_response.status_code == 200
         assert cancelled_response.status_code == 200
+        paid_purchase = Purchase.objects.get(item_id=item.id, buyer_id=buyer.id)
+        confirmation = client.post(
+            f"/api/orders/{paid_purchase.id}/payment-confirmation",
+            {"seller_id": seller.id}, content_type="application/json",
+        )
+        assert confirmation.status_code == 200
         cancelled_purchase = Purchase.objects.get(item_id=cancelled_item.id, buyer_id=buyer.id)
         cancel_response = client.post(
             f"/api/orders/{cancelled_purchase.id}/cancel",
@@ -1070,7 +1082,7 @@ def test_signup_returns_email_delivery_error_and_allows_retry():
     assert not PENDING_REGISTRATIONS
 
 
-@override_settings(EMAIL_HOST="", RESEND_API_KEY="")
+@override_settings(EMAIL_PROVIDER="auto", EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend", EMAIL_HOST="", RESEND_API_KEY="")
 def test_send_email_requires_smtp_provider():
     with pytest.raises(ApiError) as exc_info:
         send_email("Subject", "Message", "S12345678@student.usp.ac.fj", "Failed to send verification email")
@@ -1080,6 +1092,7 @@ def test_send_email_requires_smtp_provider():
 
 
 @override_settings(
+    EMAIL_PROVIDER="smtp",
     EMAIL_HOST="smtp.gmail.com",
     EMAIL_HOST_USER="noreply@uspmarketplacecommunity.com",
     EMAIL_HOST_PASSWORD="shortpass123",
@@ -1149,7 +1162,7 @@ def test_signup_rejects_invalid_email_format():
     assert response.json()["detail"] == "Enter a valid email address"
 
 
-@override_settings(ALLOW_NON_USP_EMAILS=True, EMAIL_HOST="smtp.gmail.com")
+@override_settings(ALLOW_NON_USP_EMAILS=True, EMAIL_PROVIDER="smtp", EMAIL_HOST="smtp.gmail.com", EMAIL_HOST_USER="test@example.com", EMAIL_HOST_PASSWORD="1234567890123456")
 def test_signup_returns_json_error_when_smtp_fails():
     payload = unique_student_payload()
     payload["email"] = "person@gmail.com"
@@ -1168,7 +1181,7 @@ def test_signup_returns_json_error_when_smtp_fails():
     assert not PendingRegistration.objects.filter(email=payload["email"]).exists()
 
 
-@override_settings(ALLOW_NON_USP_EMAILS=True, EMAIL_HOST="smtp.gmail.com")
+@override_settings(ALLOW_NON_USP_EMAILS=True, EMAIL_PROVIDER="smtp", EMAIL_HOST="smtp.gmail.com", EMAIL_HOST_USER="test@example.com", EMAIL_HOST_PASSWORD="1234567890123456")
 def test_signup_identifies_smtp_connection_failures_without_exposing_details():
     payload = unique_student_payload()
     payload["email"] = "person@gmail.com"
