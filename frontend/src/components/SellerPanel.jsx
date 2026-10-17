@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import OrderProgressTracker from "./OrderProgressTracker";
+import { LISTING_PHOTO_ACCEPT } from "../utils/listingPhoto";
 
 function SellerPanel({
   activeSellerTab,
@@ -7,6 +8,7 @@ function SellerPanel({
   currentUser,
   editingListingId,
   isSubmitting,
+  isProcessingPhoto,
   listingForm,
   myListings,
   openListingMenuId,
@@ -82,9 +84,11 @@ function SellerPanel({
           {activeSellerTab === "add-listing" ? (
             <form className="listing-form" onSubmit={onSubmit}>
               <label>
-                JPG Photo
-                <input type="file" accept=".jpg,.jpeg,image/jpeg" onChange={onPhotoChange} />
+                Item Photo
+                <input type="file" accept={LISTING_PHOTO_ACCEPT} onChange={onPhotoChange} aria-describedby="listing-photo-help" />
               </label>
+              <p id="listing-photo-help">JPEG, PNG, WebP or AVIF. Max 5 MB.</p>
+              {isProcessingPhoto && <p role="status">Preparing photo preview…</p>}
 
               {listingForm.photo && (
                 <div className="confirmed-photo">
@@ -107,7 +111,7 @@ function SellerPanel({
                     <img src={pendingPhoto.dataUrl} alt="Photo selected for review" />
                   </div>
                   <div className="photo-review-details">
-                    <span>Review JPG Photo</span>
+                    <span>Review Photo</span>
                     <strong>{pendingPhoto.name}</strong>
                     <p>Check the image before attaching it to your listing.</p>
                     <div className="photo-review-actions">
@@ -226,8 +230,8 @@ function SellerPanel({
               </label>
 
               <div className="listing-actions">
-                <button type="submit" className="auth-submit" disabled={isSubmitting}>
-                  {isSubmitting ? "Saving..." : editingListingId ? "Update Listing" : "Add Listing"}
+                <button type="submit" className="auth-submit" disabled={isSubmitting || isProcessingPhoto}>
+                  {isProcessingPhoto ? "Preparing photo..." : isSubmitting ? "Saving..." : editingListingId ? "Update Listing" : "Add Listing"}
                 </button>
                 {editingListingId && (
                   <button type="button" className="secondary-button" onClick={onResetForm}>

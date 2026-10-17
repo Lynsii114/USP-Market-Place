@@ -26,6 +26,7 @@ import { EMPTY_AUTH_FORM, EMPTY_LISTING_FORM } from "./constants/forms";
 import { API_URL } from "./config/api";
 import { categories as defaultCategories } from "./data/categories";
 import logo from "../logo.png";
+import { prepareListingPhoto } from "./utils/listingPhoto";
 
 const PENDING_VERIFICATION_STORAGE_KEY = "usp-marketplace-pending-verification";
 
@@ -69,6 +70,8 @@ function Home() {
   const [authForm, setAuthForm] = useState(EMPTY_AUTH_FORM);
   const [listingForm, setListingForm] = useState(EMPTY_LISTING_FORM);
   const [pendingPhoto, setPendingPhoto] = useState(null);
+  const [isProcessingPhoto, setIsProcessingPhoto] = useState(false);
+  const photoReadId = useRef(0);
   const [listings, setListings] = useState([]);
   const [sellerListings, setSellerListings] = useState([]);
   const [editingListingId, setEditingListingId] = useState(null);
@@ -623,6 +626,8 @@ function Home() {
   };
 
   const resetListingForm = () => {
+    photoReadId.current += 1;
+    setIsProcessingPhoto(false);
     setListingForm(EMPTY_LISTING_FORM);
     setPendingPhoto(null);
     setEditingListingId(null);
@@ -711,33 +716,21 @@ function Home() {
     });
   };
 
-  const handlePhotoChange = (event) => {
+  const handlePhotoChange = async (event) => {
     const file = event.target.files?.[0];
-
-    if (!file) {
-      setPendingPhoto(null);
-      return;
+    if (!file) return;
+    event.target.value = "";
+    const readId = ++photoReadId.current;
+    setPendingPhoto(null);
+    setIsProcessingPhoto(true);
+    try {
+      const dataUrl = await prepareListingPhoto(file);
+      if (readId === photoReadId.current) setPendingPhoto({ dataUrl, name: file.name });
+    } catch (error) {
+      if (readId === photoReadId.current) showToast(error.message || "Unable to read the selected photo.", "error");
+    } finally {
+      if (readId === photoReadId.current) setIsProcessingPhoto(false);
     }
-
-    const isJpg = file.type === "image/jpeg" || /\.(jpe?g)$/i.test(file.name);
-    if (!isJpg) {
-      event.target.value = "";
-      setPendingPhoto(null);
-      showToast("Please upload a JPG photo only.", "error");
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      setPendingPhoto({
-        dataUrl: reader.result || "",
-        name: file.name,
-      });
-    };
-    reader.onerror = () => {
-      showToast("Unable to read the selected photo.", "error");
-    };
-    reader.readAsDataURL(file);
   };
 
   const confirmPhoto = () => {
@@ -751,6 +744,8 @@ function Home() {
   };
 
   const removePhoto = () => {
+    photoReadId.current += 1;
+    setIsProcessingPhoto(false);
     setPendingPhoto(null);
     setListingForm((previous) => ({ ...previous, photo: "" }));
   };
@@ -766,6 +761,10 @@ function Home() {
     setIsSubmitting(true);
 
     try {
+      if (isProcessingPhoto) {
+        showToast("Please wait for the photo preview to finish loading.", "error");
+        return;
+      }
       if (pendingPhoto) {
         showToast("Please confirm the selected photo before adding the listing.", "error");
         return;
@@ -1918,6 +1917,7 @@ function Home() {
 
       {showSellerPanel && !showShopPage && !activeCategoryPage && !showCartPanel && !showPurchasesPage && !activeLegalPage && !activeAccountPage && (
         <SellerPanel
+          isProcessingPhoto={isProcessingPhoto}
           activeSellerTab={activeSellerTab}
           categories={marketplaceCategories}
           currentUser={currentUser}

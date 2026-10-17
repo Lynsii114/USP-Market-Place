@@ -35,3 +35,21 @@ Related fixes are recorded individually and may be committed together in meaning
 - Fix: marketplace browsing and public seller storefronts show only available/reserved listings with positive stock. Sellers retain sold and zero-stock records in My Listings; no records are deleted. Multi-unit listings remain available while stock remains.
 - Verification: regression tests cover sold status, inconsistent zero-stock records, owner history, and removal from browsing after payment for the final unit. Full suite: 82 tests and 40 subtests passed, two MySQL-only tests skipped; frontend production build passed.
 - Commit: approved by the user and grouped with fix 3 in `Align inventory prices and sold listing visibility with SAD`.
+
+## 5. Repair Sell Item navigation and listing creation access
+
+- Problem: clicking Sell Item ran the React navigation handler and then followed the anchor's native hash link. The resulting history event reset the selected view to Home, so the Add Listing form could not remain open. Home and Shop used the same conflicting navigation pattern.
+- Fix: prevent native anchor navigation for Home, Shop, and Sell Item so the existing application handlers control the view and history consistently.
+- Files: `frontend/src/components/Navbar.jsx`.
+- Verification: reproduced the failure in the browser before the fix; afterward opened Add Listing, submitted a local demo listing successfully, and verified it appeared in My Listings and Shop. Checked Home, Shop, and repeated Sell Item navigation. Frontend production build passed.
+- Demo data: added `Sell Item check — local demo` ($12.50, stock 2) to the isolated local demo database only.
+- Commit: approved by the user and grouped in `Fix selling navigation and support common photo formats`.
+
+## 6. Support common listing photo formats
+
+- Problem: the picker and JavaScript accepted only JPG/JPEG, excluding common PNG and WebP photos, while relying on file extensions without checking that the image opens.
+- Fix: accept JPEG/JFIF, PNG, WebP, and AVIF; rename the field to Item Photo and the preview to Review Photo. Use concise help text: "JPEG, PNG, WebP or AVIF. Max 5 MB." Decode and optimize images to WebP up to 1600px and approximately 1 MB for JSON upload. GIF uploads are excluded at the user's request.
+- Handling: reject empty, oversized, unsupported, and unreadable files; prevent submission while a preview is being prepared; ignore stale asynchronous previews after changing/resetting photos; allow reselecting the same file.
+- Verification: frontend production build passed. Browser checks passed for PNG, WebP, JPEG/JFIF, rejection of a non-image file, and confirming the PNG preview into the listing form. AVIF is supported through browser decoding but was not separately exercised with a sample file.
+- Files: `frontend/src/App.jsx`, `frontend/src/components/SellerPanel.jsx`, `frontend/src/utils/listingPhoto.js`.
+- Commit: approved by the user and grouped with fix 5 in `Fix selling navigation and support common photo formats`.
