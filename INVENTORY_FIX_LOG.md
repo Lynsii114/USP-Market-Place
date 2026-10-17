@@ -21,3 +21,17 @@ Related fixes are recorded individually and may be committed together in meaning
 - Files: `frontend/src/Home.css`.
 - Verification: production build passed. Browser measurements confirm all five listing row heights are identical with the menu closed and open; the calculator row remains approximately 73px high. The open menu was visually checked over neighboring content.
 - Commit: approved by the user and grouped with fix 1 in `Fix inventory status badges and action menu spacing`.
+
+## 3. Require positive listing prices (SAD FR2.7)
+
+- Problem: zero-price listings were allowed despite the SAD requiring positive prices.
+- Fix: reject zero and negative prices on creation and edits; set the listing form minimum to $0.01. Valid positive prices remain accepted.
+- Verification: regression tests cover numeric/string zero, negative zero, negative prices, unchanged saved prices after rejection, and a valid $0.01 price. Full suite: 82 tests and 40 subtests passed, two MySQL-only tests skipped; frontend production build passed.
+- Commit: approved by the user and grouped in `Align inventory prices and sold listing visibility with SAD`.
+
+## 4. Hide sold listings from normal browsing (SAD FR2.3)
+
+- Problem: sold listings appeared alongside items available for purchase.
+- Fix: marketplace browsing and public seller storefronts show only available/reserved listings with positive stock. Sellers retain sold and zero-stock records in My Listings; no records are deleted. Multi-unit listings remain available while stock remains.
+- Verification: regression tests cover sold status, inconsistent zero-stock records, owner history, and removal from browsing after payment for the final unit. Full suite: 82 tests and 40 subtests passed, two MySQL-only tests skipped; frontend production build passed.
+- Commit: approved by the user and grouped with fix 3 in `Align inventory prices and sold listing visibility with SAD`.

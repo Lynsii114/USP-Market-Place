@@ -74,9 +74,9 @@ def validate_item_payload(data, partial=False):
         try:
             price = float(data["price"])
         except (TypeError, ValueError, OverflowError) as exc:
-            raise ApiError("Price must be a finite non-negative number", 422) from exc
-        if isinstance(data["price"], bool) or not math.isfinite(price) or price < 0 or price > 999_999_999.99:
-            raise ApiError("Price must be between 0 and 999999999.99", 422)
+            raise ApiError("Price must be a finite positive number", 422) from exc
+        if isinstance(data["price"], bool) or not math.isfinite(price) or price <= 0 or price > 999_999_999.99:
+            raise ApiError("Price must be greater than 0 and at most 999999999.99", 422)
 
     payment_method = str(data.get("payment_method", "cash")).strip().lower()
     if payment_method not in {"mpaisa", "mycash", "cash"}:

@@ -47,7 +47,7 @@ class InventoryTests(TestCase):
         client = self.client_for(self.seller)
         for field, values in {
             "stock": [-1, -0.5, 1.9, True, None, "1.5", "", 2147483648],
-            "price": [-1, "NaN", "Infinity", True, None, 1e20],
+            "price": [-1, 0, "0", -0.0, "NaN", "Infinity", True, None, 1e20],
         }.items():
             for value in values:
                 with self.subTest(field=field, value=value):
@@ -62,7 +62,7 @@ class InventoryTests(TestCase):
                 response = client.post("/api/items", self.payload(**{field: value}), content_type="application/json")
                 self.assertEqual(response.status_code, 422)
         Category.objects.create(name="Stationery")
-        response = client.post("/api/items", self.payload(name="  Notebook  ", category="Stationery", stock="0", price=0), content_type="application/json")
+        response = client.post("/api/items", self.payload(name="  Notebook  ", category="Stationery", stock="0", price=0.01), content_type="application/json")
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(response.json()["name"], "Notebook")
         self.assertEqual(response.json()["status"], "sold")
@@ -74,6 +74,43 @@ class InventoryTests(TestCase):
         response = client.put(f"/api/items/{self.item.id}", {"description": "  Updated  "}, content_type="application/json")
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(response.json()["description"], "Updated")
+
+    def test_price_must_be_positive_on_edit_without_changing_saved_price(self):
+        client = self.client_for(self.seller)
+        for price in (0, "0", -1):
+            with self.subTest(price=price):
+                response = client.put(f"/api/items/{self.item.id}", {"price": price}, content_type="application/json")
+                self.assertEqual(response.status_code, 422)
+                self.assertIn("greater than 0", response.json()["detail"])
+                self.item.refresh_from_db()
+                self.assertEqual(self.item.price, 20)
+        response = client.put(f"/api/items/{self.item.id}", {"price": 0.01}, content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+
+    def test_sold_and_empty_listings_hidden_from_browse_but_kept_in_my_listings(self):
+        items = []
+        for name, stock, status in (("Sold hoodie", 0, "sold"), ("Manually sold", 3, "sold"), ("Empty stock", 0, "available"), ("Reserved book", 1, "reserved")):
+            items.append(Item.objects.create(name=name, stock=stock, status=status, price=10, description="Inventory visibility test", category="Books", contact="Campus", seller_id=self.seller.id, seller_username=self.seller.username))
+        for client in (Client(), self.client_for(self.buyer), self.client_for(self.seller)):
+            with self.subTest(client=client):
+                public_ids = {item["id"] for item in client.get("/api/items").json()}
+                self.assertTrue({item.id for item in items[:3]}.isdisjoint(public_ids))
+                self.assertIn(self.item.id, public_ids)
+                self.assertIn(items[3].id, public_ids)
+        storefront = Client().get(f"/api/users/{self.seller.id}/items").json()
+        self.assertTrue({item.id for item in items[:3]}.isdisjoint({item["id"] for item in storefront}))
+        own_ids = {item["id"] for item in self.client_for(self.seller).get(f"/api/users/{self.seller.id}/items").json()}
+        self.assertTrue({item.id for item in items}.issubset(own_ids))
+
+    def test_final_unit_payment_removes_listing_from_browse_not_seller_history(self):
+        self.item.stock = 1
+        self.item.save()
+        order = self.pending()
+        services.confirm_payment_received(order.id, self.seller.id)
+        public_ids = {item["id"] for item in Client().get("/api/items").json()}
+        self.assertNotIn(self.item.id, public_ids)
+        history = self.client_for(self.seller).get(f"/api/users/{self.seller.id}/items").json()
+        self.assertEqual(history[0]["status"], "sold")
 
     def test_zero_stock_clears_manual_reservation(self):
         self.item.status = "reserved"

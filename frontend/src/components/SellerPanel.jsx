@@ -142,7 +142,7 @@ function SellerPanel({
                   name="price"
                   value={listingForm.price}
                   onChange={onFieldChange}
-                  min="0"
+                  min="0.01"
                   max="999999999.99"
                   step="0.01"
                   required

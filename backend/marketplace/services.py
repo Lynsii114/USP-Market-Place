@@ -830,7 +830,7 @@ def list_seller_items(seller_id, requesting_user_id=None):
     seller = require_active_user(seller_id)
     items = visible_items().filter(seller_id=seller.id).exclude(status="removed").order_by("-id")
     if str(requesting_user_id) != str(seller.id):
-        items = items.exclude(status="hidden")
+        items = items.filter(status__in=["available", "reserved"], stock__gt=0)
     return [serialize_item_for_user(item, requesting_user_id) for item in items]
 
 
