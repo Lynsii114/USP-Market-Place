@@ -3294,7 +3294,7 @@
   justify-content: space-between;
   gap: 16px;
   align-items: center;
-  padding: 14px 52px 14px 14px;
+  padding: 14px;
   background: #f8fafe;
   border: 1px solid var(--usp-border);
   border-radius: 8px;
@@ -3304,6 +3304,21 @@
   display: flex;
   flex-direction: column;
   gap: 5px;
+}
+
+.seller-list .admin-action-dropdown {
+  flex-shrink: 0;
+}
+
+.seller-list .admin-action-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 20;
+  min-width: 0;
+  width: min(220px, calc(100vw - 64px));
+  max-height: min(320px, 60vh);
+  overflow-y: auto;
 }
 
 .seller-list-item span {
@@ -3834,7 +3849,7 @@
   object-fit: contain;
 }
 
-.product-modal-image span {
+.product-modal-placeholder {
   padding: 70px 20px;
   color: var(--usp-navy);
   font-size: 1.2rem;

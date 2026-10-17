@@ -107,7 +107,7 @@ function ProductModal({ listing, currentUser, onClose, onAddToCart, onMessageSel
         </div>
 
         <div className="product-modal-image">
-          {listing.photo ? <img src={listing.photo} alt={listing.name} /> : <span>{listing.category}</span>}
+          {listing.photo ? <img src={listing.photo} alt={listing.name} /> : <span className="product-modal-placeholder">{listing.category}</span>}
           {isSold && <span className="sold-badge">Sold</span>}
           {!isSold && isReserved && <span className="sold-badge reserved">Reserved</span>}
         </div>
