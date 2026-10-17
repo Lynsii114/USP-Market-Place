@@ -129,6 +129,11 @@ def ensure_schema():
             connection.close()
             return
 
+    # Local demo/test databases are created directly from the current models;
+    # the following legacy ALTER/UPDATE statements are specifically MySQL SQL.
+    if connection.vendor != "mysql":
+        return
+
     try:
         with connection.cursor() as cursor:
             for table_name, required_columns in TABLE_COLUMNS.items():

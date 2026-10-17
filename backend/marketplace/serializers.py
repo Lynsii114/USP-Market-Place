@@ -1,3 +1,6 @@
+from .category_catalog import canonical_category_name
+
+
 def serialize_user(user):
     return {
         "id": user.id,
@@ -19,7 +22,7 @@ def serialize_item(item):
         "name": item.name,
         "price": item.price,
         "description": item.description,
-        "category": item.category,
+        "category": canonical_category_name(item.category),
         "contact": item.contact,
         "payment_method": item.payment_method,
         "photo": item.photo,
@@ -30,6 +33,7 @@ def serialize_item(item):
         "reserved_buyer_id": item.reserved_buyer_id,
         "reserved_buyer_username": item.reserved_buyer_username,
         "removed_reason": item.removed_reason,
+        "admin_restricted": item.status == "removed" or (item.status == "hidden" and item.removed_reason is not None),
         "created_at": item.created_at,
     }
 
@@ -78,7 +82,7 @@ def serialize_purchase(purchase):
         "item_id": purchase.item_id,
         "item_name": purchase.item_name,
         "price": purchase.price,
-        "category": purchase.category,
+        "category": canonical_category_name(purchase.category),
         "seller_id": purchase.seller_id,
         "seller_username": purchase.seller_username,
         "seller_contact": purchase.seller_contact,

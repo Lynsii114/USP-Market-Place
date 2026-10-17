@@ -1,5 +1,8 @@
 import React, { useState } from "react";
 import OrderProgressTracker from "./OrderProgressTracker";
+import { LISTING_PHOTO_ACCEPT } from "../utils/listingPhoto";
+import ListingActionsMenu from "./ListingActionsMenu";
+import { inventorySummary, sellerListingStatus } from "../utils/inventory.mjs";
 
 function SellerPanel({
   activeSellerTab,
@@ -7,6 +10,7 @@ function SellerPanel({
   currentUser,
   editingListingId,
   isSubmitting,
+  isProcessingPhoto,
   listingForm,
   myListings,
   openListingMenuId,
@@ -18,6 +22,7 @@ function SellerPanel({
   onFieldChange,
   onLogin,
   onMenuToggle,
+  onCloseMenu,
   onViewListing,
   onPhotoChange,
   onPhotoConfirm,
@@ -39,6 +44,14 @@ function SellerPanel({
   const [reservationBuyers, setReservationBuyers] = useState([]);
   const [selectedReservationBuyer, setSelectedReservationBuyer] = useState("");
   const [isLoadingReservationBuyers, setIsLoadingReservationBuyers] = useState(false);
+  const [inventorySearch, setInventorySearch] = useState("");
+  const [inventoryStatus, setInventoryStatus] = useState("all");
+  const summary = inventorySummary(myListings);
+  const search = inventorySearch.trim().toLowerCase();
+  const matchingListings = myListings.filter((listing) =>
+    (!search || `${listing.name} ${listing.description} ${listing.category}`.toLowerCase().includes(search)) &&
+    (inventoryStatus === "all" || sellerListingStatus(listing) === inventoryStatus)
+  );
 
   const openReservationModal = async (listing) => {
     setReservationListing(listing);
@@ -81,10 +94,14 @@ function SellerPanel({
         <>
           {activeSellerTab === "add-listing" ? (
             <form className="listing-form" onSubmit={onSubmit}>
-              <label>
-                JPG Photo
-                <input type="file" accept=".jpg,.jpeg,image/jpeg" onChange={onPhotoChange} />
-              </label>
+              <div className="listing-photo-field">
+                <label>
+                  Item Photo (required)
+                  <input type="file" accept={LISTING_PHOTO_ACCEPT} onChange={onPhotoChange} aria-describedby="listing-photo-help" />
+                </label>
+                <p className="listing-photo-help" id="listing-photo-help">JPEG, PNG, WebP or AVIF. Max 5 MB.</p>
+                {isProcessingPhoto && <p role="status">Preparing photo preview…</p>}
+              </div>
 
               {listingForm.photo && (
                 <div className="confirmed-photo">
@@ -107,7 +124,7 @@ function SellerPanel({
                     <img src={pendingPhoto.dataUrl} alt="Photo selected for review" />
                   </div>
                   <div className="photo-review-details">
-                    <span>Review JPG Photo</span>
+                    <span>Review Photo</span>
                     <strong>{pendingPhoto.name}</strong>
                     <p>Check the image before attaching it to your listing.</p>
                     <div className="photo-review-actions">
@@ -130,6 +147,7 @@ function SellerPanel({
                   value={listingForm.name}
                   onChange={onFieldChange}
                   placeholder="Computer Science Textbook"
+                  maxLength={256}
                   required
                 />
               </label>
@@ -141,7 +159,8 @@ function SellerPanel({
                   name="price"
                   value={listingForm.price}
                   onChange={onFieldChange}
-                  min="0"
+                  min="0.01"
+                  max="999999999.99"
                   step="0.01"
                   required
                 />
@@ -156,6 +175,7 @@ function SellerPanel({
                   onChange={onFieldChange}
                   min="0"
                   step="1"
+                  max="2147483647"
                   placeholder="1"
                   required
                 />
@@ -180,6 +200,7 @@ function SellerPanel({
                   value={listingForm.contact}
                   onChange={onFieldChange}
                   placeholder="Phone, email, or preferred contact"
+                  maxLength={128}
                   required
                 />
               </label>
@@ -216,13 +237,14 @@ function SellerPanel({
                   onChange={onFieldChange}
                   placeholder="Condition, pickup location, or extra details"
                   rows="4"
+                  maxLength={1000}
                   required
                 />
               </label>
 
               <div className="listing-actions">
-                <button type="submit" className="auth-submit" disabled={isSubmitting}>
-                  {isSubmitting ? "Saving..." : editingListingId ? "Update Listing" : "Add Listing"}
+                <button type="submit" className="auth-submit" disabled={isSubmitting || isProcessingPhoto}>
+                  {isProcessingPhoto ? "Preparing photo..." : isSubmitting ? "Saving..." : editingListingId ? "Update Listing" : "Add Listing"}
                 </button>
                 {editingListingId && (
                   <button type="button" className="secondary-button" onClick={onResetForm}>
@@ -233,10 +255,28 @@ function SellerPanel({
             </form>
           ) : (
             <div className="my-listings">
-              <h3>My Listings</h3>
-              {myListings.length ? (
+              <div className="inventory-toolbar">
+                <div className="inventory-overview" aria-label="Inventory summary">
+                  <span><strong>{summary.total}</strong> {summary.total === 1 ? "listing" : "listings"}</span>
+                  <span><strong>{summary.units}</strong> {summary.units === 1 ? "unit" : "units"} available</span>
+                </div>
+                <label className="inventory-search">
+                  <span className="sr-only">Search My Listings</span>
+                  <input type="search" placeholder="Search your listings" value={inventorySearch} onChange={(event) => { setInventorySearch(event.target.value); onCloseMenu(); }} />
+                </label>
+                {(inventorySearch || inventoryStatus !== "all") && <button type="button" className="inventory-clear" onClick={() => { setInventorySearch(""); setInventoryStatus("all"); onCloseMenu(); }}>Clear filters</button>}
+              </div>
+              <div className="inventory-status-filters" role="group" aria-label="Filter listings by status">
+                {[["all", "All", summary.total], ["available", "Available", summary.available], ["reserved", "Reserved", summary.reserved], ["sold", "Sold", summary.sold], ["inactive", "Inactive", summary.inactive]].map(([value, label, count]) => (
+                  <button key={value} type="button" aria-pressed={inventoryStatus === value} onClick={() => { setInventoryStatus(value); onCloseMenu(); }}>
+                    {label}<span className="inventory-status-count">{count}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="inventory-result-count" role="status">{(inventorySearch || inventoryStatus !== "all") ? `Showing ${matchingListings.length} of ${myListings.length} listings` : ""}</p>
+              {matchingListings.length ? (
                 <div className="seller-list">
-                  {myListings.map((listing) => {
+                  {matchingListings.map((listing) => {
                     const pendingPaymentOrder = sellerOrders.find(
                       (order) =>
                         order.item_id === listing.id &&
@@ -248,31 +288,23 @@ function SellerPanel({
                         <strong>{listing.name}</strong>
                         <span>
                           ${Number(listing.price).toFixed(2)} - {listing.category} -{" "}
-                          {listing.status === "reserved"
-                            ? `Reserved for ${listing.reserved_buyer_username || "buyer"}`
-                            : listing.status === "sold" || Number(listing.stock) <= 0
-                              ? "Sold"
-                              : listing.status === "hidden"
-                                ? "Inactive"
-                                : `${listing.stock} in stock`}
+                          {listing.admin_restricted
+                            ? "Hidden by administrator"
+                            : listing.status === "hidden"
+                              ? "Inactive"
+                              : listing.status === "reserved"
+                                ? `Reserved for ${listing.reserved_buyer_username || "buyer"}`
+                                : listing.status === "sold" || Number(listing.stock) <= 0
+                                  ? "Sold"
+                                  : `${listing.stock} in stock`}
                         </span>
                       </div>
-                      <div className="admin-action-dropdown">
-                        <button
-                          type="button"
-                          className="admin-action-trigger"
-                          aria-label={`Open actions for ${listing.name}`}
-                          aria-expanded={openListingMenuId === listing.id}
-                          onClick={() => onMenuToggle(listing.id)}
-                        >
-                          Actions
-                        </button>
-                        {openListingMenuId === listing.id && (
-                          <div className="admin-action-menu">
+                      {listing.admin_restricted && <p>{listing.removed_reason || "Contact an administrator to restore this listing."}</p>}
+                      <ListingActionsMenu listing={listing} isOpen={openListingMenuId === listing.id} onToggle={() => onMenuToggle(listing.id)} onClose={onCloseMenu}>
                             <button type="button" onClick={() => onViewListing(listing)}>
                               View Listing
                             </button>
-                            <button type="button" onClick={() => onEditListing(listing)}>
+                            <button type="button" disabled={listing.admin_restricted || isSubmitting} onClick={() => onEditListing(listing)}>
                               Edit
                             </button>
                             {listing.status === "reserved" ? (
@@ -287,30 +319,28 @@ function SellerPanel({
                                 {pendingPaymentOrder ? "Release Unpaid Order" : "Cancel Reservation"}
                               </button>
                             ) : (
-                              <button type="button" onClick={() => openReservationModal(listing)} disabled={listing.status === "sold" || Number(listing.stock) <= 0}>
+                              <button type="button" onClick={() => openReservationModal(listing)} disabled={listing.admin_restricted || listing.status === "hidden" || listing.status === "sold" || Number(listing.stock) <= 0 || isSubmitting}>
                                 Mark as Reserved
                               </button>
                             )}
                             <button
                               type="button"
                               onClick={() => onUpdateListingStatus(listing, "sold")}
-                              disabled={listing.status === "sold" || Boolean(pendingPaymentOrder)}
+                              disabled={listing.admin_restricted || listing.status === "sold" || Boolean(pendingPaymentOrder) || isSubmitting}
                             >
                               Mark as Sold
                             </button>
                             <div className="admin-action-divider" />
-                            <button type="button" className="danger-action" onClick={() => onUpdateListingStatus(listing, "hidden")}>
-                              Deactivate
+                            <button type="button" disabled={listing.admin_restricted || Boolean(pendingPaymentOrder) || isSubmitting || (listing.status === "hidden" && Number(listing.stock) <= 0)} className="danger-action" onClick={() => onUpdateListingStatus(listing, listing.status === "hidden" ? "available" : "hidden")}>
+                              {listing.status === "hidden" ? "Reactivate" : "Deactivate"}
                             </button>
-                          </div>
-                        )}
-                      </div>
+                      </ListingActionsMenu>
                     </div>
                     );
                   })}
                 </div>
               ) : (
-                <p className="empty-state">You have not listed any items yet.</p>
+                <p className="empty-state">{myListings.length ? "No listings match your filters." : "You have not listed any items yet."}</p>
               )}
               <div className="seller-orders-panel">
                 <h3>Active Order Progress</h3>

@@ -62,15 +62,15 @@ function Navbar({
       </div>
 
       <nav className="nav-links">
-        <a href="#home" className={navClass("home")} onClick={onHome}>
+        <a href="#home" className={navClass("home")} onClick={(event) => { event.preventDefault(); onHome(); }}>
           <span aria-hidden="true">⌂</span>
           <span>Home</span>
         </a>
-        <a href="#listings" className={navClass("shop")} onClick={onBrowse}>
+        <a href="#listings" className={navClass("shop")} onClick={(event) => { event.preventDefault(); onBrowse(); }}>
           <span aria-hidden="true">▦</span>
           <span>Shop</span>
         </a>
-        <a href="#seller-listings" className={navClass("sell")} onClick={() => onOpenSellerTab("add-listing")}>
+        <a href="#seller-listings" className={navClass("sell")} onClick={(event) => { event.preventDefault(); onOpenSellerTab("add-listing"); }}>
           <span aria-hidden="true">＋</span>
           <span>Sell Item</span>
         </a>

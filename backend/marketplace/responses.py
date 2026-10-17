@@ -7,8 +7,11 @@ from .exceptions import ApiError
 
 def json_body(request):
     try:
-        return json.loads(request.body.decode("utf-8") or "{}")
-    except json.JSONDecodeError as exc:
+        data = json.loads(request.body.decode("utf-8") or "{}")
+        if not isinstance(data, dict):
+            raise ApiError("Request body must be a JSON object", 422)
+        return data
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise ApiError("Invalid JSON body", 400) from exc
 
 

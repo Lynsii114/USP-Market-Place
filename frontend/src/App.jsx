@@ -1,3 +1,4 @@
+import { apiFetch as fetch, setAccessToken } from "./config/request";
 import React, { useEffect, useRef, useState } from "react";
 import "./Home.css";
 import AccountPage from "./components/AccountPage";
@@ -25,6 +26,9 @@ import { EMPTY_AUTH_FORM, EMPTY_LISTING_FORM } from "./constants/forms";
 import { API_URL } from "./config/api";
 import { categories as defaultCategories } from "./data/categories";
 import logo from "../logo.png";
+import { prepareListingPhoto } from "./utils/listingPhoto";
+import { priceRange, matchesPrice } from "./utils/inventory.mjs";
+import { mergeCategoryOptions, canonicalCategoryName } from "./utils/categories.mjs";
 
 const PENDING_VERIFICATION_STORAGE_KEY = "usp-marketplace-pending-verification";
 
@@ -54,6 +58,7 @@ function Home() {
   const [resendAvailableAt, setResendAvailableAt] = useState(0);
   const [resendSecondsRemaining, setResendSecondsRemaining] = useState(0);
   const [authenticatorUserId, setAuthenticatorUserId] = useState(null);
+  const [loginChallenge, setLoginChallenge] = useState("");
   const [authenticatorSecret, setAuthenticatorSecret] = useState("");
   const [authenticatorUri, setAuthenticatorUri] = useState("");
   const [authenticatorQr, setAuthenticatorQr] = useState("");
@@ -67,6 +72,8 @@ function Home() {
   const [authForm, setAuthForm] = useState(EMPTY_AUTH_FORM);
   const [listingForm, setListingForm] = useState(EMPTY_LISTING_FORM);
   const [pendingPhoto, setPendingPhoto] = useState(null);
+  const [isProcessingPhoto, setIsProcessingPhoto] = useState(false);
+  const photoReadId = useRef(0);
   const [listings, setListings] = useState([]);
   const [sellerListings, setSellerListings] = useState([]);
   const [editingListingId, setEditingListingId] = useState(null);
@@ -77,6 +84,8 @@ function Home() {
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [marketplaceCategories, setMarketplaceCategories] = useState(defaultCategories);
   const [sortOption, setSortOption] = useState("newest");
+  const [minimumPrice, setMinimumPrice] = useState("");
+  const [maximumPrice, setMaximumPrice] = useState("");
   const [selectedListing, setSelectedListing] = useState(null);
   const [selectedSeller, setSelectedSeller] = useState(null);
   const [selectedSellerReviews, setSelectedSellerReviews] = useState(null);
@@ -251,7 +260,7 @@ function Home() {
       const query = viewerId ? `?user_id=${viewerId}` : "";
       const response = await fetch(`${API_URL}/items${query}`);
       const data = await parseResponse(response, "Unable to load listings");
-      setListings(data);
+      setListings(data.map((listing) => ({ ...listing, category: canonicalCategoryName(listing.category) })));
       setCartItems((items) =>
         items.map((cartItem) => {
           const latestListing = data.find((listing) => listing.id === cartItem.id);
@@ -265,15 +274,7 @@ function Home() {
     }
   };
 
-  const mergeCategories = (storedCategories) => {
-    const merged = [...defaultCategories];
-    storedCategories.forEach((category) => {
-      if (!merged.some((existingCategory) => existingCategory.name.toLowerCase() === category.name.toLowerCase())) {
-        merged.push(category);
-      }
-    });
-    return merged;
-  };
+  const mergeCategories = (storedCategories) => mergeCategoryOptions(defaultCategories, storedCategories);
 
   const loadCategories = async () => {
     try {
@@ -327,7 +328,7 @@ function Home() {
       const query = viewerId ? `?viewer_id=${viewerId}` : "";
       const response = await fetch(`${API_URL}/users/${sellerId}/items${query}`);
       const data = await parseResponse(response, "Unable to load your listings");
-      setSellerListings(data);
+      setSellerListings(data.map((listing) => ({ ...listing, category: canonicalCategoryName(listing.category) })));
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to load your listings", "error");
     }
@@ -417,6 +418,7 @@ function Home() {
         window.sessionStorage.removeItem(PENDING_VERIFICATION_STORAGE_KEY);
         if (data.authenticator_setup_required) {
           setAuthenticatorUserId(data.user_id);
+          setLoginChallenge(data.login_challenge);
           setAuthenticatorSecret(data.authenticator_secret);
           setAuthenticatorUri(data.authenticator_uri);
           setAuthenticatorQr(data.authenticator_qr);
@@ -424,6 +426,7 @@ function Home() {
           setAuthMode("authenticator-setup");
           setResendAvailableAt(0);
         } else {
+          setAccessToken(data.access_token);
           setCurrentUser(data.user);
           setAuthForm(EMPTY_AUTH_FORM);
           setAuthMode(null);
@@ -439,9 +442,10 @@ function Home() {
         const response = await fetch(`${API_URL}/users/verify-authenticator`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_id: authenticatorUserId, code: authForm.authenticator_code }),
+          body: JSON.stringify({ user_id: authenticatorUserId, code: authForm.authenticator_code, login_challenge: loginChallenge }),
         });
         const data = await parseResponse(response, "Authenticator verification failed");
+        setAccessToken(data.access_token);
         setCurrentUser(data.user);
         setAuthForm(EMPTY_AUTH_FORM);
         setAuthMode(null);
@@ -549,6 +553,7 @@ function Home() {
 
       if (data.authenticator_setup_required || data.authenticator_required) {
         setAuthenticatorUserId(data.user_id);
+        setLoginChallenge(data.login_challenge);
         setAuthenticatorSecret(data.authenticator_secret || "");
         setAuthenticatorUri(data.authenticator_uri || "");
         setAuthenticatorQr(data.authenticator_qr || "");
@@ -573,6 +578,7 @@ function Home() {
         return;
       }
 
+      setAccessToken(data.access_token);
       setCurrentUser(data.user);
       setAuthForm(EMPTY_AUTH_FORM);
       setAuthMode(null);
@@ -616,6 +622,8 @@ function Home() {
   };
 
   const resetListingForm = () => {
+    photoReadId.current += 1;
+    setIsProcessingPhoto(false);
     setListingForm(EMPTY_LISTING_FORM);
     setPendingPhoto(null);
     setEditingListingId(null);
@@ -639,6 +647,8 @@ function Home() {
   };
 
   const handleLogout = () => {
+    setAccessToken(null);
+    setLoginChallenge("");
     setCurrentUser(null);
     setAuthMode("login");
     hideActivePages();
@@ -702,33 +712,21 @@ function Home() {
     });
   };
 
-  const handlePhotoChange = (event) => {
+  const handlePhotoChange = async (event) => {
     const file = event.target.files?.[0];
-
-    if (!file) {
-      setPendingPhoto(null);
-      return;
+    if (!file) return;
+    event.target.value = "";
+    const readId = ++photoReadId.current;
+    setPendingPhoto(null);
+    setIsProcessingPhoto(true);
+    try {
+      const dataUrl = await prepareListingPhoto(file);
+      if (readId === photoReadId.current) setPendingPhoto({ dataUrl, name: file.name });
+    } catch (error) {
+      if (readId === photoReadId.current) showToast(error.message || "Unable to read the selected photo.", "error");
+    } finally {
+      if (readId === photoReadId.current) setIsProcessingPhoto(false);
     }
-
-    const isJpg = file.type === "image/jpeg" || /\.(jpe?g)$/i.test(file.name);
-    if (!isJpg) {
-      event.target.value = "";
-      setPendingPhoto(null);
-      showToast("Please upload a JPG photo only.", "error");
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      setPendingPhoto({
-        dataUrl: reader.result || "",
-        name: file.name,
-      });
-    };
-    reader.onerror = () => {
-      showToast("Unable to read the selected photo.", "error");
-    };
-    reader.readAsDataURL(file);
   };
 
   const confirmPhoto = () => {
@@ -742,6 +740,8 @@ function Home() {
   };
 
   const removePhoto = () => {
+    photoReadId.current += 1;
+    setIsProcessingPhoto(false);
     setPendingPhoto(null);
     setListingForm((previous) => ({ ...previous, photo: "" }));
   };
@@ -757,8 +757,17 @@ function Home() {
     setIsSubmitting(true);
 
     try {
+      if (isProcessingPhoto) {
+        showToast("Please wait for the photo preview to finish loading.", "error");
+        return;
+      }
       if (pendingPhoto) {
         showToast("Please confirm the selected photo before adding the listing.", "error");
+        return;
+      }
+
+      if (!listingForm.photo) {
+        showToast("Add a photo before saving your listing.", "error");
         return;
       }
 
@@ -1035,6 +1044,8 @@ function Home() {
 
   const myListings = currentUser ? sellerListings : [];
   const normalizedSearch = searchQuery.trim().toLowerCase();
+  const selectedPriceRange = priceRange(minimumPrice, maximumPrice);
+  const priceFilterProps = { minimumPrice, maximumPrice, priceError: selectedPriceRange.error, onMinimumPriceChange: setMinimumPrice, onMaximumPriceChange: setMaximumPrice };
   const filteredListings = listings
     .filter((listing) => {
       const matchesSearch =
@@ -1046,7 +1057,7 @@ function Home() {
       const matchesCategory =
         selectedCategory === "All" || listing.category === selectedCategory;
 
-      return matchesSearch && matchesCategory;
+      return matchesSearch && matchesCategory && matchesPrice(listing.price, selectedPriceRange);
     })
     .sort((first, second) => {
       if (sortOption === "oldest") {
@@ -1073,7 +1084,7 @@ function Home() {
     });
   const activeCategoryListings =
     activeCategoryPage
-      ? listings.filter((listing) => listing.category === activeCategoryPage)
+      ? listings.filter((listing) => listing.category === activeCategoryPage && matchesPrice(listing.price, selectedPriceRange))
       : [];
   const selectedSellerListings = selectedSeller
     ? listings.filter((listing) => listing.seller_id === selectedSeller.id)
@@ -1119,6 +1130,8 @@ function Home() {
   };
 
   const handleBrowse = () => {
+    setMinimumPrice("");
+    setMaximumPrice("");
     hideActivePages();
     setSearchQuery("");
     setSelectedCategory("All");
@@ -1674,6 +1687,8 @@ function Home() {
   };
 
   const clearFilters = () => {
+    setMinimumPrice("");
+    setMaximumPrice("");
     setSearchQuery("");
     setSelectedCategory("All");
     setSortOption("newest");
@@ -1834,6 +1849,7 @@ function Home() {
       />
 
       <CategoryPage
+        {...priceFilterProps}
         categoryName={activeCategoryPage}
         listings={activeCategoryListings}
         onBack={() => setActiveCategoryPage(null)}
@@ -1891,8 +1907,10 @@ function Home() {
 
       {showShopPage && !activeCategoryPage && !showCartPanel && !showPurchasesPage && !activeLegalPage && !activeAccountPage && !showSellerPanel && (
         <ListingsSection
+          {...priceFilterProps}
           categories={marketplaceCategories}
           filteredListings={filteredListings}
+          onSearchChange={setSearchQuery}
           isLoadingListings={isLoadingListings}
           searchQuery={searchQuery}
           selectedCategory={selectedCategory}
@@ -1909,6 +1927,7 @@ function Home() {
 
       {showSellerPanel && !showShopPage && !activeCategoryPage && !showCartPanel && !showPurchasesPage && !activeLegalPage && !activeAccountPage && (
         <SellerPanel
+          isProcessingPhoto={isProcessingPhoto}
           activeSellerTab={activeSellerTab}
           categories={marketplaceCategories}
           currentUser={currentUser}
@@ -1927,6 +1946,7 @@ function Home() {
           onEditListing={handleEditListing}
           onFieldChange={handleListingFieldChange}
           onLogin={() => openAuth("login")}
+          onCloseMenu={() => setOpenListingMenuId(null)}
           onMenuToggle={(listingId) =>
             setOpenListingMenuId((currentId) => (currentId === listingId ? null : listingId))
           }
@@ -1959,17 +1979,13 @@ function Home() {
           />
 
           <ListingsSection
-            categories={marketplaceCategories}
-            filteredListings={filteredListings}
+            preview
+            onViewAll={handleBrowse}
+            description="The latest items added by the USP community."
+            filteredListings={[...listings].sort((first, second) => second.id - first.id).slice(0, 6)}
             isLoadingListings={isLoadingListings}
-            searchQuery={searchQuery}
-            selectedCategory={selectedCategory}
-            sortOption={sortOption}
-            onClearFilters={clearFilters}
-            onSelectCategory={setSelectedCategory}
             onSelectListing={setSelectedListing}
             onViewSeller={handleViewSellerListings}
-            onSortChange={setSortOption}
           />
 
           <InfoSection />

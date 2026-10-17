@@ -10,7 +10,7 @@ def visible_items():
 
 
 def public_items():
-    return visible_items().exclude(status__in=["hidden", "removed"])
+    return visible_items().filter(status__in=["available", "reserved"], stock__gt=0)
 
 
 def visible_purchases(include_test_records=False):
