@@ -1982,7 +1982,7 @@ function Home() {
             preview
             onViewAll={handleBrowse}
             description="The latest items added by the USP community."
-            filteredListings={[...listings].sort((first, second) => second.id - first.id).slice(0, 6)}
+            filteredListings={[...listings].sort((first, second) => second.id - first.id).slice(0, 8)}
             isLoadingListings={isLoadingListings}
             onSelectListing={setSelectedListing}
             onViewSeller={handleViewSellerListings}

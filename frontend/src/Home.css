@@ -3305,6 +3305,36 @@
   gap: 12px;
 }
 
+#inventory-results,
+#sales-results,
+#shop-results {
+  scroll-margin-top: 100px;
+}
+
+.inventory-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 20px 0;
+}
+
+.inventory-pagination button[aria-current="page"] {
+  background: var(--usp-blue);
+  color: white;
+}
+
+.inventory-pagination button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.inventory-pagination button:focus-visible {
+  outline: 2px solid var(--usp-blue);
+  outline-offset: 3px;
+}
+
 .seller-list-item {
   position: relative;
   display: flex;

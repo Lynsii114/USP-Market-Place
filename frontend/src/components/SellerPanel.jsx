@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import OrderProgressTracker from "./OrderProgressTracker";
 import { LISTING_PHOTO_ACCEPT } from "../utils/listingPhoto";
 import ListingActionsMenu from "./ListingActionsMenu";
@@ -46,12 +46,29 @@ function SellerPanel({
   const [isLoadingReservationBuyers, setIsLoadingReservationBuyers] = useState(false);
   const [inventorySearch, setInventorySearch] = useState("");
   const [inventoryStatus, setInventoryStatus] = useState("all");
+  const [inventoryPage, setInventoryPage] = useState(1);
   const summary = inventorySummary(myListings);
   const search = inventorySearch.trim().toLowerCase();
   const matchingListings = myListings.filter((listing) =>
     (!search || `${listing.name} ${listing.description} ${listing.category}`.toLowerCase().includes(search)) &&
     (inventoryStatus === "all" || sellerListingStatus(listing) === inventoryStatus)
   );
+  const pageSize = 10;
+  const pageCount = Math.max(1, Math.ceil(matchingListings.length / pageSize));
+  const currentPage = Math.min(inventoryPage, pageCount);
+  const pageStart = (currentPage - 1) * pageSize;
+  const visibleListings = matchingListings.slice(pageStart, pageStart + pageSize);
+  const pageNumbers = [...new Set([1, currentPage - 1, currentPage, currentPage + 1, pageCount])]
+    .filter((page) => page >= 1 && page <= pageCount).sort((a, b) => a - b);
+
+  useEffect(() => { setInventoryPage(1); }, [currentUser?.id]);
+  useEffect(() => { setInventoryPage((page) => Math.min(page, pageCount)); }, [pageCount]);
+
+  const changeInventoryPage = (page) => {
+    setInventoryPage(page);
+    onCloseMenu();
+    document.getElementById("inventory-results")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   const openReservationModal = async (listing) => {
     setReservationListing(listing);
@@ -262,21 +279,24 @@ function SellerPanel({
                 </div>
                 <label className="inventory-search">
                   <span className="sr-only">Search My Listings</span>
-                  <input type="search" placeholder="Search your listings" value={inventorySearch} onChange={(event) => { setInventorySearch(event.target.value); onCloseMenu(); }} />
+                  <input type="search" placeholder="Search your listings" value={inventorySearch} onChange={(event) => { setInventorySearch(event.target.value); setInventoryPage(1); onCloseMenu(); }} />
                 </label>
-                {(inventorySearch || inventoryStatus !== "all") && <button type="button" className="inventory-clear" onClick={() => { setInventorySearch(""); setInventoryStatus("all"); onCloseMenu(); }}>Clear filters</button>}
+                {(inventorySearch || inventoryStatus !== "all") && <button type="button" className="inventory-clear" onClick={() => { setInventorySearch(""); setInventoryStatus("all"); setInventoryPage(1); onCloseMenu(); }}>Clear filters</button>}
               </div>
               <div className="inventory-status-filters" role="group" aria-label="Filter listings by status">
                 {[["all", "All", summary.total], ["available", "Available", summary.available], ["reserved", "Reserved", summary.reserved], ["sold", "Sold", summary.sold], ["inactive", "Inactive", summary.inactive]].map(([value, label, count]) => (
-                  <button key={value} type="button" aria-pressed={inventoryStatus === value} onClick={() => { setInventoryStatus(value); onCloseMenu(); }}>
+                  <button key={value} type="button" aria-pressed={inventoryStatus === value} onClick={() => { setInventoryStatus(value); setInventoryPage(1); onCloseMenu(); }}>
                     {label}<span className="inventory-status-count">{count}</span>
                   </button>
                 ))}
               </div>
-              <p className="inventory-result-count" role="status">{(inventorySearch || inventoryStatus !== "all") ? `Showing ${matchingListings.length} of ${myListings.length} listings` : ""}</p>
+              <p className="inventory-result-count" id="inventory-results" role="status">
+                {matchingListings.length ? `Showing ${pageStart + 1}–${pageStart + visibleListings.length} of ${matchingListings.length} listings` : "Showing 0 listings"}
+                {(inventorySearch || inventoryStatus !== "all") && ` (${myListings.length} total)`}
+              </p>
               {matchingListings.length ? (
                 <div className="seller-list">
-                  {matchingListings.map((listing) => {
+                  {visibleListings.map((listing) => {
                     const pendingPaymentOrder = sellerOrders.find(
                       (order) =>
                         order.item_id === listing.id &&
@@ -341,6 +361,18 @@ function SellerPanel({
                 </div>
               ) : (
                 <p className="empty-state">{myListings.length ? "No listings match your filters." : "You have not listed any items yet."}</p>
+              )}
+              {pageCount > 1 && (
+                <nav className="inventory-pagination" aria-label="My Listings pages">
+                  <button type="button" className="secondary-button" disabled={currentPage === 1} onClick={() => changeInventoryPage(currentPage - 1)}>Previous</button>
+                  {pageNumbers.map((page, index) => (
+                    <React.Fragment key={page}>
+                      {index > 0 && page - pageNumbers[index - 1] > 1 && <span aria-hidden="true">…</span>}
+                      <button type="button" className="secondary-button" aria-label={`Page ${page}`} aria-current={page === currentPage ? "page" : undefined} onClick={() => changeInventoryPage(page)}>{page}</button>
+                    </React.Fragment>
+                  ))}
+                  <button type="button" className="secondary-button" disabled={currentPage === pageCount} onClick={() => changeInventoryPage(currentPage + 1)}>Next</button>
+                </nav>
               )}
               <div className="seller-orders-panel">
                 <h3>Active Order Progress</h3>

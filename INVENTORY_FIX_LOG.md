@@ -142,3 +142,30 @@ Related fixes are recorded individually and may be committed together in meaning
 - Applies to every view using ProductCard, including Home, Shop and category listings.
 - Verification: production build passed. Browser measured all 72 Shop cards, including one- and two-line titles; every seller row ended 17px from its card bottom (including border). Visually reviewed adjacent cards with different title lengths.
 - Commit: approved by the user; grouped in `Keep the home preview concise and align product seller rows`.
+
+## 18. Paginate My Listings
+
+- Display ten matching listings per page with Previous, Next and a bounded set of page numbers. Announce the displayed range and matching total; retain the overall inventory counts independently of pagination.
+- Search and status filters operate on the full seller inventory and reset to page one. Close open action menus when changing pages; clamp the current page when the result count shrinks. Hide navigation for zero or one page and disable Previous/Next at the boundaries.
+- Verification: production build passed. Browser checked 30 listings over three pages, disabled boundary controls, searching across pages, zero matches, filter resets, unchanged totals, and a final partial page with one of 21 Available listings.
+- Commit: approved by the user; grouped in `Paginate inventory and Shop views and fill Home rows`. Frontend only; no database changes.
+
+## 19. Paginate My Sales tabs
+
+- Show ten rows per page in Active Listings, Sold Out Listings and Sales History. Keep tab counts based on all matching records, reset pagination on tab changes, and clamp the page when records change.
+- Reuse inventory status classification so hidden/removed listings are excluded from Active Listings and Sold Out Listings. Reserved listings are labelled Reserved.
+- Verification: production build passed; browser checked 21 active listings across three pages, a one-row last page, tab reset to four sold listings, and empty sales history. The demo has no orders, so multi-page sales history was not browser-tested.
+- Commit: approved by the user; grouped in `Paginate inventory and Shop views and fill Home rows`. No database changes.
+
+## 20. Paginate Shop using complete grid rows
+
+- Show 12 products per page: three rows of four on desktop and complete two-column rows at the existing intermediate breakpoint. Home uses the eight-item preview in fix 21.
+- Search, category, price and sort apply to the full loaded catalogue before pagination and reset to page one. Show matching totals, bounded page numbers and disabled boundary controls.
+- Verification: production build and eight existing frontend tests passed. Browser checked 12 cards on the first and last of six pages for 72 listings. Full-catalogue search and page reset were also verified during pagination checks.
+- Commit: approved by the user; grouped in `Paginate inventory and Shop views and fill Home rows`. Pagination currently limits rendered cards; the API still loads the full catalogue.
+
+## 21. Fill complete rows in Home's recent preview
+
+- Increase the recent preview from six to eight items: two rows of four on desktop or four rows of two at the intermediate breakpoint. Keep View all listings and newest-first ordering. Fewer than eight available listings still display normally.
+- Verification: production build passed; checked the eight-item limit against the existing four/two/one-column responsive grid.
+- Commit: approved by the user; grouped in `Paginate inventory and Shop views and fill Home rows`.
