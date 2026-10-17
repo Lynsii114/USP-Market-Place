@@ -4,6 +4,7 @@ from django.db import transaction
 
 from marketplace.models import Item, Category, User
 from marketplace.services import get_or_create_admin_user, hash_password, hide_listing
+from marketplace.category_catalog import BUILTIN_CATEGORIES
 
 
 class Command(BaseCommand):
@@ -14,7 +15,7 @@ class Command(BaseCommand):
         if settings.SETTINGS_MODULE != "usp_backend.local_settings" or settings.DATABASES["default"]["ENGINE"] != "django.db.backends.sqlite3":
             raise CommandError("Use --settings=usp_backend.local_settings for this demo command")
         admin = get_or_create_admin_user()
-        for name in ("Books", "Electronics", "Clothing", "Furniture", "Footwares"):
+        for name, _ in BUILTIN_CATEGORIES:
             Category.objects.get_or_create(name=name)
         for username in ("demo_seller", "demo_buyer"):
             User.objects.get_or_create(username=username, defaults={"email": f"{username}@example.com", "password_hash": hash_password("Demo314!"), "status": "active", "verified": True})

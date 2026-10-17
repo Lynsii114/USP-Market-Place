@@ -29,6 +29,7 @@ from django.utils.dateparse import parse_date
 # from jwt import PyJWKClient
 
 from .constants import ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_USERNAME
+from .category_catalog import DEFAULT_CATEGORY_NAMES, canonical_category_name, builtin_category_options
 from .exceptions import ApiError
 from .authentication import issue_token, token_user
 from .models import AdminNotification, Category, Conversation, EmailVerification, Item, Message, PasswordReset, PendingRegistration, Purchase, RatingReview, User, UserNotification, UserReport
@@ -43,7 +44,6 @@ email_logger = logging.getLogger("marketplace.email")
 VERIFICATION_CODE_TTL = timedelta(minutes=10)
 VERIFICATION_RESEND_COOLDOWN = timedelta(minutes=1)
 PENDING_REGISTRATIONS = {}
-DEFAULT_CATEGORY_NAMES = {"books", "electronics", "clothing", "furniture", "footwares"}
 CATEGORY_TABLE_READY = False
 
 
@@ -761,13 +761,20 @@ def ensure_category_table():
 
 def list_categories():
     ensure_category_table()
-    return [serialize_category(category) for category in Category.objects.order_by("name")]
+    options = builtin_category_options()
+    names = set(DEFAULT_CATEGORY_NAMES)
+    for category in Category.objects.order_by("name"):
+        name = canonical_category_name(category.name)
+        if name.casefold() not in names:
+            options.append({**serialize_category(category), "name": name, "built_in": False})
+            names.add(name.casefold())
+    return [option for option in options if option["name"] != "Other"] + [option for option in options if option["name"] == "Other"]
 
 
 def create_category(admin_id, data):
     require_admin(admin_id)
     ensure_category_table()
-    name = str(data.get("name") or "").strip()
+    name = canonical_category_name(data.get("name"))
     image = str(data.get("image") or "").strip()
     icon = str(data.get("icon") or "More").strip()[:32] or "More"
 
@@ -785,14 +792,18 @@ def create_category(admin_id, data):
     return serialize_category(category)
 
 
+@transaction.atomic
 def update_category(admin_id, category_id, data):
     require_admin(admin_id)
     ensure_category_table()
-    category = Category.objects.filter(id=category_id).first()
+    category = Category.objects.select_for_update().filter(id=category_id).first()
     if not category:
         raise ApiError("Category not found", 404)
 
-    name = str(data.get("name") or "").strip()
+    if canonical_category_name(category.name).casefold() in DEFAULT_CATEGORY_NAMES:
+        raise ApiError("Built-in categories cannot be edited", 403)
+
+    name = canonical_category_name(data.get("name"))
     image = str(data.get("image") or "").strip()
     icon = str(data.get("icon") or category.icon or "More").strip()[:32] or "More"
 
@@ -807,19 +818,27 @@ def update_category(admin_id, category_id, data):
     if image and not image.startswith("data:image/"):
         raise ApiError("Category image must be an uploaded image file", 400)
 
+    old_name = category.name
     category.name = name
     category.icon = icon
     category.image = image or None
     category.save(update_fields=["name", "icon", "image"])
+    if old_name != name:
+        Item.objects.filter(category__iexact=old_name).update(category=name)
     return serialize_category(category)
 
 
+@transaction.atomic
 def delete_category(admin_id, category_id):
     require_admin(admin_id)
     ensure_category_table()
-    category = Category.objects.filter(id=category_id).first()
+    category = Category.objects.select_for_update().filter(id=category_id).first()
     if not category:
         raise ApiError("Category not found", 404)
+    if canonical_category_name(category.name).casefold() in DEFAULT_CATEGORY_NAMES:
+        raise ApiError("Built-in categories cannot be deleted", 403)
+    if Item.objects.filter(category__iexact=category.name).exists():
+        raise ApiError("Move this category's listings to another category before deleting it", 409)
     name = category.name
     category.delete()
     notify_admin("Category deleted", f"{name} was removed from marketplace categories.", "category")
@@ -876,9 +895,11 @@ def normalize_listing_fields(data):
         if field in result:
             result[field] = result[field].strip()
     if "category" in result:
-        category = result["category"]
+        category = canonical_category_name(result["category"])
         if category.lower() not in DEFAULT_CATEGORY_NAMES and not Category.objects.filter(name__iexact=category).exists():
             raise ApiError("Choose an existing marketplace category", 422)
+        stored_category = Category.objects.filter(name__iexact=category).first()
+        result["category"] = category if category.casefold() in DEFAULT_CATEGORY_NAMES else stored_category.name
     return result
 
 
@@ -1652,7 +1673,7 @@ def confirm_order_received(purchase_id, buyer_id):
 
 def dashboard(admin_id):
     require_admin(admin_id)
-    today = date.today()
+    today = timezone.localdate()
     purchases = list(visible_purchases().order_by("-id"))
     counted_purchases = [
         purchase
@@ -1664,7 +1685,7 @@ def dashboard(admin_id):
     todays_sales = sum(
         purchase.total_amount or purchase.price
         for purchase in counted_purchases
-        if purchase.purchased_at and purchase.purchased_at.date() == today
+        if purchase.purchased_at and timezone.localtime(purchase.purchased_at).date() == today
     )
     return {
         "total_students": User.objects.filter(role="student").count(),

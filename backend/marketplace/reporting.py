@@ -4,6 +4,7 @@ All report figures are calculated on the server from COMPLETED order records
 only (FR4.3). Every entry point calls require_admin() first (FR4.5 / NFR2.4).
 """
 from collections import defaultdict
+from .category_catalog import canonical_category_name
 from datetime import datetime, time, timedelta, timezone as dt_timezone
 from io import BytesIO
 from xml.sax.saxutils import escape
@@ -78,7 +79,7 @@ def build_report(admin_id, period="daily", date_from="", date_to=""):
 
         item = items.setdefault(
             order["item_id"],
-            {"item_name": order["item_name"], "category": order["category"], "units_sold": 0, "revenue": 0.0},
+            {"item_name": order["item_name"], "category": canonical_category_name(order["category"]), "units_sold": 0, "revenue": 0.0},
         )
         item["units_sold"] += quantity
         item["revenue"] += amount

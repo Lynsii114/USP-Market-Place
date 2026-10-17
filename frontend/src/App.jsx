@@ -28,6 +28,7 @@ import { categories as defaultCategories } from "./data/categories";
 import logo from "../logo.png";
 import { prepareListingPhoto } from "./utils/listingPhoto";
 import { priceRange, matchesPrice } from "./utils/inventory.mjs";
+import { mergeCategoryOptions, canonicalCategoryName } from "./utils/categories.mjs";
 
 const PENDING_VERIFICATION_STORAGE_KEY = "usp-marketplace-pending-verification";
 
@@ -259,7 +260,7 @@ function Home() {
       const query = viewerId ? `?user_id=${viewerId}` : "";
       const response = await fetch(`${API_URL}/items${query}`);
       const data = await parseResponse(response, "Unable to load listings");
-      setListings(data);
+      setListings(data.map((listing) => ({ ...listing, category: canonicalCategoryName(listing.category) })));
       setCartItems((items) =>
         items.map((cartItem) => {
           const latestListing = data.find((listing) => listing.id === cartItem.id);
@@ -273,15 +274,7 @@ function Home() {
     }
   };
 
-  const mergeCategories = (storedCategories) => {
-    const merged = [...defaultCategories];
-    storedCategories.forEach((category) => {
-      if (!merged.some((existingCategory) => existingCategory.name.toLowerCase() === category.name.toLowerCase())) {
-        merged.push(category);
-      }
-    });
-    return merged;
-  };
+  const mergeCategories = (storedCategories) => mergeCategoryOptions(defaultCategories, storedCategories);
 
   const loadCategories = async () => {
     try {
@@ -335,7 +328,7 @@ function Home() {
       const query = viewerId ? `?viewer_id=${viewerId}` : "";
       const response = await fetch(`${API_URL}/users/${sellerId}/items${query}`);
       const data = await parseResponse(response, "Unable to load your listings");
-      setSellerListings(data);
+      setSellerListings(data.map((listing) => ({ ...listing, category: canonicalCategoryName(listing.category) })));
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to load your listings", "error");
     }

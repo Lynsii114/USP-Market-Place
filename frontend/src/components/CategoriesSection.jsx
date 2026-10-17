@@ -17,7 +17,7 @@ function CategoriesSection({ categories, selectedCategory, onChooseCategory }) {
             onClick={() => onChooseCategory(category.name)}
           >
             <div className="category-image">
-              {category.image ? <img src={category.image} alt={category.name} /> : <span>{category.icon}</span>}
+              {category.image ? <img src={category.image} alt={category.name} style={{ objectPosition: category.imagePosition || "center" }} loading="lazy" /> : <span>{category.icon}</span>}
             </div>
             <h3>{category.name}</h3>
           </button>

@@ -103,3 +103,20 @@ Related fixes are recorded individually and may be committed together in meaning
 - Verification: five frontend inventory/filter tests passed, production build passed, and browser checks confirmed Sold plus hoodie search returned one listing, totals stayed unchanged, and Clear filters restored the complete inventory. Visually reviewed the compact layout in the local browser.
 - Files: `frontend/src/components/SellerPanel.jsx`, `frontend/src/Home.css`.
 - Commit: approved by the user and grouped with priorities 1–5 in `Add inventory photo requirements, filters and seller overview`.
+
+## 13. Place photo format guidance beneath the picker
+
+- Problem: the accepted image types occupied the neighboring form column and appeared disconnected from the photo input.
+- Group the photo label, input and help text in a single form row. Place the accepted formats and size limit directly below the input in smaller, muted text, and retain the screen-reader description link.
+- Verification: production build passed; browser inspection confirmed the help text is below the picker and aligned with its left edge. Visually reviewed the updated form.
+- Commit: pending user verification and approval.
+
+## 14. Expand and synchronize listing categories
+
+- Add Study Supplies, Sports & Fitness, Personal Care and Other alongside Books, Electronics, Clothing, Furniture and Footwear. Correct the old Footwares label and keep existing listings compatible with it.
+- Share the built-in category definitions across API validation, category responses and demo seeding. Keep frontend options consistent across category cards, browsing filters, listing forms and administrator views. Other appears last and works as a regular product category.
+- Bundle representative stock photos locally for the four new categories. Sources, photographers and license details are recorded in `frontend/src/assets/categories/CREDITS.md`.
+- Keep administrator-created categories available without duplicate built-in options. Renaming a custom category updates its listings; deleting a category that still contains listings is rejected. Built-in categories cannot be renamed or deleted.
+- Verification: backend suite passed 93 tests and 53 subtests, with two MySQL-only concurrency tests skipped locally. Eight frontend tests and the production build passed. Browser verified all nine images loaded, the Sell Item options, administrator cards and the Other page.
+- During verification, corrected dashboard daily sales to use the configured timezone consistently; added a regression test for purchases near midnight in Fiji.
+- Commit: approved by the user; grouped in `Expand marketplace categories and add stock photos`. No push or production database change.

@@ -2,6 +2,7 @@
 
 ## What changed
 
+- Categories now include Books, Electronics, Clothing, Furniture, Footwear, Study Supplies, Sports & Fitness, Personal Care and Other, plus administrator-created categories. Existing Footwares values remain compatible. New category cards use bundled stock photos with sources in `frontend/src/assets/categories/CREDITS.md`. Custom category renames update their listings, and categories containing listings cannot be deleted.
 - Stock and checkout quantities must be bounded whole numbers. Negative, fractional, boolean, and overflowing values are rejected. Prices must be finite, greater than zero, and within the supported range. Required text is trimmed and checked against model lengths; categories must be built-in or administrator-created.
 - Listings require a real supported photo on creation and edits. Existing photos are retained when editing other fields; legacy photo-less listings need a photo when edited. JPEG/JFIF, PNG, WebP and AVIF uploads are supported; GIF is excluded. The browser optimizes photos and the API validates the actual image contents.
 - Marketplace/Shop/category price bounds combine with keyword/category search. My Listings supports seller search, status filters, and a summary of all listing counts and available units. Seller action menus support outside-click/Escape dismissal and adapt their position to available screen space. See INVENTORY_FIX_LOG.md for verification and commit status.
@@ -60,7 +61,7 @@ Pytest is forced to isolated in-memory test settings before collection. Existing
 
 From `frontend`, run `npm.cmd run build`.
 
-Verified locally: 85 tests passed, 49 subtests passed, and two MySQL-only concurrency tests were skipped. Five frontend inventory unit tests passed (`node --test src/utils/inventory.test.mjs` from frontend), along with the production build. Browser verification covered photo validation/save, combined buyer filters, seller filters/summary, and action-menu placement/dismissal, in addition to earlier login and listing visibility checks.
+Verified locally: 93 tests passed, 53 subtests passed, and two MySQL-only concurrency tests were skipped. Eight frontend tests passed (`node --test src/utils/inventory.test.mjs src/utils/categories.test.mjs` from frontend), along with the production build. Browser verification covered category photos/options, the Other page, photo validation/save, combined buyer filters, seller filters/summary, and action-menu placement/dismissal, in addition to earlier login and listing visibility checks. Daily dashboard sales also have a regression test for the configured timezone near midnight.
 
 SQLite verifies business logic, transactions, API validation, and authentication, but cannot prove MySQL row-lock behavior. Two real concurrency tests are included and explicitly skipped on SQLite. Run `manage.py test marketplace.tests` against a dedicated MySQL test configuration with schema auto-upgrade and cloud synchronization disabled before deploying. Do not point standalone scripts at a shared production database.
 

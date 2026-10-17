@@ -1,5 +1,6 @@
 from unittest.mock import patch
 import hashlib
+from datetime import datetime, timezone as datetime_timezone
 
 import pyotp
 from django.test import TestCase, Client, override_settings
@@ -341,3 +342,11 @@ class InventoryTests(TestCase):
         self.assertIn("login_challenge", result)
         self.seller.refresh_from_db()
         self.assertTrue(self.seller.password_hash.startswith("pbkdf2_sha256$"))
+
+    @override_settings(TIME_ZONE="Pacific/Fiji")
+    def test_dashboard_sales_use_the_configured_day_across_utc_midnight(self):
+        self.checkout(payment_method="mpaisa", payment_details={"phone_number": "9000000", "authorization_code": "123456"})
+        Purchase.objects.filter(item_id=self.item.id).update(purchased_at=datetime(2030, 1, 1, 18, tzinfo=datetime_timezone.utc))
+        with patch("django.utils.timezone.now", return_value=datetime(2030, 1, 1, 19, tzinfo=datetime_timezone.utc)):
+            result = services.dashboard(self.admin.id)
+        self.assertEqual(result["todays_sales"], 20)

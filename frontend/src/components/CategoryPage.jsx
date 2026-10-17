@@ -15,13 +15,7 @@ function CategoryPage({ categoryName, listings, onBack, onSelectListing, onViewS
         </button>
         <div>
           <h1>{categoryName}</h1>
-          <p>
-            {listings.length
-              ? `All products currently listed under ${categoryName}.`
-              : categoryName === "Other"
-              ? "More services coming soon."
-              : `All products currently listed under ${categoryName}.`}
-          </p>
+          <p>{categoryName === "Other" ? "Items that don't fit the other categories." : `Browse items in ${categoryName}.`}</p>
         </div>
       </div>
 
@@ -30,9 +24,7 @@ function CategoryPage({ categoryName, listings, onBack, onSelectListing, onViewS
         {(minimumPrice || maximumPrice) && <button type="button" className="secondary-button" onClick={() => { onMinimumPriceChange(""); onMaximumPriceChange(""); }}>Clear Prices</button>}
       </div>
 
-      {priceError ? null : categoryName === "Other" && !listings.length ? (
-        <p className="empty-state">More services coming soon.</p>
-      ) : listings.length ? (
+      {priceError ? null : listings.length ? (
         <div className="product-container">
           {listings.map((listing) => (
             <ProductCard listing={listing} showPrice onSelect={onSelectListing} onViewSeller={onViewSeller} key={listing.id} />
