@@ -1,3 +1,4 @@
+import { apiFetch as fetch, setAccessToken } from "./config/request";
 import React, { useEffect, useRef, useState } from "react";
 import "./Home.css";
 import AccountPage from "./components/AccountPage";
@@ -54,6 +55,7 @@ function Home() {
   const [resendAvailableAt, setResendAvailableAt] = useState(0);
   const [resendSecondsRemaining, setResendSecondsRemaining] = useState(0);
   const [authenticatorUserId, setAuthenticatorUserId] = useState(null);
+  const [loginChallenge, setLoginChallenge] = useState("");
   const [authenticatorSecret, setAuthenticatorSecret] = useState("");
   const [authenticatorUri, setAuthenticatorUri] = useState("");
   const [authenticatorQr, setAuthenticatorQr] = useState("");
@@ -417,6 +419,7 @@ function Home() {
         window.sessionStorage.removeItem(PENDING_VERIFICATION_STORAGE_KEY);
         if (data.authenticator_setup_required) {
           setAuthenticatorUserId(data.user_id);
+          setLoginChallenge(data.login_challenge);
           setAuthenticatorSecret(data.authenticator_secret);
           setAuthenticatorUri(data.authenticator_uri);
           setAuthenticatorQr(data.authenticator_qr);
@@ -424,6 +427,7 @@ function Home() {
           setAuthMode("authenticator-setup");
           setResendAvailableAt(0);
         } else {
+          setAccessToken(data.access_token);
           setCurrentUser(data.user);
           setAuthForm(EMPTY_AUTH_FORM);
           setAuthMode(null);
@@ -439,9 +443,10 @@ function Home() {
         const response = await fetch(`${API_URL}/users/verify-authenticator`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_id: authenticatorUserId, code: authForm.authenticator_code }),
+          body: JSON.stringify({ user_id: authenticatorUserId, code: authForm.authenticator_code, login_challenge: loginChallenge }),
         });
         const data = await parseResponse(response, "Authenticator verification failed");
+        setAccessToken(data.access_token);
         setCurrentUser(data.user);
         setAuthForm(EMPTY_AUTH_FORM);
         setAuthMode(null);
@@ -549,6 +554,7 @@ function Home() {
 
       if (data.authenticator_setup_required || data.authenticator_required) {
         setAuthenticatorUserId(data.user_id);
+        setLoginChallenge(data.login_challenge);
         setAuthenticatorSecret(data.authenticator_secret || "");
         setAuthenticatorUri(data.authenticator_uri || "");
         setAuthenticatorQr(data.authenticator_qr || "");
@@ -573,6 +579,7 @@ function Home() {
         return;
       }
 
+      setAccessToken(data.access_token);
       setCurrentUser(data.user);
       setAuthForm(EMPTY_AUTH_FORM);
       setAuthMode(null);
@@ -639,6 +646,8 @@ function Home() {
   };
 
   const handleLogout = () => {
+    setAccessToken(null);
+    setLoginChallenge("");
     setCurrentUser(null);
     setAuthMode("login");
     hideActivePages();

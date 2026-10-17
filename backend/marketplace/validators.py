@@ -1,4 +1,5 @@
 import re
+import math
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -31,25 +32,51 @@ def validate_signup(data):
         raise ApiError("Password must be at least 6 characters long", 422)
 
 
+MAX_INVENTORY_INTEGER = 2_147_483_647
+
+
+def whole_number(value, label, minimum=0):
+    # JSON booleans and floats must not be silently converted into inventory units.
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ApiError(f"{label} must be a whole number", 422)
+    if isinstance(value, str) and not re.fullmatch(r"[0-9]+", value.strip()):
+        raise ApiError(f"{label} must be a whole number", 422)
+    try:
+        number = int(value)
+    except (ValueError, OverflowError) as exc:
+        raise ApiError(f"{label} must be a whole number", 422) from exc
+    if not minimum <= number <= MAX_INVENTORY_INTEGER:
+        raise ApiError(f"{label} must be between {minimum} and {MAX_INVENTORY_INTEGER}", 422)
+    return number
+
+
 def validate_item_payload(data, partial=False):
+    if not isinstance(data, dict):
+        raise ApiError("Listing details must be a JSON object", 422)
     required = ["name", "price", "description", "category", "contact", "stock"]
     if not partial:
         missing = [field for field in required if field not in data]
         if missing:
             raise ApiError(f"Missing field: {missing[0]}", 422)
 
+    for field, limit in {"name": 256, "description": 1000, "category": 64, "contact": 128}.items():
+        if field in data:
+            value = data[field]
+            if not isinstance(value, str) or not value.strip():
+                raise ApiError(f"{field.capitalize()} is required", 422)
+            if len(value.strip()) > limit:
+                raise ApiError(f"{field.capitalize()} must be {limit} characters or fewer", 422)
+
     if "stock" in data:
-        try:
-            if int(data["stock"]) < 0:
-                raise ApiError("Stock cannot be negative", 422)
-        except (TypeError, ValueError) as exc:
-            raise ApiError("Stock must be a number", 422) from exc
+        whole_number(data["stock"], "Stock")
 
     if "price" in data:
         try:
-            float(data["price"])
-        except (TypeError, ValueError) as exc:
-            raise ApiError("Price must be a number", 422) from exc
+            price = float(data["price"])
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ApiError("Price must be a finite non-negative number", 422) from exc
+        if isinstance(data["price"], bool) or not math.isfinite(price) or price < 0 or price > 999_999_999.99:
+            raise ApiError("Price must be between 0 and 999999999.99", 422)
 
     payment_method = str(data.get("payment_method", "cash")).strip().lower()
     if payment_method not in {"mpaisa", "mycash", "cash"}:

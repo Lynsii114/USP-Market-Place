@@ -130,6 +130,7 @@ function SellerPanel({
                   value={listingForm.name}
                   onChange={onFieldChange}
                   placeholder="Computer Science Textbook"
+                  maxLength={256}
                   required
                 />
               </label>
@@ -142,6 +143,7 @@ function SellerPanel({
                   value={listingForm.price}
                   onChange={onFieldChange}
                   min="0"
+                  max="999999999.99"
                   step="0.01"
                   required
                 />
@@ -156,6 +158,7 @@ function SellerPanel({
                   onChange={onFieldChange}
                   min="0"
                   step="1"
+                  max="2147483647"
                   placeholder="1"
                   required
                 />
@@ -180,6 +183,7 @@ function SellerPanel({
                   value={listingForm.contact}
                   onChange={onFieldChange}
                   placeholder="Phone, email, or preferred contact"
+                  maxLength={128}
                   required
                 />
               </label>
@@ -216,6 +220,7 @@ function SellerPanel({
                   onChange={onFieldChange}
                   placeholder="Condition, pickup location, or extra details"
                   rows="4"
+                  maxLength={1000}
                   required
                 />
               </label>
@@ -248,15 +253,18 @@ function SellerPanel({
                         <strong>{listing.name}</strong>
                         <span>
                           ${Number(listing.price).toFixed(2)} - {listing.category} -{" "}
-                          {listing.status === "reserved"
-                            ? `Reserved for ${listing.reserved_buyer_username || "buyer"}`
-                            : listing.status === "sold" || Number(listing.stock) <= 0
-                              ? "Sold"
-                              : listing.status === "hidden"
-                                ? "Inactive"
-                                : `${listing.stock} in stock`}
+                          {listing.admin_restricted
+                            ? "Hidden by administrator"
+                            : listing.status === "hidden"
+                              ? "Inactive"
+                              : listing.status === "reserved"
+                                ? `Reserved for ${listing.reserved_buyer_username || "buyer"}`
+                                : listing.status === "sold" || Number(listing.stock) <= 0
+                                  ? "Sold"
+                                  : `${listing.stock} in stock`}
                         </span>
                       </div>
+                      {listing.admin_restricted && <p>{listing.removed_reason || "Contact an administrator to restore this listing."}</p>}
                       <div className="admin-action-dropdown">
                         <button
                           type="button"
@@ -272,7 +280,7 @@ function SellerPanel({
                             <button type="button" onClick={() => onViewListing(listing)}>
                               View Listing
                             </button>
-                            <button type="button" onClick={() => onEditListing(listing)}>
+                            <button type="button" disabled={listing.admin_restricted || isSubmitting} onClick={() => onEditListing(listing)}>
                               Edit
                             </button>
                             {listing.status === "reserved" ? (
@@ -287,20 +295,20 @@ function SellerPanel({
                                 {pendingPaymentOrder ? "Release Unpaid Order" : "Cancel Reservation"}
                               </button>
                             ) : (
-                              <button type="button" onClick={() => openReservationModal(listing)} disabled={listing.status === "sold" || Number(listing.stock) <= 0}>
+                              <button type="button" onClick={() => openReservationModal(listing)} disabled={listing.admin_restricted || listing.status === "hidden" || listing.status === "sold" || Number(listing.stock) <= 0 || isSubmitting}>
                                 Mark as Reserved
                               </button>
                             )}
                             <button
                               type="button"
                               onClick={() => onUpdateListingStatus(listing, "sold")}
-                              disabled={listing.status === "sold" || Boolean(pendingPaymentOrder)}
+                              disabled={listing.admin_restricted || listing.status === "sold" || Boolean(pendingPaymentOrder) || isSubmitting}
                             >
                               Mark as Sold
                             </button>
                             <div className="admin-action-divider" />
-                            <button type="button" className="danger-action" onClick={() => onUpdateListingStatus(listing, "hidden")}>
-                              Deactivate
+                            <button type="button" disabled={listing.admin_restricted || Boolean(pendingPaymentOrder) || isSubmitting || (listing.status === "hidden" && Number(listing.stock) <= 0)} className="danger-action" onClick={() => onUpdateListingStatus(listing, listing.status === "hidden" ? "available" : "hidden")}>
+                              {listing.status === "hidden" ? "Reactivate" : "Deactivate"}
                             </button>
                           </div>
                         )}

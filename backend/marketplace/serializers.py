@@ -30,6 +30,7 @@ def serialize_item(item):
         "reserved_buyer_id": item.reserved_buyer_id,
         "reserved_buyer_username": item.reserved_buyer_username,
         "removed_reason": item.removed_reason,
+        "admin_restricted": item.status == "removed" or (item.status == "hidden" and item.removed_reason is not None),
         "created_at": item.created_at,
     }
 

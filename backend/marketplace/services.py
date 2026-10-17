@@ -18,6 +18,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 
 from django.core.mail import BadHeaderError, send_mail
+from django.contrib.auth.hashers import make_password, check_password
 from django.conf import settings
 from django.db import DatabaseError, OperationalError, connection, transaction
 from django.db.models import Q
@@ -29,10 +30,11 @@ from django.utils.dateparse import parse_date
 
 from .constants import ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_USERNAME
 from .exceptions import ApiError
+from .authentication import issue_token, token_user
 from .models import AdminNotification, Category, Conversation, EmailVerification, Item, Message, PasswordReset, PendingRegistration, Purchase, RatingReview, User, UserNotification, UserReport
 from .queries import find_student, find_user_by_login, item_status, public_items, visible_items, visible_purchases
 from .serializers import serialize_category, serialize_conversation, serialize_item, serialize_item_for_user, serialize_message, serialize_notification, serialize_purchase, serialize_rating_review, serialize_user, serialize_user_report
-from .validators import is_usp_student_email, validate_item_payload, validate_signup
+from .validators import is_usp_student_email, validate_item_payload, validate_signup, whole_number
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +48,7 @@ CATEGORY_TABLE_READY = False
 
 
 def hash_password(password):
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+    return make_password(password)
 
 
 def require_active_user(user_id):
@@ -75,7 +77,8 @@ def get_or_create_admin_user():
     if admin_user:
         admin_user.username = ADMIN_USERNAME
         admin_user.name = ADMIN_USERNAME
-        admin_user.password_hash = hash_password(ADMIN_PASSWORD)
+        if not check_password(ADMIN_PASSWORD, admin_user.password_hash):
+            admin_user.password_hash = hash_password(ADMIN_PASSWORD)
         admin_user.role = "admin"
         admin_user.status = "active"
         admin_user.verified = True
@@ -249,7 +252,11 @@ def send_email(subject, message, recipient, failure_prefix="Failed to send email
         except Exception as exc:
             detail = describe_email_exception(exc)
             email_logger.exception("[email-debug] SMTP/email sending failed for %s: %s", recipient, detail)
-            raise ApiError(f"{failure_prefix}: {detail}", 502) from exc
+            if isinstance(exc, smtplib.SMTPAuthenticationError) and settings.EMAIL_HOST == "smtp.gmail.com":
+                public_detail = "Gmail rejected the SMTP login. Check EMAIL_HOST_USER and use a current 16-character Google App Password for EMAIL_HOST_PASSWORD."
+            else:
+                public_detail = f"SMTP email delivery failed ({type(exc).__name__}). Check the backend terminal for details."
+            raise ApiError(public_detail, 502) from exc
         if sent_count != 1:
             detail = "SMTP backend did not report a sent message. Check provider logs and sender verification."
             email_logger.error("[email-debug] SMTP/email sending failed for %s: %s", recipient, detail)
@@ -490,7 +497,7 @@ def verify_email(data):
     if not registration:
         user = User.objects.filter(email__iexact=email).first()
         if user and user.status == "active":
-            return {"user": serialize_user(user), "message": "Email already verified."}
+            raise ApiError("Email already verified. Please sign in with your password.", 409)
         raise ApiError("Verification request not found", 404)
     if pending_value(registration, "expires_at") <= timezone.now():
         delete_pending_registration(registration)
@@ -521,6 +528,7 @@ def verify_email(data):
         "user": None,
         "authenticator_setup_required": True,
         "user_id": user.id,
+        "login_challenge": issue_token(user, "mfa"),
         **authenticator_setup(user.authenticator_secret, user.email),
         "message": "Email verified. Set up Microsoft Authenticator to finish creating your account.",
     }
@@ -617,17 +625,24 @@ def login_user(data):
     login_name = str(data.get("username", "")).strip()
     password = str(data.get("password", ""))
 
-    if login_name.lower() == ADMIN_EMAIL.lower() and password == ADMIN_PASSWORD:
+    if ADMIN_PASSWORD and login_name.lower() == ADMIN_EMAIL.lower() and secrets.compare_digest(password, ADMIN_PASSWORD):
         admin_user = get_or_create_admin_user()
-        return {"user": serialize_user(admin_user), "message": "Admin login successful"}
+        return {"user": serialize_user(admin_user), "access_token": issue_token(admin_user), "message": "Admin login successful"}
 
     user = find_user_by_login(login_name)
-    if not user or user.password_hash != hash_password(password):
+    if user and user.role == "admin" and not settings.DEBUG and password == "Admin12345":
+        raise ApiError("Replace the development administrator password before production login", 403)
+    legacy_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
+    legacy_match = bool(user and secrets.compare_digest(user.password_hash, legacy_hash))
+    if not user or not (legacy_match or check_password(password, user.password_hash)):
         raise ApiError("Invalid username or password", 401)
     if user.status == "pending_verification":
         raise ApiError("Please verify your email before logging in", 403)
     if user.status == "suspended":
         raise ApiError("Account is suspended", 403)
+    if legacy_match:
+        user.password_hash = hash_password(password)
+        user.save(update_fields=["password_hash"])
     if not user.authenticator_secret or not user.authenticator_enabled:
         user.authenticator_secret = pyotp.random_base32()
         user.authenticator_enabled = False
@@ -635,6 +650,7 @@ def login_user(data):
         return {
             "authenticator_setup_required": True,
             "user_id": user.id,
+            "login_challenge": issue_token(user, "mfa"),
             "username": user.username,
             **authenticator_setup(user.authenticator_secret, user.email),
             "message": "Set up Microsoft Authenticator to finish signing in",
@@ -642,6 +658,7 @@ def login_user(data):
     return {
         "authenticator_required": True,
         "user_id": user.id,
+        "login_challenge": issue_token(user, "mfa"),
         "message": "Enter the code from Microsoft Authenticator",
     }
 
@@ -649,7 +666,9 @@ def login_user(data):
 def verify_authenticator(data):
     user_id = data.get("user_id")
     code = str(data.get("code", "")).strip().replace(" ", "")
-    user = User.objects.filter(id=user_id).first()
+    user = token_user(data.get("login_challenge", ""), "mfa")
+    if str(user.id) != str(user_id):
+        raise ApiError("Login challenge does not match this account", 401)
     if not user or not user.authenticator_secret:
         raise ApiError("Authenticator setup is not available for this account", 400)
     if not code.isdigit() or len(code) != 6 or not pyotp.TOTP(user.authenticator_secret).verify(code, valid_window=1):
@@ -657,7 +676,7 @@ def verify_authenticator(data):
     if not user.authenticator_enabled:
         user.authenticator_enabled = True
         user.save(update_fields=["authenticator_enabled"])
-    return {"user": serialize_user(user), "message": "Login successful"}
+    return {"user": serialize_user(user), "access_token": issue_token(user), "message": "Login successful"}
 
 
 ''' FUTURE MICROSOFT ENTRA INTEGRATION - enable after USP provides tenant configuration.
@@ -810,11 +829,14 @@ def delete_category(admin_id, category_id):
 def list_seller_items(seller_id, requesting_user_id=None):
     seller = require_active_user(seller_id)
     items = visible_items().filter(seller_id=seller.id).exclude(status="removed").order_by("-id")
+    if str(requesting_user_id) != str(seller.id):
+        items = items.exclude(status="hidden")
     return [serialize_item_for_user(item, requesting_user_id) for item in items]
 
 
 def create_item(data):
     validate_item_payload(data)
+    data = normalize_listing_fields(data)
     seller = require_active_user(data.get("seller_id"))
     stock = int(data["stock"])
 
@@ -841,9 +863,28 @@ def create_item(data):
 
 def get_public_item(item_id, requesting_user_id=None):
     item = Item.objects.filter(id=item_id).first()
-    if not item or item.status == "removed" or item.name.startswith("__test_"):
+    if not item or item.status == "removed" or item.name.startswith("__test_") or (
+        item.status == "hidden" and str(requesting_user_id) != str(item.seller_id)
+    ):
         raise ApiError("Item not found", 404)
     return serialize_item_for_user(item, requesting_user_id)
+
+
+def normalize_listing_fields(data):
+    result = dict(data)
+    for field in ("name", "description", "category", "contact"):
+        if field in result:
+            result[field] = result[field].strip()
+    if "category" in result:
+        category = result["category"]
+        if category.lower() not in DEFAULT_CATEGORY_NAMES and not Category.objects.filter(name__iexact=category).exists():
+            raise ApiError("Choose an existing marketplace category", 422)
+    return result
+
+
+def require_seller_mutable_listing(item):
+    if item.status == "removed" or (item.status == "hidden" and item.removed_reason is not None):
+        raise ApiError("This listing is restricted by an administrator", 403)
 
 
 def update_item(item_id, seller_id, data):
@@ -856,6 +897,10 @@ def update_item(item_id, seller_id, data):
             raise ApiError("Item not found", 404)
         if item.seller_id != seller.id:
             raise ApiError("You can only edit your own listings", 403)
+        require_seller_mutable_listing(item)
+
+        if not isinstance(data, dict):
+            raise ApiError("Listing details must be a JSON object", 422)
 
         validation_data = {
             "payment_method": item.payment_method,
@@ -863,6 +908,7 @@ def update_item(item_id, seller_id, data):
         }
         validation_data.update(data)
         validate_item_payload(validation_data, partial=True)
+        data = normalize_listing_fields(data)
         if ("price" in data or "stock" in data) and Purchase.objects.filter(
             item_id=item.id,
             payment_status="pending",
@@ -885,22 +931,29 @@ def update_item(item_id, seller_id, data):
         else:
             item.payment_number = ""
 
-        if item.status != "reserved":
+        if item.status not in {"reserved", "hidden", "removed"}:
             item.status = item_status(item.stock)
+        elif item.status == "reserved" and item.stock == 0:
+            item.status = "sold"
+            item.reserved_buyer_id = None
+            item.reserved_buyer_username = None
         item.save()
     return serialize_item_for_user(item, seller.id)
 
 
+@transaction.atomic
 def delete_item(item_id, seller_id):
-    item = Item.objects.filter(id=item_id).first()
+    seller = require_active_user(seller_id)
+    item = Item.objects.select_for_update().filter(id=item_id).first()
     if not item:
         raise ApiError("Item not found", 404)
-    if not seller_id or item.seller_id != int(seller_id):
+    if item.seller_id != seller.id:
         raise ApiError("You can only remove your own listings", 403)
-    if Purchase.objects.filter(
-        item_id=item.id, payment_status="pending", order_stage="order_placed",
+    require_seller_mutable_listing(item)
+    if Purchase.objects.filter(item_id=item.id).exclude(
+        order_stage__in=["completed", "cancelled", "canceled"],
     ).exists():
-        raise ApiError("An order is waiting for payment; cancel it before deleting this listing", 409)
+        raise ApiError("An active order exists; complete or cancel it before deleting this listing", 409)
     item.delete()
     return {"message": "Listing removed successfully."}
 
@@ -1005,6 +1058,9 @@ def reserve_item(item_id, seller_id, buyer_id):
             raise ApiError("Item not found", 404)
         if item.seller_id != seller.id:
             raise ApiError("You can only reserve your own listings", 403)
+        require_seller_mutable_listing(item)
+        if item.status == "hidden":
+            raise ApiError("Make the listing available before reserving it", 409)
         if Purchase.objects.filter(
             item_id=item.id, payment_status="pending", order_stage="order_placed",
         ).exists():
@@ -1047,6 +1103,7 @@ def update_item_seller_status(item_id, seller_id, status):
             raise ApiError("Item not found", 404)
         if item.seller_id != seller.id:
             raise ApiError("You can only update your own listings", 403)
+        require_seller_mutable_listing(item)
         if Purchase.objects.filter(
             item_id=item.id, payment_status="pending", order_stage="order_placed",
         ).exists():
@@ -1170,13 +1227,8 @@ def checkout_cart(buyer_id, data):
     for entry in requested_items:
         if not isinstance(entry, dict):
             raise ApiError("Invalid cart item", 422)
-        try:
-            item_id = int(entry.get("item_id"))
-            quantity = int(entry.get("quantity"))
-        except (TypeError, ValueError) as exc:
-            raise ApiError("Cart item IDs and quantities must be whole numbers", 422) from exc
-        if item_id <= 0 or quantity <= 0:
-            raise ApiError("Cart item IDs and quantities must be positive", 422)
+        item_id = whole_number(entry.get("item_id"), "Item ID", minimum=1)
+        quantity = whole_number(entry.get("quantity"), "Quantity", minimum=1)
         if item_id in item_quantities:
             raise ApiError("Each item can only appear once in your cart", 422)
         item_quantities[item_id] = quantity
@@ -1205,7 +1257,7 @@ def checkout_cart(buyer_id, data):
                     f"Cancel the existing unpaid order for {item.name} before checking it out again",
                     409,
                 )
-            if item.status == "removed":
+            if item.status in {"hidden", "removed"}:
                 raise ApiError(f"{item.name} is no longer available", 404)
             if item.seller_id == buyer.id:
                 raise ApiError("You cannot purchase your own listing", 400)
@@ -1281,6 +1333,7 @@ def checkout_cart(buyer_id, data):
     }
 
 
+@transaction.atomic
 def purchase_item(
     item_id,
     buyer_id,
@@ -1304,16 +1357,11 @@ def purchase_item(
     delivery_method_key = str(delivery_method or "").strip().lower()
     if delivery_method_key not in DELIVERY_METHODS:
         raise ApiError("Select a valid delivery method", 422)
-    try:
-        requested_quantity = int(quantity or 1)
-    except (TypeError, ValueError) as exc:
-        raise ApiError("Quantity must be a whole number", 422) from exc
-    if requested_quantity < 1:
-        raise ApiError("Quantity must be at least 1", 422)
+    requested_quantity = whole_number(quantity, "Quantity", minimum=1)
 
     buyer = require_active_user(buyer_id)
-    item = Item.objects.filter(id=item_id).first()
-    if not item or item.status == "removed":
+    item = Item.objects.select_for_update().filter(id=item_id).first()
+    if not item or item.status in {"hidden", "removed"}:
         raise ApiError("Item not found", 404)
     payment_method_key = str(payment_method or "").strip().lower()
     if payment_method_key not in PAYMENT_METHODS:
@@ -1322,6 +1370,8 @@ def purchase_item(
         raise ApiError("You cannot purchase your own listing", 400)
     if item.status == "reserved" and item.reserved_buyer_id != buyer.id:
         raise ApiError("This item is reserved for another buyer", 403)
+    if Purchase.objects.filter(item_id=item.id, payment_status="pending", order_stage="order_placed").exists():
+        raise ApiError("This listing already has an unpaid order", 409)
     if item.stock <= 0 or item.status == "sold":
         item.stock = 0
         item.status = "sold"
@@ -1421,23 +1471,28 @@ def list_seller_orders(seller_id):
     return [enrich_purchase_order(purchase) for purchase in purchases]
 
 
+@transaction.atomic
 def update_seller_order_stage(purchase_id, seller_id, stage):
     seller = require_active_user(seller_id)
     stage = str(stage or "").strip().lower()
     if stage not in SELLER_ORDER_STAGES:
         raise ApiError("Seller can only set Preparing Item or Ready for Collection", 422)
 
-    purchase = Purchase.objects.filter(id=purchase_id).first()
+    purchase = Purchase.objects.select_for_update().filter(id=purchase_id).first()
     if not purchase:
         raise ApiError("Order not found", 404)
     if purchase.seller_id != seller.id:
         raise ApiError("You can only update your own orders", 403)
-    if purchase.payment_status == "pending" and purchase.order_stage == "order_placed":
+    if purchase.order_stage in {"cancelled", "canceled"} or purchase.status in {"cancelled", "canceled"}:
+        raise ApiError("Cancelled orders cannot be reopened", 409)
+    if purchase.payment_status not in {"paid", "approved"}:
         raise ApiError("Confirm payment receipt before preparing this order", 400)
     if purchase.order_stage in {"item_received", "completed"}:
         raise ApiError("This order has already been received by the buyer", 400)
     if stage == "ready_for_collection" and purchase.order_stage not in {"preparing_item", "ready_for_collection"}:
         raise ApiError("Mark the order as preparing before setting it ready for collection", 400)
+    if stage == "preparing_item" and purchase.order_stage not in {"payment_confirmed", "preparing_item"}:
+        raise ApiError("Order progress cannot move backwards", 409)
 
     purchase.order_stage = stage
     purchase.status = "in_progress"
@@ -1522,7 +1577,7 @@ def cancel_order(purchase_id, user_id):
         if purchase.order_stage in {"cancelled", "canceled"} or purchase.status in {"cancelled", "canceled"}:
             return enrich_purchase_order(purchase)
 
-        if purchase.payment_status == "paid":
+        if purchase.payment_status in {"paid", "approved"}:
             raise ApiError("Payment has already been recorded as received. Arrange any refund directly with the buyer before changing this order.", 400)
 
         awaiting_payment = purchase.payment_status == "pending" or (
@@ -1537,10 +1592,12 @@ def cancel_order(purchase_id, user_id):
         if item and item.status != "removed":
             if not awaiting_payment:
                 item.stock = max(0, item.stock) + (purchase.quantity or 1)
-            item.status = item_status(item.stock)
-            if item.reserved_buyer_id == purchase.buyer_id:
+            owns_reservation = item.reserved_buyer_id == purchase.buyer_id
+            if owns_reservation:
                 item.reserved_buyer_id = None
                 item.reserved_buyer_username = None
+            if item.status not in {"hidden", "removed"} and (item.status != "reserved" or owns_reservation):
+                item.status = item_status(item.stock)
             item.save(update_fields=["stock", "status", "reserved_buyer_id", "reserved_buyer_username"])
 
     cancelled_by = "buyer" if user.id == purchase.buyer_id else "seller"
@@ -1561,9 +1618,10 @@ def cancel_order(purchase_id, user_id):
     return enrich_purchase_order(purchase)
 
 
+@transaction.atomic
 def confirm_order_received(purchase_id, buyer_id):
     buyer = require_active_user(buyer_id)
-    purchase = Purchase.objects.filter(id=purchase_id).first()
+    purchase = Purchase.objects.select_for_update().filter(id=purchase_id).first()
     if not purchase:
         raise ApiError("Order not found", 404)
     if purchase.buyer_id != buyer.id:
@@ -1892,13 +1950,14 @@ def list_admin_items(admin_id, search=""):
     return [serialize_admin_item(item) for item in query.order_by("-id")]
 
 
+@transaction.atomic
 def hide_listing(admin_id, item_id, reason):
     require_admin(admin_id)
-    item = Item.objects.filter(id=item_id).first()
+    item = Item.objects.select_for_update().filter(id=item_id).first()
     if not item:
         raise ApiError("Item not found", 404)
     item.status = "hidden"
-    item.removed_reason = reason
+    item.removed_reason = str(reason or "Hidden by an administrator")[:255]
     item.save()
     notify_user(
         item.seller_id,
@@ -1909,9 +1968,10 @@ def hide_listing(admin_id, item_id, reason):
     return serialize_admin_item(item)
 
 
+@transaction.atomic
 def remove_listing(admin_id, item_id, reason):
     require_admin(admin_id)
-    item = Item.objects.filter(id=item_id).first()
+    item = Item.objects.select_for_update().filter(id=item_id).first()
     if not item:
         raise ApiError("Item not found", 404)
     item.status = "removed"
@@ -1926,12 +1986,27 @@ def remove_listing(admin_id, item_id, reason):
     return serialize_admin_item(item)
 
 
+@transaction.atomic
 def restore_listing(admin_id, item_id):
     require_admin(admin_id)
-    item = Item.objects.filter(id=item_id).first()
+    item = Item.objects.select_for_update().filter(id=item_id).first()
     if not item:
         raise ApiError("Item not found", 404)
     item.status = item_status(item.stock)
+    pending = list(Purchase.objects.filter(item_id=item.id, payment_status="pending", order_stage="order_placed"))
+    if len(pending) > 1:
+        raise ApiError("Resolve conflicting unpaid orders before restoring this listing", 409)
+    if pending:
+        if pending[0].quantity > item.stock:
+            raise ApiError("Insufficient stock for the outstanding reservation", 409)
+        item.reserved_buyer_id = pending[0].buyer_id
+        item.reserved_buyer_username = pending[0].buyer_username
+        item.status = "reserved"
+    elif item.reserved_buyer_id is not None and item.stock > 0:
+        item.status = "reserved"
+    else:
+        item.reserved_buyer_id = None
+        item.reserved_buyer_username = None
     item.removed_reason = None
     item.save()
     notify_user(

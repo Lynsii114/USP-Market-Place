@@ -1,3 +1,4 @@
+import { apiFetch as fetch } from "../config/request";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReportsPanel from "./ReportsPanel";
 
