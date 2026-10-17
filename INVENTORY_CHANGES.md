@@ -2,7 +2,9 @@
 
 ## What changed
 
-- Stock and checkout quantities must be bounded whole numbers. Negative, fractional, boolean, and overflowing values are rejected. Prices must be finite, non-negative, and within the supported range. Required text is trimmed and checked against model lengths; categories must be built-in or administrator-created.
+- Stock and checkout quantities must be bounded whole numbers. Negative, fractional, boolean, and overflowing values are rejected. Prices must be finite, greater than zero, and within the supported range. Required text is trimmed and checked against model lengths; categories must be built-in or administrator-created.
+- Listings require a real supported photo on creation and edits. Existing photos are retained when editing other fields; legacy photo-less listings need a photo when edited. JPEG/JFIF, PNG, WebP and AVIF uploads are supported; GIF is excluded. The browser optimizes photos and the API validates the actual image contents.
+- Marketplace/Shop/category price bounds combine with keyword/category search. My Listings supports seller search, status filters, and a summary of all listing counts and available units. Seller action menus support outside-click/Escape dismissal and adapt their position to available screen space. See INVENTORY_FIX_LOG.md for verification and commit status.
 - Seller content edits preserve inactive listings. Administrator-hidden and removed listings reject seller mutations; hidden listings cannot be purchased through stale carts or direct purchase routes. The seller UI shows moderation restrictions and an explicit Reactivate action for seller-deactivated listings.
 - Unpaid orders reserve inventory until payment confirmation or cancellation. Cancellation is terminal and idempotent, preserves hidden state, and does not release a different buyer's reservation. Administrator restoration reconstructs pending reservations. Approved demo payments, like seller-confirmed payments, cannot be cancelled without a refund workflow.
 - Listing deletion and purchase helpers lock inventory in transactions. Active orders prevent deletion. Seller progress updates and buyer completion lock orders, enforce payment prerequisites, and reject backward/terminal transitions.
@@ -41,6 +43,8 @@ Open http://127.0.0.1:5173/. Local settings always use the ignored `backend/inve
 
 Local administrator: `Admin@usp.ac.fj` / `Admin12345`. After login choose **Go back**, then **My Activity → My Listings**. Five sample listings belong to this account, including inactive and administrator-hidden examples. Existing demo records are not overwritten when reseeding.
 
+The original seeded listings have no photos. Add a photo when editing one under the updated validation rules.
+
 Student accounts: `demo_seller` or `demo_buyer`, password `Demo314!`. First login displays authenticator setup; use an authenticator app as in the existing project. These accounts are local samples, not team or production accounts. For the student purchase flow, sign out of the administrator account, sign into demo_buyer, then buy a sample listing with cash. Sign back in as administrator to confirm payment under My Sales.
 
 ## Verify
@@ -56,7 +60,7 @@ Pytest is forced to isolated in-memory test settings before collection. Existing
 
 From `frontend`, run `npm.cmd run build`.
 
-Verified locally: 79 tests passed, 31 subtests passed, and two MySQL-only concurrency tests were skipped. The production frontend build passed. Browser verification covered administrator login, authenticated dashboard loading, and My Listings showing inactive and administrator-restricted inventory with the Reactivate action.
+Verified locally: 85 tests passed, 49 subtests passed, and two MySQL-only concurrency tests were skipped. Five frontend inventory unit tests passed (`node --test src/utils/inventory.test.mjs` from frontend), along with the production build. Browser verification covered photo validation/save, combined buyer filters, seller filters/summary, and action-menu placement/dismissal, in addition to earlier login and listing visibility checks.
 
 SQLite verifies business logic, transactions, API validation, and authentication, but cannot prove MySQL row-lock behavior. Two real concurrency tests are included and explicitly skipped on SQLite. Run `manage.py test marketplace.tests` against a dedicated MySQL test configuration with schema auto-upgrade and cloud synchronization disabled before deploying. Do not point standalone scripts at a shared production database.
 

@@ -27,6 +27,7 @@ import { API_URL } from "./config/api";
 import { categories as defaultCategories } from "./data/categories";
 import logo from "../logo.png";
 import { prepareListingPhoto } from "./utils/listingPhoto";
+import { priceRange, matchesPrice } from "./utils/inventory.mjs";
 
 const PENDING_VERIFICATION_STORAGE_KEY = "usp-marketplace-pending-verification";
 
@@ -82,6 +83,8 @@ function Home() {
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [marketplaceCategories, setMarketplaceCategories] = useState(defaultCategories);
   const [sortOption, setSortOption] = useState("newest");
+  const [minimumPrice, setMinimumPrice] = useState("");
+  const [maximumPrice, setMaximumPrice] = useState("");
   const [selectedListing, setSelectedListing] = useState(null);
   const [selectedSeller, setSelectedSeller] = useState(null);
   const [selectedSellerReviews, setSelectedSellerReviews] = useState(null);
@@ -770,6 +773,11 @@ function Home() {
         return;
       }
 
+      if (!listingForm.photo) {
+        showToast("Add a photo before saving your listing.", "error");
+        return;
+      }
+
       if (listingForm.stock === "") {
         showToast("Please enter the number of units in stock.", "error");
         return;
@@ -1043,6 +1051,8 @@ function Home() {
 
   const myListings = currentUser ? sellerListings : [];
   const normalizedSearch = searchQuery.trim().toLowerCase();
+  const selectedPriceRange = priceRange(minimumPrice, maximumPrice);
+  const priceFilterProps = { minimumPrice, maximumPrice, priceError: selectedPriceRange.error, onMinimumPriceChange: setMinimumPrice, onMaximumPriceChange: setMaximumPrice };
   const filteredListings = listings
     .filter((listing) => {
       const matchesSearch =
@@ -1054,7 +1064,7 @@ function Home() {
       const matchesCategory =
         selectedCategory === "All" || listing.category === selectedCategory;
 
-      return matchesSearch && matchesCategory;
+      return matchesSearch && matchesCategory && matchesPrice(listing.price, selectedPriceRange);
     })
     .sort((first, second) => {
       if (sortOption === "oldest") {
@@ -1081,7 +1091,7 @@ function Home() {
     });
   const activeCategoryListings =
     activeCategoryPage
-      ? listings.filter((listing) => listing.category === activeCategoryPage)
+      ? listings.filter((listing) => listing.category === activeCategoryPage && matchesPrice(listing.price, selectedPriceRange))
       : [];
   const selectedSellerListings = selectedSeller
     ? listings.filter((listing) => listing.seller_id === selectedSeller.id)
@@ -1127,6 +1137,8 @@ function Home() {
   };
 
   const handleBrowse = () => {
+    setMinimumPrice("");
+    setMaximumPrice("");
     hideActivePages();
     setSearchQuery("");
     setSelectedCategory("All");
@@ -1682,6 +1694,8 @@ function Home() {
   };
 
   const clearFilters = () => {
+    setMinimumPrice("");
+    setMaximumPrice("");
     setSearchQuery("");
     setSelectedCategory("All");
     setSortOption("newest");
@@ -1842,6 +1856,7 @@ function Home() {
       />
 
       <CategoryPage
+        {...priceFilterProps}
         categoryName={activeCategoryPage}
         listings={activeCategoryListings}
         onBack={() => setActiveCategoryPage(null)}
@@ -1899,8 +1914,10 @@ function Home() {
 
       {showShopPage && !activeCategoryPage && !showCartPanel && !showPurchasesPage && !activeLegalPage && !activeAccountPage && !showSellerPanel && (
         <ListingsSection
+          {...priceFilterProps}
           categories={marketplaceCategories}
           filteredListings={filteredListings}
+          onSearchChange={setSearchQuery}
           isLoadingListings={isLoadingListings}
           searchQuery={searchQuery}
           selectedCategory={selectedCategory}
@@ -1936,6 +1953,7 @@ function Home() {
           onEditListing={handleEditListing}
           onFieldChange={handleListingFieldChange}
           onLogin={() => openAuth("login")}
+          onCloseMenu={() => setOpenListingMenuId(null)}
           onMenuToggle={(listingId) =>
             setOpenListingMenuId((currentId) => (currentId === listingId ? null : listingId))
           }
@@ -1968,8 +1986,10 @@ function Home() {
           />
 
           <ListingsSection
+          {...priceFilterProps}
             categories={marketplaceCategories}
             filteredListings={filteredListings}
+          onSearchChange={setSearchQuery}
             isLoadingListings={isLoadingListings}
             searchQuery={searchQuery}
             selectedCategory={selectedCategory}

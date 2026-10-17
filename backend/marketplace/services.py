@@ -905,6 +905,7 @@ def update_item(item_id, seller_id, data):
         validation_data = {
             "payment_method": item.payment_method,
             "payment_number": item.payment_number,
+            "photo": item.photo,
         }
         validation_data.update(data)
         validate_item_payload(validation_data, partial=True)

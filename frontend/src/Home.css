@@ -3310,15 +3310,109 @@
   flex-shrink: 0;
 }
 
-.seller-list .admin-action-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 20;
+.admin-action-menu.listing-actions-popover {
+  position: fixed;
+  z-index: 90;
   min-width: 0;
   width: min(220px, calc(100vw - 64px));
   max-height: min(320px, 60vh);
   overflow-y: auto;
+}
+
+.inventory-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+}
+
+.inventory-overview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  color: var(--usp-muted);
+  font-size: 0.95rem;
+}
+
+.inventory-overview strong {
+  color: var(--usp-navy);
+  font-weight: 800;
+}
+
+.inventory-search {
+  flex: 1 1 240px;
+  max-width: 340px;
+  margin-left: auto;
+}
+
+.inventory-search input {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid var(--usp-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--usp-text);
+}
+
+.inventory-status-filters {
+  display: flex;
+  min-width: 0;
+  gap: 4px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--usp-border);
+  scrollbar-width: thin;
+}
+
+.inventory-status-filters button {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 7px;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--usp-muted);
+  font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.inventory-status-filters button[aria-pressed="true"] {
+  border-bottom-color: var(--usp-blue);
+  background: #edf3ff;
+  color: var(--usp-navy);
+}
+
+.inventory-status-count { font-size: 0.82rem; opacity: 0.8; }
+
+.inventory-clear {
+  padding: 6px 0;
+  border: 0;
+  background: transparent;
+  color: var(--usp-blue);
+  font: inherit;
+  cursor: pointer;
+}
+
+.inventory-result-count { margin: 0; color: var(--usp-muted); font-size: 0.9rem; }
+.inventory-result-count:empty { display: none; }
+
+.inventory-search input:focus-visible,
+.inventory-status-filters button:focus-visible,
+.inventory-clear:focus-visible { outline: 2px solid var(--usp-blue); outline-offset: 2px; }
+
+@media (max-width: 640px) {
+  .inventory-search { order: 2; flex-basis: 100%; max-width: none; margin-left: 0; }
+  .inventory-clear { margin-left: auto; }
+}
+
+.filter-error {
+  flex-basis: 100%;
+  margin: 0;
+  color: #991b1b;
 }
 
 .seller-list-item span {
@@ -3593,6 +3687,7 @@
 
 .listing-filters {
   display: flex;
+  flex-wrap: wrap;
   align-items: end;
   gap: 14px;
   margin: -6px 0 22px;
@@ -3613,7 +3708,9 @@
   font-weight: 800;
 }
 
-.listing-filters select {
+.listing-filters select,
+.listing-filters input {
+  min-width: 0;
   border: 1px solid var(--usp-border);
   border-radius: 8px;
   padding: 11px 12px;
@@ -3622,7 +3719,8 @@
   outline: none;
 }
 
-.listing-filters select:focus {
+.listing-filters select:focus,
+.listing-filters input:focus {
   border-color: var(--usp-blue);
   box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.12);
 }

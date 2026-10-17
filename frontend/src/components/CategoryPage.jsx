@@ -1,7 +1,8 @@
 import React from "react";
 import ProductCard from "./ProductCard";
+import PriceRangeFields from "./PriceRangeFields";
 
-function CategoryPage({ categoryName, listings, onBack, onSelectListing, onViewSeller }) {
+function CategoryPage({ categoryName, listings, onBack, onSelectListing, onViewSeller, minimumPrice, maximumPrice, priceError, onMinimumPriceChange, onMaximumPriceChange }) {
   if (!categoryName) {
     return null;
   }
@@ -24,7 +25,12 @@ function CategoryPage({ categoryName, listings, onBack, onSelectListing, onViewS
         </div>
       </div>
 
-      {categoryName === "Other" && !listings.length ? (
+      <div className="listing-filters">
+        <PriceRangeFields {...{ minimumPrice, maximumPrice, priceError, onMinimumPriceChange, onMaximumPriceChange }} />
+        {(minimumPrice || maximumPrice) && <button type="button" className="secondary-button" onClick={() => { onMinimumPriceChange(""); onMaximumPriceChange(""); }}>Clear Prices</button>}
+      </div>
+
+      {priceError ? null : categoryName === "Other" && !listings.length ? (
         <p className="empty-state">More services coming soon.</p>
       ) : listings.length ? (
         <div className="product-container">
@@ -33,7 +39,7 @@ function CategoryPage({ categoryName, listings, onBack, onSelectListing, onViewS
           ))}
         </div>
       ) : (
-        <p className="empty-state">No items listed in {categoryName} yet.</p>
+        <p className="empty-state">No items match these filters in {categoryName}.</p>
       )}
     </section>
   );

@@ -20,6 +20,7 @@ from marketplace.models import AdminNotification, Conversation, Item, Message, P
 from marketplace.exceptions import ApiError
 from marketplace.schema import ensure_schema
 from marketplace.services import PENDING_REGISTRATIONS, VERIFICATION_CODE_TTL, hash_verification_code, send_email
+from testing_images import TEST_PHOTO
 
 ensure_schema()
 
@@ -108,6 +109,7 @@ def test_signup_login_and_create_hidden_listing():
         "/api/items",
         {
             "name": "__test_django_listing",
+            "photo": TEST_PHOTO,
             "price": 10,
             "description": "Hidden test listing",
             "category": "Books",
@@ -150,6 +152,7 @@ def test_public_items_show_listings_from_all_accounts():
                 "/api/items",
                 {
                     "name": name,
+                    "photo": TEST_PHOTO,
                     "price": 10,
                     "description": "Cross-account visibility test listing",
                     "category": "Books",
@@ -210,6 +213,7 @@ def test_listing_payment_number_validation(payment_method, payment_number, expec
     seller = create_active_test_user("payment_listing_seller", suffix)
     payload = {
         "name": f"__test_payment_listing_{suffix}",
+        "photo": TEST_PHOTO,
         "price": 10,
         "description": "Payment details validation test",
         "category": "Books",

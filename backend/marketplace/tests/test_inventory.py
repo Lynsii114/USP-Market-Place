@@ -9,6 +9,7 @@ from marketplace import services
 from marketplace.authentication import issue_token
 from marketplace.exceptions import ApiError
 from marketplace.models import User, Item, Purchase, Conversation, Category
+from testing_images import TEST_PHOTO, image_payload
 
 
 class InventoryTests(TestCase):
@@ -20,6 +21,7 @@ class InventoryTests(TestCase):
         self.admin = self.user("administrator", role="admin")
         self.item = Item.objects.create(
             name="IS314 textbook", price=20, description="Used textbook",
+            photo=TEST_PHOTO,
             category="Books", contact="Campus pickup", stock=3,
             seller_id=self.seller.id, seller_username=self.seller.username,
         )
@@ -31,7 +33,37 @@ class InventoryTests(TestCase):
         return Client(HTTP_AUTHORIZATION=f"Bearer {issue_token(user)}")
 
     def payload(self, **updates):
-        return {"name": "New book", "price": 10, "description": "Good condition", "category": "Books", "contact": "Library", "stock": 2, "seller_id": self.seller.id, **updates}
+        return {"name": "New book", "price": 10, "description": "Good condition", "category": "Books", "contact": "Library", "stock": 2, "photo": TEST_PHOTO, "seller_id": self.seller.id, **updates}
+
+    def test_listing_requires_a_real_supported_photo(self):
+        client = self.client_for(self.seller)
+        for photo in (None, "", "https://example.com/photo.png", "data:image/png;base64,aGVsbG8=", image_payload("GIF"), TEST_PHOTO.replace("image/png", "image/jpeg")):
+            with self.subTest(photo=photo):
+                response = client.post("/api/items", self.payload(photo=photo), content_type="application/json")
+                self.assertEqual(response.status_code, 422, response.content)
+        payload = self.payload()
+        del payload["photo"]
+        self.assertEqual(client.post("/api/items", payload, content_type="application/json").status_code, 422)
+        for image_format in ("PNG", "JPEG", "WEBP"):
+            with self.subTest(image_format=image_format):
+                self.assertEqual(client.post("/api/items", self.payload(photo=image_payload(image_format)), content_type="application/json").status_code, 200)
+
+    def test_edit_keeps_existing_photo_and_rejects_removing_it(self):
+        client = self.client_for(self.seller)
+        response = client.put(f"/api/items/{self.item.id}", {"description": "Updated details"}, content_type="application/json")
+        self.assertEqual(response.status_code, 200, response.content)
+        response = client.put(f"/api/items/{self.item.id}", {"photo": ""}, content_type="application/json")
+        self.assertEqual(response.status_code, 422)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.photo, TEST_PHOTO)
+
+    def test_legacy_listing_needs_photo_when_edited(self):
+        self.item.photo = None
+        self.item.save()
+        response = self.client_for(self.seller).put(f"/api/items/{self.item.id}", {"description": "Changed"}, content_type="application/json")
+        self.assertEqual(response.status_code, 422)
+        response = self.client_for(self.seller).put(f"/api/items/{self.item.id}", {"description": "Changed", "photo": TEST_PHOTO}, content_type="application/json")
+        self.assertEqual(response.status_code, 200)
 
     def checkout(self, item=None, buyer=None, **updates):
         return services.checkout_cart((buyer or self.buyer).id, {

@@ -1,5 +1,11 @@
 import re
 import math
+import base64
+import binascii
+import warnings
+from io import BytesIO
+
+from PIL import Image, UnidentifiedImageError
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -50,10 +56,36 @@ def whole_number(value, label, minimum=0):
     return number
 
 
+def validate_listing_photo(photo):
+    if not isinstance(photo, str) or not photo.strip():
+        raise ApiError("Add a photo before saving your listing", 422)
+    if len(photo) > 1_400_000:
+        raise ApiError("The photo is too large. Choose a smaller image", 422)
+    match = re.fullmatch(r"data:image/(jpeg|png|webp|avif);base64,([A-Za-z0-9+/=]+)", photo)
+    if not match:
+        raise ApiError("Upload a JPEG, PNG, WebP or AVIF photo", 422)
+    try:
+        content = base64.b64decode(match.group(2), validate=True)
+        if len(content) > 1024 * 1024:
+            raise ApiError("The photo is too large. Choose a smaller image", 422)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(content)) as image:
+                if image.format != {"jpeg": "JPEG", "png": "PNG", "webp": "WEBP", "avif": "AVIF"}[match.group(1)]:
+                    raise ApiError("The photo contents do not match its image format", 422)
+                if image.width * image.height > 16_000_000:
+                    raise ApiError("Choose a photo with smaller dimensions", 422)
+                image.verify()
+            with Image.open(BytesIO(content)) as image:
+                image.load()
+    except (ValueError, OSError, SyntaxError, binascii.Error, UnidentifiedImageError, Image.DecompressionBombWarning, Image.DecompressionBombError) as exc:
+        raise ApiError("This photo could not be opened. Choose another image", 422) from exc
+
+
 def validate_item_payload(data, partial=False):
     if not isinstance(data, dict):
         raise ApiError("Listing details must be a JSON object", 422)
-    required = ["name", "price", "description", "category", "contact", "stock"]
+    required = ["name", "price", "description", "category", "contact", "stock", "photo"]
     if not partial:
         missing = [field for field in required if field not in data]
         if missing:
@@ -69,6 +101,9 @@ def validate_item_payload(data, partial=False):
 
     if "stock" in data:
         whole_number(data["stock"], "Stock")
+
+    if "photo" in data:
+        validate_listing_photo(data["photo"])
 
     if "price" in data:
         try:

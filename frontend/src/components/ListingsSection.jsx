@@ -1,13 +1,20 @@
 import React from "react";
 import ProductCard from "./ProductCard";
+import PriceRangeFields from "./PriceRangeFields";
 
 function ListingsSection({
   categories,
   filteredListings,
   isLoadingListings,
   searchQuery,
+  onSearchChange,
   selectedCategory,
   sortOption,
+  minimumPrice,
+  maximumPrice,
+  priceError,
+  onMinimumPriceChange,
+  onMaximumPriceChange,
   title = "Recent Listings",
   description = "",
   onClearFilters,
@@ -24,6 +31,9 @@ function ListingsSection({
       </div>
 
       <div className="listing-filters">
+        <label>Search Items
+          <input type="search" value={searchQuery} placeholder="Item, category or seller" onChange={(event) => onSearchChange(event.target.value)} />
+        </label>
         <label>
           Category
           <select value={selectedCategory} onChange={(event) => onSelectCategory(event.target.value)}>
@@ -48,14 +58,16 @@ function ListingsSection({
           </select>
         </label>
 
-        {(searchQuery || selectedCategory !== "All" || sortOption !== "newest") && (
+        <PriceRangeFields {...{ minimumPrice, maximumPrice, priceError, onMinimumPriceChange, onMaximumPriceChange }} />
+
+        {(searchQuery || selectedCategory !== "All" || sortOption !== "newest" || minimumPrice || maximumPrice) && (
           <button type="button" className="secondary-button" onClick={onClearFilters}>
             Clear Filters
           </button>
         )}
       </div>
 
-      {isLoadingListings ? (
+      {priceError ? null : isLoadingListings ? (
         <p className="empty-state">Loading listings...</p>
       ) : filteredListings.length ? (
         <div className="product-container">
@@ -64,7 +76,7 @@ function ListingsSection({
           ))}
         </div>
       ) : (
-        <p className="empty-state">No listings match your search or selected category.</p>
+        <p className="empty-state">No listings match your filters.</p>
       )}
     </section>
   );
