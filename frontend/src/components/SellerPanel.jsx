@@ -94,12 +94,14 @@ function SellerPanel({
         <>
           {activeSellerTab === "add-listing" ? (
             <form className="listing-form" onSubmit={onSubmit}>
-              <label>
-                Item Photo (required)
-                <input type="file" accept={LISTING_PHOTO_ACCEPT} onChange={onPhotoChange} aria-describedby="listing-photo-help" />
-              </label>
-              <p id="listing-photo-help">JPEG, PNG, WebP or AVIF. Max 5 MB.</p>
-              {isProcessingPhoto && <p role="status">Preparing photo preview…</p>}
+              <div className="listing-photo-field">
+                <label>
+                  Item Photo (required)
+                  <input type="file" accept={LISTING_PHOTO_ACCEPT} onChange={onPhotoChange} aria-describedby="listing-photo-help" />
+                </label>
+                <p className="listing-photo-help" id="listing-photo-help">JPEG, PNG, WebP or AVIF. Max 5 MB.</p>
+                {isProcessingPhoto && <p role="status">Preparing photo preview…</p>}
+              </div>
 
               {listingForm.photo && (
                 <div className="confirmed-photo">
