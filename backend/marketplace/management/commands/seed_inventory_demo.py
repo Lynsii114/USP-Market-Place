@@ -58,7 +58,6 @@ class Command(BaseCommand):
             photo = category_photo(photo_path)
             for name, price in entries:
                 seller = sellers[counter % len(sellers)]
-                # Sold/inactive examples belong to admin for a convenient live demo.
                 status = "sold" if counter in (8, 26, 50) else "hidden" if counter in (17, 42, 66) else "available"
                 if status != "available":
                     seller = admin

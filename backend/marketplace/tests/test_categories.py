@@ -41,7 +41,7 @@ class CategoryTests(TestCase):
         item = Item.objects.create(name="Legacy shoes", price=10, description="Used", category="Footwares", contact="Campus", stock=1, seller_id=self.seller.id, seller_username=self.seller.username)
         self.assertEqual(Client().get(f"/api/items/{item.id}").json()["category"], "Footwear")
         item.refresh_from_db()
-        self.assertEqual(item.category, "Footwares")  # Compatibility needs no destructive migration.
+        self.assertEqual(item.category, "Footwares")
         response = self.client.post("/api/items", self.payload("footwares"), content_type="application/json")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(Item.objects.get(id=response.json()["id"]).category, "Footwear")

@@ -1,4 +1,4 @@
-"""Small, real image payloads used by API tests."""
+"""Image fixtures for API tests."""
 import base64
 from io import BytesIO
 
