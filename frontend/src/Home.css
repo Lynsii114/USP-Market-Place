@@ -3806,6 +3806,8 @@
 }
 
 .product-card {
+  display: flex;
+  flex-direction: column;
   background: var(--usp-card);
   border: 1px solid var(--usp-border);
   border-radius: 8px;
@@ -3886,9 +3888,15 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin: 0 16px 16px;
+  margin: auto 16px 16px;
   padding-top: 12px;
   border-top: 1px solid var(--usp-border);
+}
+
+.product-card-seller button,
+.product-card-seller strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .product-card-seller span {

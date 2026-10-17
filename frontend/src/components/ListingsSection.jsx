@@ -22,15 +22,18 @@ function ListingsSection({
   onSelectListing,
   onViewSeller,
   onSortChange,
+  preview = false,
+  onViewAll,
 }) {
   return (
     <section className="listings" id="listings">
       <div className="section-heading">
         <h2>{title}</h2>
-        {description ? <p>{description}</p> : selectedCategory !== "All" && <p>{`Showing products listed under ${selectedCategory}.`}</p>}
+        {description ? <p>{description}</p> : !preview && selectedCategory !== "All" && <p>{`Showing products listed under ${selectedCategory}.`}</p>}
+        {preview && <button type="button" className="secondary-button" onClick={onViewAll}>View all listings</button>}
       </div>
 
-      <div className="listing-filters">
+      {!preview && <div className="listing-filters">
         <label>Search Items
           <input type="search" value={searchQuery} placeholder="Item, category or seller" onChange={(event) => onSearchChange(event.target.value)} />
         </label>
@@ -65,9 +68,9 @@ function ListingsSection({
             Clear Filters
           </button>
         )}
-      </div>
+      </div>}
 
-      {priceError ? null : isLoadingListings ? (
+      {!preview && priceError ? null : isLoadingListings ? (
         <p className="empty-state">Loading listings...</p>
       ) : filteredListings.length ? (
         <div className="product-container">
@@ -76,7 +79,7 @@ function ListingsSection({
           ))}
         </div>
       ) : (
-        <p className="empty-state">No listings match your filters.</p>
+        <p className="empty-state">{preview ? "No listings available yet." : "No listings match your filters."}</p>
       )}
     </section>
   );

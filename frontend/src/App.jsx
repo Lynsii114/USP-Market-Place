@@ -1979,19 +1979,13 @@ function Home() {
           />
 
           <ListingsSection
-          {...priceFilterProps}
-            categories={marketplaceCategories}
-            filteredListings={filteredListings}
-          onSearchChange={setSearchQuery}
+            preview
+            onViewAll={handleBrowse}
+            description="The latest items added by the USP community."
+            filteredListings={[...listings].sort((first, second) => second.id - first.id).slice(0, 6)}
             isLoadingListings={isLoadingListings}
-            searchQuery={searchQuery}
-            selectedCategory={selectedCategory}
-            sortOption={sortOption}
-            onClearFilters={clearFilters}
-            onSelectCategory={setSelectedCategory}
             onSelectListing={setSelectedListing}
             onViewSeller={handleViewSellerListings}
-            onSortChange={setSortOption}
           />
 
           <InfoSection />

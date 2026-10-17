@@ -109,7 +109,7 @@ Related fixes are recorded individually and may be committed together in meaning
 - Problem: the accepted image types occupied the neighboring form column and appeared disconnected from the photo input.
 - Group the photo label, input and help text in a single form row. Place the accepted formats and size limit directly below the input in smaller, muted text, and retain the screen-reader description link.
 - Verification: production build passed; browser inspection confirmed the help text is below the picker and aligned with its left edge. Visually reviewed the updated form.
-- Commit: pending user verification and approval.
+- Commit: approved by the user; committed in `d58d561`.
 
 ## 14. Expand and synchronize listing categories
 
@@ -120,3 +120,25 @@ Related fixes are recorded individually and may be committed together in meaning
 - Verification: backend suite passed 93 tests and 53 subtests, with two MySQL-only concurrency tests skipped locally. Eight frontend tests and the production build passed. Browser verified all nine images loaded, the Sell Item options, administrator cards and the Other page.
 - During verification, corrected dashboard daily sales to use the configured timezone consistently; added a regression test for purchases near midnight in Fiji.
 - Commit: approved by the user; grouped in `Expand marketplace categories and add stock photos`. No push or production database change.
+
+## 15. Populate the local presentation marketplace
+
+- Extend the isolated local seed command with 75 fictional listings across all nine categories, distributed among admin and three clearly named showcase sellers. Include varied prices and stock, 69 available records, three sold and three seller-inactive records.
+- Reuse bundled category photos as representative images; descriptions explicitly identify fictional demo data and category imagery. Personal-care examples are new/unopened. No fake reservations or transaction histories are created.
+- Preserve existing listings and edited demo records on reruns. Identify showcase records by the `[IS314 showcase demo]` description prefix and seller/name combination. The command refuses non-local settings and non-SQLite engines.
+- Verification: first execution added 75 records; second added zero and found 75 existing. Local database contains 81 listings total, including the previous six; 72 are publicly available. Browser confirmed the populated Shop view.
+- Commit: approved by the user; committed in `8787903`. Local SQLite data only; shared MySQL unchanged.
+
+## 16. Keep Recent Listings on Home concise
+
+- Show only the six newest available listings on Home, independent of Shop filters. Remove the repeated search/category/sort/price controls from this preview; the hero search still opens Shop.
+- Add View all listings to open the complete Shop with filters reset. Shop retains all available products and its search, category, sorting and price controls. Product details and seller links remain available in the preview.
+- Verification: production build passed; browser checks recorded for the six-card Home preview and full Shop navigation.
+- Commit: approved by the user; grouped in `Keep the home preview concise and align product seller rows`.
+
+## 17. Align seller details at the bottom of product cards
+
+- Use a vertical flex layout and an automatic top margin on the seller row so variable title heights do not pull seller details upward. Keep consistent bottom padding and allow long seller names to wrap inside the card.
+- Applies to every view using ProductCard, including Home, Shop and category listings.
+- Verification: production build passed. Browser measured all 72 Shop cards, including one- and two-line titles; every seller row ended 17px from its card bottom (including border). Visually reviewed adjacent cards with different title lengths.
+- Commit: approved by the user; grouped in `Keep the home preview concise and align product seller rows`.
