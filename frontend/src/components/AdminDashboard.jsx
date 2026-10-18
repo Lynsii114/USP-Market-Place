@@ -1,3 +1,4 @@
+import Breadcrumbs from "./Breadcrumbs";
 import { apiFetch as fetch } from "../config/request";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReportsPanel from "./ReportsPanel";
@@ -514,13 +515,13 @@ function AdminDashboard({
         <section className="admin-access-panel">
           <img src={logo} alt="USP logo" />
           <h1>Admin Access Required</h1>
-          <p>Only active USP Buy & Sell administrators can open this dashboard.</p>
+          <p>Only active USP Marketplace administrators can open this dashboard.</p>
           <div className="admin-access-actions">
             <button type="button" className="auth-submit" onClick={onLogin}>
               Admin Login
             </button>
             <button type="button" className="secondary-button" onClick={onMarketplace}>
-              Back to USP Buy & Sell
+              Back to USP Marketplace
             </button>
           </div>
         </section>
@@ -534,7 +535,7 @@ function AdminDashboard({
         <div className="admin-brand">
           <img src={logo} alt="USP logo" />
           <div>
-            <strong>USP Buy & Sell</strong>
+            <strong>USP Marketplace</strong>
             <span>Administrator</span>
           </div>
         </div>
@@ -556,6 +557,7 @@ function AdminDashboard({
       </aside>
 
       <section className="admin-content">
+        <Breadcrumbs items={[{ label: "Home", onClick: onMarketplace }, { label: "Administration", onClick: () => setActiveTab("Dashboard") }, { label: activeTab }]} />
         <div className="admin-topbar">
           <button
             type="button"
@@ -635,7 +637,7 @@ function AdminDashboard({
               )}
             </div>
             <button type="button" className="secondary-button" onClick={onMarketplace}>
-              USP Buy & Sell
+              USP Marketplace
             </button>
           </div>
         </div>

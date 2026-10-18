@@ -1,3 +1,4 @@
+import ContextHelp from "./ContextHelp";
 import React, { useEffect, useState } from "react";
 import OrderProgressTracker from "./OrderProgressTracker";
 import { LISTING_PHOTO_ACCEPT } from "../utils/listingPhoto";
@@ -5,6 +6,7 @@ import ListingActionsMenu from "./ListingActionsMenu";
 import { inventorySummary, sellerListingStatus, availableStock } from "../utils/inventory.mjs";
 
 function SellerPanel({
+  onOpenHelp,
   activeSellerTab,
   categories,
   currentUser,
@@ -184,7 +186,7 @@ function SellerPanel({
               </label>
 
               <div className="listing-quantity">
-                <label className="multiple-units-toggle">
+                <div className="field-label-row"><label className="multiple-units-toggle">
                   <input
                     type="checkbox"
                     name="multiple_units"
@@ -193,6 +195,7 @@ function SellerPanel({
                   />
                   Multiple units
                 </label>
+                <ContextHelp label="Help with multiple units" topic="listing" onOpenHelp={onOpenHelp}>Enable this for several identical items at the same price per unit. Leave it unchecked to sell one item. The available quantity decreases as units are bought or reserved.</ContextHelp></div>
                 {listingForm.multiple_units ? (
                   <label>
                     Quantity available
@@ -392,7 +395,7 @@ function SellerPanel({
                 </nav>
               )}
               <div className="seller-orders-panel">
-                <h3>Active Order Progress</h3>
+                <div className="field-label-row"><h3>Active Order Progress</h3><ContextHelp label="Help with order progress" topic="orders" onOpenHelp={onOpenHelp}>Track payment, preparation and handoff separately. A reservation holds stock while payment is pending. Sold out describes the listing’s remaining stock, rather than the order’s delivery progress.</ContextHelp></div>
                 {activeSellerOrders.length ? (
                   <div className="seller-order-list">
                     {activeSellerOrders.map((order) => (

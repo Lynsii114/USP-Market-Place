@@ -1,7 +1,9 @@
+import ContextHelp from "./ContextHelp";
 import { availableStock } from "../utils/inventory.mjs";
 import React, { useRef, useState } from "react";
 
 function CartPage({
+  onOpenHelp,
   cartItems,
   cartTotal,
   currentUser,
@@ -263,7 +265,7 @@ function CartPage({
           </div>
 
           <div className="payment-method-panel">
-            <span>Payment Method</span>
+            <div className="field-label-row"><span>Payment Method</span><ContextHelp label="Help with payment methods" topic="payments" onOpenHelp={onOpenHelp}>Pay cash to the seller at pickup or delivery. M-PAiSA, MyCash and card payments are demonstrations and do not transfer real money.</ContextHelp></div>
             <div className="payment-method-options">
               {paymentOptions.map((option) => (
                 <label className={paymentMethod === option.value ? "payment-option selected" : "payment-option"} key={option.value}>

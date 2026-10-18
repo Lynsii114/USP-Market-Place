@@ -12,6 +12,8 @@ import HeroSection from "./components/HeroSection";
 import InfoSection from "./components/InfoSection";
 import ListingsSection from "./components/ListingsSection";
 import LegalPage from "./components/LegalPage";
+import HelpPage from "./components/HelpPage";
+import Breadcrumbs from "./components/Breadcrumbs";
 import Navbar from "./components/Navbar";
 import PastPurchasesPage from "./components/PastPurchasesPage";
 import ProductCard from "./components/ProductCard";
@@ -102,6 +104,9 @@ function Home() {
   const [purchaseHistory, setPurchaseHistory] = useState([]);
   const [sellerOrders, setSellerOrders] = useState([]);
   const [activeLegalPage, setActiveLegalPage] = useState(null);
+  const [showHelp, setShowHelp] = useState(() => window.location.pathname === "/help");
+  const [helpTopic, setHelpTopic] = useState(() => window.location.hash.slice(1));
+  const helpReturnRoute = useRef(null);
   const [activeAccountPage, setActiveAccountPage] = useState(null);
   const [activeSalesView, setActiveSalesView] = useState("active");
   const [conversations, setConversations] = useState([]);
@@ -121,7 +126,12 @@ function Home() {
   useEffect(() => {
     const applyRouteState = (state = window.history.state || {}) => {
       const pathname = window.location.pathname;
-      const view = state.view || (pathname.startsWith("/admin") ? "admin" : "home");
+      const view = pathname === "/help" ? "help" : state.view || (pathname.startsWith("/admin") ? "admin" : "home");
+      setShowHelp(view === "help");
+      if (view === "help") {
+        setHelpTopic(state.topic || window.location.hash.slice(1));
+        return;
+      }
 
       setShowAdminDashboard(view === "admin");
       setShowSellerPanel(view === "seller");
@@ -139,7 +149,7 @@ function Home() {
     };
 
     if (!window.history.state) {
-      window.history.replaceState({ view: window.location.pathname.startsWith("/admin") ? "admin" : "home" }, "", window.location.pathname);
+      window.history.replaceState({ view: window.location.pathname === "/help" ? "help" : window.location.pathname.startsWith("/admin") ? "admin" : "home" }, "", window.location.pathname + window.location.hash);
     }
 
     const handleRouteChange = () => {
@@ -672,6 +682,53 @@ function Home() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const openHelp = (topic = "") => {
+    if (!showHelp) {
+      helpReturnRoute.current = { state: window.history.state, url: window.location.pathname + window.location.hash };
+      window.history.pushState({ view: "help", topic }, "", `/help${topic ? `#${topic}` : ""}`);
+    }
+    setActiveLegalPage(null);
+    setHelpTopic(topic);
+    setShowHelp(true);
+    window.scrollTo({ top: 0 });
+  };
+
+  const closeHelp = () => {
+    setShowHelp(false);
+    if (helpReturnRoute.current) {
+      window.history.back();
+    } else {
+      window.history.replaceState({ view: "home" }, "", "/");
+    }
+  };
+
+  function openLegalFromHelp(page) {
+    setShowHelp(false);
+    setShowAdminDashboard(false);
+    setShowSellerPanel(false);
+    setShowShopPage(false);
+    setShowCartPanel(false);
+    setShowPurchasesPage(false);
+    setActiveCategoryPage(null);
+    setActiveAccountPage(null);
+    window.history.replaceState({ view: "legal", page }, "", `/${page}`);
+    setActiveLegalPage(page);
+    window.scrollTo({ top: 0 });
+  }
+
+  if (!currentUser && activeLegalPage) {
+    return <div className="home-page"><LegalPage page={activeLegalPage} onBack={() => { setActiveLegalPage(null); openHelp(); }} /><Footer logo={logo} onLegalNavigate={openLegalFromHelp} onHelp={() => { setActiveLegalPage(null); openHelp(); }} /></div>;
+  }
+
+  if (showHelp) {
+    return (
+      <div className="home-page">
+        <HelpPage key={helpTopic} topic={helpTopic} onBack={closeHelp} signedIn={Boolean(currentUser)} />
+        <Footer logo={logo} onLegalNavigate={openLegalFromHelp} onHelp={() => openHelp()} />
+      </div>
+    );
+  }
+
   if (!currentUser && !showAdminDashboard) {
     return (
       <AuthModal
@@ -682,6 +739,7 @@ function Home() {
         isSubmitting={isSubmitting}
         verificationEmail={verificationEmail}
         resendSecondsRemaining={resendSecondsRemaining}
+        onOpenHelp={openHelp}
         onClose={resetAuth}
         onSubmit={handleAuthSubmit}
         onFieldChange={handleAuthFieldChange}
@@ -1774,6 +1832,20 @@ function Home() {
     }
   };
 
+  const breadcrumbItems = [{ label: "Home", onClick: openMarketplace }];
+  if (activeCategoryPage) breadcrumbItems.push({ label: "Shop", onClick: handleBrowse }, { label: activeCategoryPage });
+  else if (showShopPage) breadcrumbItems.push({ label: "Shop" });
+  else if (showCartPanel) breadcrumbItems.push({ label: "Cart" });
+  else if (showPurchasesPage) breadcrumbItems.push({ label: "My Activity" }, { label: "My Purchases" });
+  else if (showSellerPanel) {
+    if (activeSellerTab === "my-listings") breadcrumbItems.push({ label: "My Activity" }, { label: "My Listings" });
+    else breadcrumbItems.push({ label: editingListingId ? "Edit Listing" : "Sell Item" });
+  } else if (activeAccountPage) {
+    if (activeAccountPage === "sales") breadcrumbItems.push({ label: "My Activity" }, { label: "My Sales" });
+    else if (activeAccountPage === "messages") breadcrumbItems.push({ label: "Messages" });
+    else breadcrumbItems.push({ label: "Account" }, { label: activeAccountPage === "profile" ? "My Profile" : "Settings" });
+  } else if (activeLegalPage) breadcrumbItems.push({ label: activeLegalPage === "privacy" ? "Privacy Policy" : "Terms of Use" });
+
   const activeNavPage = showCartPanel
     ? "cart"
     : showPurchasesPage || (showSellerPanel && activeSellerTab === "my-listings") || activeAccountPage === "sales"
@@ -1803,7 +1875,8 @@ function Home() {
             isSubmitting={isSubmitting}
             verificationEmail={verificationEmail}
             resendSecondsRemaining={resendSecondsRemaining}
-            onClose={resetAuth}
+            onOpenHelp={openHelp}
+        onClose={resetAuth}
             onSubmit={handleAuthSubmit}
             onFieldChange={handleAuthFieldChange}
             onResendVerification={resendVerification}
@@ -1826,6 +1899,7 @@ function Home() {
       ) : (
         <>
       <Navbar
+        onOpenHelp={() => openHelp()}
         logo={logo}
         currentUser={currentUser}
         cartCount={cartQuantityCount}
@@ -1844,6 +1918,7 @@ function Home() {
         onNotificationRemove={removeUserNotification}
       />
 
+      <Breadcrumbs items={breadcrumbItems} />
       <Toast message={toastMessage} type={toastType} />
 
       <AuthModal
@@ -1854,6 +1929,7 @@ function Home() {
         isSubmitting={isSubmitting}
         verificationEmail={verificationEmail}
         resendSecondsRemaining={resendSecondsRemaining}
+        onOpenHelp={openHelp}
         onClose={resetAuth}
         onSubmit={handleAuthSubmit}
         onFieldChange={handleAuthFieldChange}
@@ -1872,6 +1948,7 @@ function Home() {
 
       {showCartPanel && (
         <CartPage
+          onOpenHelp={openHelp}
           cartItems={cartItems}
           cartTotal={cartTotal}
           currentUser={currentUser}
@@ -1940,6 +2017,7 @@ function Home() {
 
       {showSellerPanel && !showShopPage && !activeCategoryPage && !showCartPanel && !showPurchasesPage && !activeLegalPage && !activeAccountPage && (
         <SellerPanel
+          onOpenHelp={openHelp}
           isProcessingPhoto={isProcessingPhoto}
           activeSellerTab={activeSellerTab}
           categories={marketplaceCategories}
@@ -2152,7 +2230,7 @@ function Home() {
         </div>
       )}
 
-      <Footer logo={logo} onLegalNavigate={openLegalPage} />
+      <Footer logo={logo} onLegalNavigate={openLegalPage} onHelp={() => openHelp()} />
         </>
       )}
     </div>
