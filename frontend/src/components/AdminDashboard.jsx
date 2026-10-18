@@ -16,6 +16,8 @@ function AdminDashboard({
   onLogin,
   onLogout,
   onMarketplace,
+  onOpenMessages,
+  unreadMessageCount = 0,
   showToast,
 }) {
   const [activeTab, setActiveTab] = useState("Dashboard");
@@ -572,6 +574,9 @@ function AdminDashboard({
             {activeTab !== "Categories" && <h1>{activeTab}</h1>}
           </div>
           <div className="admin-topbar-actions">
+            <button type="button" className="secondary-button" onClick={onOpenMessages}>
+              Messages{unreadMessageCount > 0 ? ` (${unreadMessageCount} unread)` : ""}
+            </button>
             <div className="notification-popover-anchor">
               <button
                 type="button"

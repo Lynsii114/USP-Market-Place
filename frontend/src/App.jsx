@@ -1789,6 +1789,10 @@ function Home() {
       loadSellerOrders(currentUser.id);
       loadSellerListings(currentUser.id);
     }
+    if (page === "messages") {
+      loadConversations(currentUser.id);
+      loadUnreadMessageCount(currentUser.id);
+    }
 
     setShowAdminDashboard(false);
     setShowSellerPanel(false);
@@ -1893,6 +1897,8 @@ function Home() {
             onLogin={() => openAuth("login")}
             onLogout={handleLogout}
             onMarketplace={openMarketplace}
+            onOpenMessages={() => openAccountPage("messages")}
+            unreadMessageCount={unreadMessageCount}
             showToast={showToast}
           />
         </>
@@ -1990,7 +1996,13 @@ function Home() {
         onViewConversationListing={(listing) => listing && setSelectedListing(listing)}
         onMessageDraftChange={setMessageDraft}
         onSendMessage={sendConversationMessage}
-        onBack={hideActivePages}
+        onBack={() => {
+          hideActivePages();
+          if (currentUser?.role === "admin" && activeAccountPage === "messages") {
+            setShowAdminDashboard(true);
+            pushViewState({ view: "admin" }, "/admin/dashboard");
+          }
+        }}
       />
 
       <LegalPage page={activeLegalPage} onBack={hideActivePages} />
