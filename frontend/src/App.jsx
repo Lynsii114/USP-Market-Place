@@ -413,6 +413,20 @@ function Home() {
     }
   };
 
+  const finishAuthNavigation = (user, successMessage) => {
+    if (user?.role === "admin") {
+      hideActivePages();
+      setShowAdminDashboard(true);
+      pushViewState({ view: "admin" }, "/admin/dashboard");
+      showToast(successMessage);
+    } else if (showAdminDashboard || window.location.pathname.startsWith("/admin")) {
+      openMarketplace();
+      showToast("Signed in, but this account does not have administrator access.", "error");
+    } else {
+      showToast(successMessage);
+    }
+  };
+
   const handleAuthSubmit = async (event) => {
     event.preventDefault();
     setIsSubmitting(true);
@@ -444,7 +458,7 @@ function Home() {
           setVerificationEmail("");
           setVerificationToken("");
           setResendAvailableAt(0);
-          showToast(data.message || "Email verified successfully.");
+          finishAuthNavigation(data.user, data.message || "Email verified successfully.");
         }
         return;
       }
@@ -466,7 +480,7 @@ function Home() {
         setAuthenticatorSecret("");
         setAuthenticatorUri("");
         setAuthenticatorQr("");
-        showToast(data.message || "Login successful.");
+        finishAuthNavigation(data.user, data.message || "Login successful.");
         return;
       }
 
@@ -593,12 +607,7 @@ function Home() {
       setCurrentUser(data.user);
       setAuthForm(EMPTY_AUTH_FORM);
       setAuthMode(null);
-      if (data.user?.role === "admin") {
-        hideActivePages();
-        setShowAdminDashboard(true);
-        pushViewState({ view: "admin" }, "/admin/dashboard");
-      }
-      showToast(authMode === "signup" ? "Registration successful. Welcome to USP Marketplace!" : data.message || "Login successful!");
+      finishAuthNavigation(data.user, authMode === "signup" ? "Registration successful. Welcome to USP Marketplace!" : data.message || "Login successful!");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Something went wrong";
       setFormMessage(message);
