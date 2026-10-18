@@ -276,11 +276,8 @@ def test_payment_number_is_visible_only_to_seller_or_active_reserved_buyer():
         reserved_for_buyer = client.get(f"/api/items?user_id={buyer.id}")
         still_hidden_from_unrelated = client.get(f"/api/items?user_id={unrelated_user.id}")
         buyer_item = next(listing for listing in reserved_for_buyer.json() if listing["id"] == item.id)
-        unrelated_item = next(
-            listing for listing in still_hidden_from_unrelated.json() if listing["id"] == item.id
-        )
+        assert item.id not in {listing["id"] for listing in still_hidden_from_unrelated.json()}
         assert buyer_item["payment_number"] == item.payment_number
-        assert "payment_number" not in unrelated_item
     finally:
         conversation_ids = Conversation.objects.filter(item_id=item.id).values_list("id", flat=True)
         Message.objects.filter(conversation_id__in=conversation_ids).delete()

@@ -284,7 +284,7 @@ class InventoryTests(TestCase):
         self.item.refresh_from_db()
         self.assertEqual((self.item.status, self.item.reserved_buyer_id), ("reserved", self.buyer.id))
         with self.assertRaises(ApiError):
-            self.checkout(buyer=self.other)
+            self.checkout(buyer=self.other, items=[{"item_id": self.item.id, "quantity": 3}])
         services.confirm_payment_received(order.id, self.seller.id)
         self.item.refresh_from_db()
         self.assertEqual(self.item.stock, 2)
@@ -350,3 +350,97 @@ class InventoryTests(TestCase):
         with patch("django.utils.timezone.now", return_value=datetime(2030, 1, 1, 19, tzinfo=datetime_timezone.utc)):
             result = services.dashboard(self.admin.id)
         self.assertEqual(result["todays_sales"], 20)
+
+
+    def test_two_buyers_can_reserve_remaining_units_and_confirm_independently(self):
+        self.checkout(items=[{"item_id": self.item.id, "quantity": 2}])
+        first = Purchase.objects.get(buyer_id=self.buyer.id)
+        self.checkout(buyer=self.other)
+        second = Purchase.objects.get(buyer_id=self.other.id)
+        with self.assertRaises(ApiError):
+            self.checkout(buyer=self.user("third"))
+        services.confirm_payment_received(second.id, self.seller.id)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.stock, 2)
+        services.confirm_payment_received(first.id, self.seller.id)
+        self.item.refresh_from_db()
+        self.assertEqual((self.item.stock, self.item.status), (0, "sold"))
+
+    def test_partial_reservation_exposes_available_stock_and_cancel_releases_only_its_units(self):
+        self.checkout(items=[{"item_id": self.item.id, "quantity": 2}])
+        first = Purchase.objects.get(buyer_id=self.buyer.id)
+        item = services.get_public_item(self.item.id, self.other.id)
+        self.assertEqual((item["status"], item["available_stock"]), ("available", 1))
+        self.checkout(buyer=self.other)
+        second = Purchase.objects.get(buyer_id=self.other.id)
+        services.cancel_order(first.id, self.buyer.id)
+        services.cancel_order(first.id, self.buyer.id)
+        item = services.get_public_item(self.item.id, self.buyer.id)
+        self.assertEqual(item["available_stock"], 2)
+        services.confirm_payment_received(second.id, self.seller.id)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.stock, 2)
+
+    def test_manual_reservation_holds_one_unit_while_other_units_remain_available(self):
+        Conversation.objects.create(item_id=self.item.id, seller_id=self.seller.id, buyer_id=self.buyer.id)
+        services.reserve_item(self.item.id, self.seller.id, self.buyer.id)
+        item = services.get_public_item(self.item.id, self.other.id)
+        self.assertEqual(item["available_stock"], 2)
+        self.checkout(buyer=self.other, items=[{"item_id": self.item.id, "quantity": 2}])
+        with self.assertRaises(ApiError):
+            self.checkout(buyer=self.user("third"))
+        self.checkout()
+        self.assertEqual(Purchase.objects.count(), 2)
+
+
+    def test_multiple_unit_flag_survives_stock_dropping_to_one(self):
+        created = services.create_item(self.payload(stock=3, multiple_units=True))
+        item = Item.objects.get(pk=created["id"])
+        self.checkout(item=item, items=[{"item_id": item.id, "quantity": 2}])
+        order = Purchase.objects.get(item_id=item.id)
+        services.confirm_payment_received(order.id, self.seller.id)
+        result = services.get_public_item(item.id, self.other.id)
+        self.assertTrue(result["multiple_units"])
+        self.assertEqual(result["available_stock"], 1)
+
+    def test_single_item_flag_is_validated_and_defaults_from_stock(self):
+        result = services.create_item(self.payload(stock=1, multiple_units=False))
+        self.assertFalse(result["multiple_units"])
+        with self.assertRaises(ApiError):
+            services.create_item(self.payload(stock=3, multiple_units=False))
+        with self.assertRaises(ApiError):
+            services.create_item(self.payload(stock=1, multiple_units="false"))
+        legacy = services.create_item(self.payload(stock=3))
+        self.assertTrue(legacy["multiple_units"])
+
+
+    def test_fully_reserved_listing_is_hidden_from_unrelated_buyers(self):
+        self.checkout(items=[{"item_id": self.item.id, "quantity": 3}])
+        for viewer in (None, self.other.id):
+            self.assertNotIn(self.item.id, {item["id"] for item in services.list_items(viewer)})
+            with self.assertRaises(ApiError):
+                services.get_public_item(self.item.id, viewer)
+        self.assertIn(self.item.id, {item["id"] for item in services.list_items(self.buyer.id)})
+        self.assertIn(self.item.id, {item["id"] for item in services.list_seller_items(self.seller.id, self.seller.id)})
+
+    def test_partial_reservation_is_public_without_reservation_owner_details(self):
+        self.checkout()
+        item = services.get_public_item(self.item.id, self.other.id)
+        self.assertEqual((item["status"], item["available_stock"]), ("available", 2))
+        self.assertFalse(item["reserved_for_you"])
+        self.assertIsNone(item["reserved_buyer_id"])
+
+
+    def test_releasing_manual_unit_preserves_another_buyers_unpaid_order(self):
+        Conversation.objects.create(item_id=self.item.id, seller_id=self.seller.id, buyer_id=self.buyer.id)
+        services.reserve_item(self.item.id, self.seller.id, self.buyer.id)
+        self.checkout(buyer=self.other)
+        order = Purchase.objects.get(buyer_id=self.other.id)
+        services.update_item_seller_status(self.item.id, self.seller.id, "available")
+        order.refresh_from_db()
+        self.assertEqual(order.payment_status, "pending")
+        item = services.get_public_item(self.item.id, self.buyer.id)
+        self.assertEqual((item["available_stock"], item["manual_reserved_stock"]), (2, 0))
+        services.confirm_payment_received(order.id, self.seller.id)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.stock, 2)

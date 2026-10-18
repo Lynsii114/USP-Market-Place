@@ -1,3 +1,4 @@
+import { availableStock } from "../utils/inventory.mjs";
 import { apiFetch as fetch } from "../config/request";
 import React, { useEffect, useState } from "react";
 
@@ -66,12 +67,12 @@ function ProductModal({ listing, currentUser, onClose, onAddToCart, onMessageSel
   }
 
   const isSold = listing.status === "sold" || Number(listing.stock) <= 0;
-  const isReserved = listing.status === "reserved";
-  const isReservedForCurrentUser = isReserved && listing.reserved_buyer_id === currentUser?.id;
+  const isReserved = listing.status === "reserved" || listing.reserved_for_you;
+  const isReservedForCurrentUser = listing.reserved_for_you || listing.reserved_buyer_id === currentUser?.id;
+  const hasAvailableUnits = availableStock(listing, currentUser?.id) > 0;
   const isOwnListing = currentUser?.id === listing.seller_id;
   const showReservedPaymentDetails =
-    reservedPaymentDetails?.status === "reserved" &&
-    reservedPaymentDetails.reserved_buyer_id === currentUser?.id &&
+    (reservedPaymentDetails?.reserved_for_you || reservedPaymentDetails?.reserved_buyer_id === currentUser?.id) &&
     Boolean(reservedPaymentDetails.payment_number);
 
   return (
@@ -109,15 +110,15 @@ function ProductModal({ listing, currentUser, onClose, onAddToCart, onMessageSel
         <div className="product-modal-image">
           {listing.photo ? <img src={listing.photo} alt={listing.name} /> : <span className="product-modal-placeholder">{listing.category}</span>}
           {isSold && <span className="sold-badge">Sold</span>}
-          {!isSold && isReserved && <span className="sold-badge reserved">Reserved</span>}
+          {!isSold && isReserved && <span className="sold-badge reserved">{listing.reserved_for_you ? "Reserved for you" : "Reserved"}</span>}
         </div>
 
         <div className="product-modal-details">
           <p className="product-price">${Number(listing.price).toFixed(2)}</p>
           <p className="product-meta">{listing.category}</p>
-          <p className={isSold ? "stock-badge sold" : isReserved ? "stock-badge reserved" : "stock-badge"}>
-            {isSold ? "Sold" : isReserved ? "Reserved" : `${listing.stock} in stock`}
-          </p>
+          {(isSold || isReserved || listing.multiple_units) && <p className={isSold ? "stock-badge sold" : isReserved ? "stock-badge reserved" : "stock-badge"}>
+            {isSold ? "Sold" : isReserved ? (listing.reserved_for_you ? "Reserved for you" : "Reserved") : `${availableStock(listing, currentUser?.id)} available`}
+          </p>}
           <p>{listing.description}</p>
           <div className="seller-details">
             <strong>Seller</strong>
@@ -165,13 +166,13 @@ function ProductModal({ listing, currentUser, onClose, onAddToCart, onMessageSel
             type="button"
             className="auth-submit"
             onClick={() => onAddToCart(listing)}
-            disabled={isSold || isOwnListing || (isReserved && !isReservedForCurrentUser)}
+            disabled={isSold || isOwnListing || !hasAvailableUnits}
           >
             {isSold
               ? "Sold Out"
               : isOwnListing
                 ? "Your Listing"
-                : isReserved && !isReservedForCurrentUser
+                : !hasAvailableUnits
                   ? "Reserved"
                   : "Add to Cart"}
           </button>

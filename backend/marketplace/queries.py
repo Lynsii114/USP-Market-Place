@@ -27,3 +27,22 @@ def find_user_by_login(login_name):
 
 def find_student(student_id):
     return User.objects.filter(id=student_id, role="student").first()
+
+
+def reservation_stock(item):
+    pending = list(Purchase.objects.filter(
+        item_id=item.id, payment_status="pending", order_stage="order_placed",
+    ).exclude(status__in=["cancelled", "canceled", "completed"]).order_by("id"))
+    pending_units = sum(order.quantity for order in pending)
+    manual = None
+    if item.reserved_buyer_id is not None and not any(
+        order.buyer_id == item.reserved_buyer_id for order in pending
+    ):
+        manual = (item.reserved_buyer_id, item.reserved_buyer_username)
+    manual_units = min(1, max(0, item.stock)) if manual else 0
+    return pending, manual, max(0, item.stock - pending_units - manual_units)
+
+
+def purchasable_stock(item, buyer_id):
+    pending, manual, available = reservation_stock(item)
+    return available + (1 if manual and manual[0] == buyer_id and item.stock > 0 else 0)

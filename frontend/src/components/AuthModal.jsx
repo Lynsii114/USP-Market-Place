@@ -293,7 +293,7 @@ function AuthModal({
         <p className="auth-switch">
           {authMode === "login" ? "New to USP Marketplace?" : "Already have an account?"}{" "}
           <button type="button" onClick={() => onSwitchMode(authMode === "login" ? "signup" : "login")}>
-            {authMode === "login" ? "Create an account" : "Log in"}
+            {authMode === "login" ? "Create an account" : "Back to sign in"}
           </button>
         </p>
       )}
@@ -309,9 +309,9 @@ function AuthModal({
           </button>
         </p>
       )}
-      {standalone && ["forgot-password", "verify-reset-code", "reset-password"].includes(authMode) && (
+      {standalone && ["authenticator", "authenticator-setup", "forgot-password", "verify-reset-code", "reset-password"].includes(authMode) && (
         <p className="auth-switch">
-          <button type="button" onClick={() => onSwitchMode("login")}>Back to login</button>
+          <button type="button" onClick={() => onSwitchMode("login")} disabled={isSubmitting}>Back to sign in</button>
         </p>
       )}
     </div>

@@ -101,6 +101,11 @@ def validate_item_payload(data, partial=False):
 
     if "stock" in data:
         whole_number(data["stock"], "Stock")
+    if "multiple_units" in data:
+        if not isinstance(data["multiple_units"], bool):
+            raise ApiError("Multiple units must be true or false", 422)
+        if data["multiple_units"] is False and "stock" in data and int(data["stock"]) > 1:
+            raise ApiError("Single-item listings can have at most one unit", 422)
 
     if "photo" in data:
         validate_listing_photo(data["photo"])

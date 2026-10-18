@@ -5153,3 +5153,35 @@
     grid-template-columns: 1fr;
   }
 }
+
+
+.listing-quantity {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.multiple-units-toggle {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.multiple-units-toggle input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: #008c99;
+}
+
+.listing-stock-input {
+  appearance: auto;
+}
+
+.listing-stock-input::-webkit-inner-spin-button,
+.listing-stock-input::-webkit-outer-spin-button {
+  opacity: 1;
+}
