@@ -9,7 +9,7 @@ from django.core import signing
 from marketplace import services
 from marketplace.authentication import issue_token
 from marketplace.exceptions import ApiError
-from marketplace.models import User, Item, Purchase, Conversation, Category
+from marketplace.models import User, Item, Purchase, Conversation, Category, AdminNotification, UserNotification
 from testing_images import TEST_PHOTO, image_payload
 
 
@@ -35,6 +35,27 @@ class InventoryTests(TestCase):
 
     def payload(self, **updates):
         return {"name": "New book", "price": 10, "description": "Good condition", "category": "Books", "contact": "Library", "stock": 2, "photo": TEST_PHOTO, "seller_id": self.seller.id, **updates}
+
+    def test_notification_history_includes_older_items_and_stays_private(self):
+        UserNotification.objects.bulk_create([
+            UserNotification(user_id=self.buyer.id, title=f"Buyer notice {number}", message="Test")
+            for number in range(35)
+        ])
+        UserNotification.objects.create(user_id=self.other.id, title="Other notice", message="Private")
+        AdminNotification.objects.bulk_create([
+            AdminNotification(title=f"Admin notice {number}", message="Test")
+            for number in range(35)
+        ])
+
+        buyer_response = self.client_for(self.buyer).get(f"/api/users/{self.buyer.id}/notifications")
+        self.assertEqual(buyer_response.status_code, 200)
+        self.assertEqual(len(buyer_response.json()), 35)
+        self.assertEqual(buyer_response.json()[0]["title"], "Buyer notice 34")
+        self.assertNotIn("Other notice", [notice["title"] for notice in buyer_response.json()])
+
+        admin_response = self.client_for(self.admin).get("/api/admin/notifications")
+        self.assertEqual(admin_response.status_code, 200)
+        self.assertEqual(len(admin_response.json()), 35)
 
     def test_listing_requires_a_real_supported_photo(self):
         client = self.client_for(self.seller)

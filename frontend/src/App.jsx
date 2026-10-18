@@ -15,6 +15,7 @@ import LegalPage from "./components/LegalPage";
 import HelpPage from "./components/HelpPage";
 import Breadcrumbs from "./components/Breadcrumbs";
 import Navbar from "./components/Navbar";
+import NotificationsPage from "./components/NotificationsPage";
 import PastPurchasesPage from "./components/PastPurchasesPage";
 import ProductCard from "./components/ProductCard";
 import ProductModal from "./components/ProductModal";
@@ -1793,6 +1794,9 @@ function Home() {
       loadConversations(currentUser.id);
       loadUnreadMessageCount(currentUser.id);
     }
+    if (page === "notifications") {
+      loadUserNotifications(currentUser.id);
+    }
 
     setShowAdminDashboard(false);
     setShowSellerPanel(false);
@@ -1847,6 +1851,7 @@ function Home() {
   } else if (activeAccountPage) {
     if (activeAccountPage === "sales") breadcrumbItems.push({ label: "My Activity" }, { label: "My Sales" });
     else if (activeAccountPage === "messages") breadcrumbItems.push({ label: "Messages" });
+    else if (activeAccountPage === "notifications") breadcrumbItems.push({ label: "Notifications" });
     else breadcrumbItems.push({ label: "Account" }, { label: activeAccountPage === "profile" ? "My Profile" : "Settings" });
   } else if (activeLegalPage) breadcrumbItems.push({ label: activeLegalPage === "privacy" ? "Privacy Policy" : "Terms of Use" });
 
@@ -1858,6 +1863,8 @@ function Home() {
         ? "sell"
         : activeAccountPage === "messages"
           ? "messages"
+          : activeAccountPage === "notifications"
+            ? "notifications"
           : activeAccountPage
             ? "account"
             : activeCategoryPage
@@ -1920,8 +1927,6 @@ function Home() {
         onOpenAccountPage={openAccountPage}
         onOpenAuth={openAuth}
         onLogout={handleLogout}
-        onNotificationView={openUserNotification}
-        onNotificationRemove={removeUserNotification}
       />
 
       <Breadcrumbs items={breadcrumbItems} />
@@ -1983,7 +1988,7 @@ function Home() {
       )}
 
       <AccountPage
-        page={activeAccountPage}
+        page={activeAccountPage === "notifications" ? null : activeAccountPage}
         currentUser={currentUser}
         myListings={myListings}
         purchaseHistory={purchaseHistory}
@@ -2004,6 +2009,15 @@ function Home() {
           }
         }}
       />
+
+      {activeAccountPage === "notifications" && (
+        <NotificationsPage
+          notifications={userNotifications}
+          onBack={hideActivePages}
+          onOpen={openUserNotification}
+          onRemove={removeUserNotification}
+        />
+      )}
 
       <LegalPage page={activeLegalPage} onBack={hideActivePages} />
 

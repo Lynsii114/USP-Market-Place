@@ -16,8 +16,6 @@ function Navbar({
   onOpenAuth,
   onOpenHelp,
   onLogout,
-  onNotificationView,
-  onNotificationRemove,
 }) {
   const unreadNotifications = notifications.filter((notification) => !notification.is_read);
   const navClass = (page) => (activePage === page ? "nav-item active" : "nav-item");
@@ -77,40 +75,10 @@ return (
           {unreadMessageCount > 0 && <span className="notification-count">{unreadMessageCount}</span>}
         </button>
         <div className="nav-actions">
-          <div className="nav-dropdown notification-dropdown">
-            <button type="button" className={activePage === "notifications" ? "nav-item nav-badge-button nav-symbol-button active" : "nav-item nav-badge-button nav-symbol-button"} aria-label="Notifications" title="Notifications">
-              <span aria-hidden="true">&#128276;</span><span className="nav-label">Notifications</span>
-              {unreadNotifications.length > 0 && <span className="notification-count">{unreadNotifications.length}</span>}
-            </button>
-            <div className="nav-dropdown-menu notification-menu">
-              <strong>Notifications</strong>
-              {notifications.length ? (
-                notifications.slice(0, 4).map((notification) => (
-                  <div className={notification.is_read ? "notification-row viewed" : "notification-row unread"} key={notification.id}>
-                    <button
-                      type="button"
-                      className="notification-item"
-                      onClick={() => onNotificationView?.(notification)}
-                    >
-                      <span>{notification.title}</span>
-                      <small>{notification.is_read ? "Viewed" : "New"}</small>
-                      <p>{notification.message}</p>
-                    </button>
-                    <button
-                      type="button"
-                      className="notification-remove-button"
-                      onClick={() => onNotificationRemove?.(notification.id)}
-                      aria-label="Remove notification"
-                    >
-                      x
-                    </button>
-                  </div>
-                ))
-              ) : (
-                <p>No new notifications.</p>
-              )}
-            </div>
-          </div>
+          <button type="button" className={activePage === "notifications" ? "nav-item nav-badge-button nav-symbol-button active" : "nav-item nav-badge-button nav-symbol-button"} onClick={() => onOpenAccountPage("notifications")} aria-label="Notifications">
+            <span aria-hidden="true">&#128276;</span><span className="nav-label">Notifications</span>
+            {unreadNotifications.length > 0 && <span className="notification-count">{unreadNotifications.length}</span>}
+          </button>
           <button type="button" className={activePage === "cart" ? "nav-item nav-badge-button nav-symbol-button active" : "nav-item nav-badge-button nav-symbol-button"} onClick={onOpenCart} aria-label="Open cart" title="Cart">
             <span className="cart-icon" aria-hidden="true">
               &#128722;

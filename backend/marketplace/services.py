@@ -1790,7 +1790,7 @@ def delete_student(admin_id, student_id):
 
 def list_admin_notifications(admin_id):
     require_admin(admin_id)
-    notifications = AdminNotification.objects.order_by("-id")[:30]
+    notifications = AdminNotification.objects.order_by("-id")
     return [serialize_admin_notification(notification) for notification in notifications]
 
 
@@ -1816,7 +1816,7 @@ def list_user_notifications(user_id):
     user = User.objects.filter(id=user_id).first()
     if not user:
         raise ApiError("User not found", 404)
-    notifications = UserNotification.objects.filter(user_id=user.id).order_by("-id")[:30]
+    notifications = UserNotification.objects.filter(user_id=user.id).order_by("-id")
     return [serialize_notification(notification) for notification in notifications]
 
 
