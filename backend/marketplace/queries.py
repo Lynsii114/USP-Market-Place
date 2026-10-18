@@ -19,7 +19,7 @@ def visible_purchases(include_test_records=False):
 
 def find_user_by_login(login_name):
     if "@" in login_name:
-        user = User.objects.filter(email=login_name).first()
+        user = User.objects.filter(email__iexact=login_name).first()
         if user:
             return user
     return User.objects.filter(username=login_name).first()

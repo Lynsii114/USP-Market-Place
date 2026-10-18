@@ -1334,3 +1334,43 @@ def test_password_reset_code_must_be_verified_before_password_form():
         content_type="application/json",
     )
     assert accepted.status_code == 200
+
+
+def test_password_reset_allows_login_with_email_case_variants():
+    from django.contrib.auth.hashers import check_password
+    from marketplace.services import hash_password
+
+    payload = unique_student_payload()
+    stored_email = payload["email"].upper()
+    user = User.objects.create(
+        username=payload["username"], email=stored_email,
+        password_hash=hash_password("oldpass"),
+        authenticator_secret="JBSWY3DPEHPK3PXP", authenticator_enabled=True,
+    )
+    with patch("marketplace.services.send_email") as send_email:
+        requested = client.post("/api/users/request-password-reset",
+            {"email": stored_email.lower()}, content_type="application/json")
+        code = re.search(r"\b\d{6}\b", send_email.call_args.args[1]).group()
+    assert requested.status_code == 200
+    verified = client.post("/api/users/verify-password-reset",
+        {"email": stored_email.lower(), "code": code}, content_type="application/json")
+    assert verified.status_code == 200
+    reset = client.post("/api/users/reset-password",
+        {"email": stored_email.lower(), "code": code, "password": "newpass"},
+        content_type="application/json")
+    assert reset.status_code == 200
+    user.refresh_from_db()
+    assert user.email == stored_email
+    assert check_password("newpass", user.password_hash)
+    assert not check_password("oldpass", user.password_hash)
+    for login_email in (stored_email.lower(), stored_email):
+        login = client.post("/api/users/login",
+            {"username": login_email, "password": "newpass"},
+            content_type="application/json")
+        assert login.status_code == 200
+        assert login.json()["authenticator_required"] is True
+        assert login.json()["user_id"] == user.id
+        old_login = client.post("/api/users/login",
+            {"username": login_email, "password": "oldpass"},
+            content_type="application/json")
+        assert old_login.status_code == 401
