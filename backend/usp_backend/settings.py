@@ -55,9 +55,6 @@ RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", DEFAULT_FROM_EMAIL)
 MICROSOFT_CLIENT_ID = os.getenv("MICROSOFT_CLIENT_ID", "")
 MICROSOFT_TENANT_ID = os.getenv("MICROSOFT_TENANT_ID", "")
-ALLOW_NON_USP_EMAILS = os.getenv("ALLOW_NON_USP_EMAILS", "1") == "1"
-
-
 def database_config():
     database_url = os.getenv("DATABASE_URL")
     if not database_url:

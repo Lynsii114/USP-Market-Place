@@ -41,6 +41,7 @@ function AuthModal({
   authenticatorQr,
   onEnableAuthenticator,
   onSkipAuthenticator,
+  onBack,
 }) {
   const [setupAcknowledged, setSetupAcknowledged] = useState(false);
 
@@ -99,6 +100,18 @@ function AuthModal({
       </div>
 
       <form onSubmit={onSubmit} className="auth-form">
+        {["verify-email", "authenticator", "authenticator-setup", "authenticator-choice", "forgot-password", "reset-password"].includes(authMode) && (
+          <button type="button" className="auth-back-button" onClick={onBack}>
+            <span aria-hidden="true">←</span>{" "}
+            {authMode === "verify-email"
+              ? "Back to sign up"
+              : authMode === "authenticator-choice"
+                ? "Back to login"
+                : authMode === "authenticator"
+                  ? "Back to login"
+                  : "Back"}
+          </button>
+        )}
         {authMode === "authenticator-choice" ? (
           <div className="authenticator-choice">
             <button type="button" className="auth-submit" onClick={onEnableAuthenticator} disabled={isSubmitting}>

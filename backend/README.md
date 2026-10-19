@@ -31,9 +31,7 @@ Resend is also supported. Set `EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, and `RE
 
 Resend SMTP is supported as well. Set `EMAIL_HOST=smtp.resend.com`, `EMAIL_PORT=587`, `EMAIL_USE_TLS=1`, `EMAIL_HOST_USER=resend`, `EMAIL_HOST_PASSWORD` to your Resend API key, and `DEFAULT_FROM_EMAIL` to a verified sender. SMTP takes priority when `EMAIL_HOST` is configured.
 
-Testing with non-USP email addresses:
-
-For local testing, any valid email address is allowed by default. To restore USP student email-only registration, set `ALLOW_NON_USP_EMAILS=0` in `backend/.env` and restart the backend. Non-USP test accounts do not receive a student ID.
+Registration is restricted to USP student email addresses in the `S<number>@student.usp.ac.fj` format (for example, `S12345678@student.usp.ac.fj`). Other email addresses are rejected in all environments.
 
 Verification codes are sent to the exact email address used at registration. For actual delivery, configure SMTP or Resend as described above; without an email provider, codes are printed in the backend terminal.
 
