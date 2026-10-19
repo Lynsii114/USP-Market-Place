@@ -1,4 +1,5 @@
 from .category_catalog import canonical_category_name
+from .queries import reservation_stock
 
 
 def serialize_user(user):
@@ -17,6 +18,10 @@ def serialize_user(user):
 
 
 def serialize_item(item):
+    pending, manual, available = reservation_stock(item)
+    status = item.status
+    if status == "reserved" and available > 0:
+        status = "available"
     return {
         "id": item.id,
         "name": item.name,
@@ -27,7 +32,11 @@ def serialize_item(item):
         "payment_method": item.payment_method,
         "photo": item.photo,
         "stock": item.stock,
-        "status": item.status,
+        "multiple_units": item.multiple_units,
+        "available_stock": available,
+        "reserved_stock": item.stock - available,
+        "manual_reserved_stock": 1 if manual and item.stock > 0 else 0,
+        "status": status,
         "seller_id": item.seller_id,
         "seller_username": item.seller_username,
         "reserved_buyer_id": item.reserved_buyer_id,
@@ -57,12 +66,17 @@ def serialize_item_for_user(item, requesting_user_id=None):
 
     is_seller = viewer_id == item.seller_id
     is_reserved_buyer = (
-        item.status == "reserved"
-        and item.reserved_buyer_id is not None
+        item.reserved_buyer_id is not None
         and viewer_id == item.reserved_buyer_id
     )
+    pending, manual, _ = reservation_stock(item)
+    is_reserved_buyer = is_reserved_buyer or any(order.buyer_id == viewer_id for order in pending)
+    data["reserved_for_you"] = is_reserved_buyer
     if is_seller or is_reserved_buyer:
         data["payment_number"] = item.payment_number
+    else:
+        data["reserved_buyer_id"] = None
+        data["reserved_buyer_username"] = None
     return data
 
 

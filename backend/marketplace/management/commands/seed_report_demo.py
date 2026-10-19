@@ -55,6 +55,11 @@ class Command(BaseCommand):
                 payment_reference__startswith=ORDER_REFERENCE_PREFIX
             ).values_list("payment_reference", flat=True)
         )
+        existing_references.update(
+            Purchase.objects.filter(
+                payment_reference__startswith="REPORT-LOAD-"
+            ).values_list("payment_reference", flat=True)
+        )
         now = timezone.now()
         orders = []
         for index in range(count):

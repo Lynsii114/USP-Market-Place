@@ -68,6 +68,7 @@ class Item(models.Model):
     payment_number = models.CharField(max_length=32, default="", blank=True)
     photo = models.TextField(null=True, blank=True)
     stock = models.IntegerField(default=1)
+    multiple_units = models.BooleanField(default=False)
     status = models.CharField(max_length=32, default="available")
     seller_id = models.IntegerField(db_index=True)
     seller_username = models.CharField(max_length=64)

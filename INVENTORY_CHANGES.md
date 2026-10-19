@@ -29,6 +29,19 @@ backend/.venv/Scripts/python.exe backend/manage.py migrate --run-syncdb --settin
 backend/.venv/Scripts/python.exe backend/manage.py seed_inventory_demo --settings=usp_backend.local_settings
 ```
 
+To populate a local database with 1,000 tagged showcase listings instead of the
+default 75, run the command with `--count 1000`:
+
+```powershell
+backend/.venv/Scripts/python.exe backend/manage.py seed_inventory_demo --settings=usp_backend.local_settings --count 1000
+```
+
+Use `--count 75` for the smaller dataset on a fresh local demo database. The
+command preserves existing listings and purchases, so running `--count 75`
+after `--count 1000` does not remove the extra listings. Repeating either
+command does not duplicate its listings. These commands refuse production
+settings and use only `backend/inventory-demo.db`.
+
 Start the backend and frontend in separate terminals:
 
 ```powershell

@@ -71,8 +71,9 @@ class Command(BaseCommand):
             sellers.append(seller)
         created_count = 0
         counter = 0
+        photos = {}
         for category, (photo_path, entries) in DEMO_CATALOG.items():
-            photo = category_photo(photo_path)
+            photo = photos.setdefault(category, category_photo(photo_path))
             for name, price in entries:
                 seller = sellers[counter % len(sellers)]
                 status = "sold" if counter in (8, 26, 50) else "hidden" if counter in (17, 42, 66) else "available"
@@ -119,6 +120,7 @@ class Command(BaseCommand):
                 status="available",
                 seller_id=seller.id,
                 seller_username=seller.username,
+                multiple_units=(1 + index % 4) > 1,
             ))
         Item.objects.bulk_create(generated_items, batch_size=250)
         self.stdout.write(self.style.SUCCESS(

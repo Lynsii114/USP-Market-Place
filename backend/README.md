@@ -12,7 +12,7 @@ Open http://127.0.0.1:8000/api/health to check the API.
 
 Database:
 
-This backend uses MySQL/phpMyAdmin only. SQLite is disabled.
+The regular backend uses MySQL/phpMyAdmin. The optional showcase demo uses a separate, isolated SQLite database and is not used by production.
 
 1. Create a MySQL database, for example `usp_marketplace`.
 2. Set `DATABASE_URL` in a `.env` file in the `backend` folder:
@@ -22,6 +22,19 @@ DATABASE_URL=mysql+pymysql://user:password@localhost:3306/usp_marketplace
 ```
 
 The app will create tables automatically on startup.
+
+## Local showcase demo
+
+To use the local demo data instead of the MySQL database, start the backend from the repository root with `backend-demo.cmd`. This runs Django with `usp_backend.local_settings` and reads/writes only `backend/inventory-demo.db`. Start the frontend with `frontend.cmd` and open `http://localhost:5173/`.
+
+Seed up to 1,000 active listings and 1,000 completed demo orders into that SQLite database:
+
+```powershell
+backend\venv\Scripts\python.exe backend\manage.py seed_inventory_demo --settings=usp_backend.local_settings --count 1000
+backend\venv\Scripts\python.exe backend\manage.py seed_report_demo --settings=usp_backend.local_settings --count 1000
+```
+
+These commands are repeat-safe: rerunning them does not add duplicate generated listings or orders. The demo records are local only and do not appear in MySQL or the deployed Vercel app.
 
 Email verification:
 
@@ -60,3 +73,24 @@ Password reset:
 
 
 Users can select `Forgot password?` on the login page. The backend sends a six-digit reset code to the registered email. The code expires after 10 minutes, allows at most five attempts, and can only be used once. After resetting the password, authenticator verification is required only for accounts that have enabled it.
+
+
+### Existing databases and multiple-unit listings
+
+The listing form stores the multiple-unit choice in `items.multiple_units`, so a
+listing remains a multiple-unit listing when its remaining stock reaches one.
+For an existing database with automatic schema upgrades disabled, run this once
+using the appropriate settings before starting the updated backend:
+
+```powershell
+# Isolated local demo database
+.\.venv\Scripts\python.exe manage.py upgrade_listing_quantities --settings=usp_backend.local_settings
+```
+
+For a deployed database, run `python manage.py upgrade_listing_quantities` in its
+configured environment during deployment. The command adds the missing column
+and marks existing listings with multiple stock or recorded paid units as
+multiple-unit listings. Repeating it does not overwrite seller choices.
+
+Unpaid orders hold their requested quantities. Seller-created reservations hold
+one unit. Remaining units can be purchased by other buyers. Fully reserved listings are visible only to their seller and buyers holding a reservation.
