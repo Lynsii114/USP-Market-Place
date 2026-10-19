@@ -23,7 +23,10 @@ def category_photo(relative_path):
 
 
 class Command(BaseCommand):
-    help = "Create 75 showcase listings plus existing local samples; refuses non-local settings."
+    help = "Create 75 or 1000 local showcase listings; refuses non-local settings."
+
+    def add_arguments(self, parser):
+        parser.add_argument("--count", type=int, choices=(75, 1000), default=75)
 
     @transaction.atomic
     def handle(self, *args, **options):
@@ -54,8 +57,9 @@ class Command(BaseCommand):
             sellers.append(seller)
         created_count = 0
         counter = 0
+        photos = {}
         for category, (photo_path, entries) in DEMO_CATALOG.items():
-            photo = category_photo(photo_path)
+            photo = photos.setdefault(category, category_photo(photo_path))
             for name, price in entries:
                 seller = sellers[counter % len(sellers)]
                 status = "sold" if counter in (8, 26, 50) else "hidden" if counter in (17, 42, 66) else "available"
@@ -71,5 +75,27 @@ class Command(BaseCommand):
                 )
                 created_count += int(created)
                 counter += 1
-        self.stdout.write(self.style.SUCCESS(f"Showcase: {created_count} added, {counter - created_count} existing. Photos are representative category images. Existing records were preserved."))
+        if options["count"] == 1000:
+            catalog = [(category, name, price) for category, (_, entries) in DEMO_CATALOG.items() for name, price in entries]
+            existing_names = set(Item.objects.filter(description__startswith=DEMO_MARKER).values_list("name", flat=True))
+            additional = []
+            for index in range(counter, 1000):
+                category, base_name, base_price = catalog[index % len(catalog)]
+                name = f"{base_name} - showcase {index + 1:04d}"
+                if name in existing_names:
+                    continue
+                seller = sellers[index % len(sellers)]
+                price = round(base_price * (0.8 + (index * 7 % 41) / 100), 2)
+                stock = 1 + index % 5
+                additional.append(Item(
+                    name=name, seller_id=seller.id, seller_username=seller.username,
+                    category=category, price=price, stock=stock,
+                    multiple_units=stock > 1, status="available", photo=photos[category],
+                    payment_method="cash", contact="Arrange pickup through marketplace messages",
+                    description=f"{DEMO_MARKER} {base_name}. Fictional listing for local load testing; photo represents the category. Pickup at Laucala campus by arrangement.",
+                ))
+            Item.objects.bulk_create(additional, batch_size=100)
+            created_count += len(additional)
+        total = Item.objects.filter(description__startswith=DEMO_MARKER).count()
+        self.stdout.write(self.style.SUCCESS(f"Showcase: {created_count} added, {total} tagged listings total. Existing records were preserved."))
         self.stdout.write(self.style.SUCCESS("Local demo ready. Admin@usp.ac.fj / Admin12345. Student accounts: demo_seller or demo_buyer / Demo314! (authenticator setup on first login)."))

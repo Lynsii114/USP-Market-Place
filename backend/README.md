@@ -23,6 +23,22 @@ DATABASE_URL=mysql+pymysql://user:password@localhost:3306/usp_marketplace
 
 The app will create tables automatically on startup.
 
+Local report load demo:
+
+From the repository root, seed showcase listings first, then add 1,000 completed
+purchase records for testing the daily, weekly and monthly reports:
+
+```powershell
+backend/.venv/Scripts/python.exe backend/manage.py seed_inventory_demo --settings=usp_backend.local_settings --count 1000
+backend/.venv/Scripts/python.exe backend/manage.py seed_report_demo --settings=usp_backend.local_settings
+```
+
+These commands use only `backend/inventory-demo.db` and refuse production
+settings. The report orders span the preceding 365 days, cover the seeded
+categories, and vary in price and quantity. Repeating the report command does
+not duplicate its 1,000 tagged orders or change listing stock. Existing orders
+are preserved, so the total shown in Reports can exceed 1,000.
+
 Email verification:
 
 For local development (`DEBUG=1`), the backend sends verification emails through SMTP when `EMAIL_HOST`, `EMAIL_HOST_USER`, and `EMAIL_HOST_PASSWORD` are configured. If the SMTP username or password is missing, verification codes are printed in the backend terminal instead. Configure `EMAIL_HOST=smtp.gmail.com`, `EMAIL_PORT=587`, `EMAIL_USE_TLS=1`, `EMAIL_USE_SSL=0`, `EMAIL_HOST_USER` as your Gmail address, `EMAIL_HOST_PASSWORD` as your current Google App Password, and `DEFAULT_FROM_EMAIL` as the same address. Remove spaces from the app password if Google displays it in groups. If Gmail closes the connection using port 587, try its implicit-SSL endpoint instead: set `EMAIL_PORT=465`, `EMAIL_USE_TLS=0`, and `EMAIL_USE_SSL=1`. Do not set both TLS and SSL to `1`.
