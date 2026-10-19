@@ -1,3 +1,4 @@
+import { matchesSearch, searchRecords } from "./utils/search.mjs";
 import { apiFetch as fetch, setAccessToken } from "./config/request";
 import React, { useEffect, useRef, useState } from "react";
 import "./Home.css";
@@ -109,6 +110,7 @@ function Home() {
   const [messageDraft, setMessageDraft] = useState("");
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
   const [userNotifications, setUserNotifications] = useState([]);
+  const [adminListing, setAdminListing] = useState(null);
   const [showAdminDashboard, setShowAdminDashboard] = useState(() =>
     window.location.pathname.startsWith("/admin")
   );
@@ -662,6 +664,23 @@ function Home() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const openAdminWorkspace = (listing = null) => {
+    if (currentUser?.role !== "admin") return;
+    hideActivePages();
+    setSelectedListing(null);
+    setSelectedSeller(null);
+    setAdminListing(listing);
+    setShowAdminDashboard(true);
+    pushViewState({ view: "admin" }, "/admin/dashboard");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const blockAdminCustomerAction = () => {
+    if (currentUser?.role !== "admin") return false;
+    showToast("You are browsing as an administrator. Sign in with a customer account to buy, sell or message sellers.", "error");
+    return true;
+  };
+
   if (!currentUser && !showAdminDashboard) {
     return (
       <AuthModal
@@ -966,7 +985,7 @@ function Home() {
 
   const removeUserNotification = async (notificationId) => {
     if (!currentUser) {
-      return;
+      return false;
     }
 
     try {
@@ -977,8 +996,10 @@ function Home() {
       setUserNotifications((currentNotifications) =>
         currentNotifications.filter((notification) => notification.id !== notificationId)
       );
+      return true;
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to remove notification", "error");
+      return false;
     }
   };
 
@@ -1048,16 +1069,11 @@ function Home() {
   const priceFilterProps = { minimumPrice, maximumPrice, priceError: selectedPriceRange.error, onMinimumPriceChange: setMinimumPrice, onMaximumPriceChange: setMaximumPrice };
   const filteredListings = listings
     .filter((listing) => {
-      const matchesSearch =
-        !normalizedSearch ||
-        listing.name.toLowerCase().includes(normalizedSearch) ||
-        listing.description.toLowerCase().includes(normalizedSearch) ||
-        listing.category.toLowerCase().includes(normalizedSearch) ||
-        listing.seller_username.toLowerCase().includes(normalizedSearch);
+      const matchesQuery = matchesSearch(searchQuery, listing.name, listing.description, listing.category, listing.seller_username, listing.id);
       const matchesCategory =
         selectedCategory === "All" || listing.category === selectedCategory;
 
-      return matchesSearch && matchesCategory && matchesPrice(listing.price, selectedPriceRange);
+      return matchesQuery && matchesCategory && matchesPrice(listing.price, selectedPriceRange);
     })
     .sort((first, second) => {
       if (sortOption === "oldest") {
@@ -1090,13 +1106,7 @@ function Home() {
     ? listings.filter((listing) => listing.seller_id === selectedSeller.id)
     : [];
   const searchSuggestions = normalizedSearch
-    ? listings
-        .filter(
-          (listing) =>
-            listing.name.toLowerCase().includes(normalizedSearch) ||
-            listing.category.toLowerCase().includes(normalizedSearch)
-        )
-        .slice(0, 5)
+    ? searchRecords(listings, searchQuery, (listing) => [listing.name, listing.category, listing.seller_username, listing.description, listing.id]).slice(0, 5)
     : [];
   const cartTotal = cartItems.reduce((total, item) => total + Number(item.price) * Number(item.quantity || 1), 0);
   const cartQuantityCount = cartItems.reduce((total, item) => total + Number(item.quantity || 1), 0);
@@ -1142,6 +1152,7 @@ function Home() {
   };
 
   const openSellerTab = (tabName) => {
+    if (blockAdminCustomerAction()) return;
     if (!currentUser) {
       openAuth("login");
       return;
@@ -1167,6 +1178,7 @@ function Home() {
   };
 
   const openCart = () => {
+    if (blockAdminCustomerAction()) return;
     setShowAdminDashboard(false);
     setShowSellerPanel(false);
     setShowShopPage(false);
@@ -1182,6 +1194,7 @@ function Home() {
   };
 
   const openPurchasesPage = () => {
+    if (blockAdminCustomerAction()) return;
     setShowAdminDashboard(false);
     setShowSellerPanel(false);
     setShowShopPage(false);
@@ -1200,6 +1213,7 @@ function Home() {
   };
 
   const addToCart = (listing) => {
+    if (blockAdminCustomerAction()) return;
     if (!currentUser) {
       setSelectedListing(null);
       showToast("Please login to add items to cart.", "error");
@@ -1267,6 +1281,7 @@ function Home() {
   };
 
   const checkoutCart = async (paymentMethod, checkoutSummary = {}, paymentDetails = {}, forceFailure = false) => {
+    if (blockAdminCustomerAction()) return;
     if (!currentUser) {
       showToast("Please login to purchase items.", "error");
       openAuth("login");
@@ -1376,6 +1391,7 @@ function Home() {
   };
 
   const submitListingReport = async (listing, reason, targetType = "listing") => {
+    if (blockAdminCustomerAction()) return;
     if (!currentUser) {
       showToast("Please login to report listings.", "error");
       openAuth("login");
@@ -1395,6 +1411,7 @@ function Home() {
           reporter_id: currentUser.id,
           target_type: targetType,
           target_id: targetType === "user" ? listing.seller_id : listing.id,
+          listing_id: listing.id,
           target_label: targetType === "user" ? listing.seller_username : listing.name,
           reason,
         }),
@@ -1493,6 +1510,7 @@ function Home() {
   };
 
   const openProductConversation = async (listing) => {
+    if (blockAdminCustomerAction()) return;
     if (!currentUser) {
       setSelectedListing(null);
       showToast("Please login to message the seller.", "error");
@@ -1708,6 +1726,7 @@ function Home() {
   };
 
   const openAccountPage = (page, salesView = "active") => {
+    if (blockAdminCustomerAction()) return;
     if (!currentUser) {
       openAuth("login");
       return;
@@ -1807,6 +1826,7 @@ function Home() {
             onLogin={() => openAuth("login")}
             onLogout={handleLogout}
             onMarketplace={openMarketplace}
+            initialListing={adminListing}
             showToast={showToast}
           />
         </>
@@ -1829,7 +1849,10 @@ function Home() {
         onLogout={handleLogout}
         onNotificationView={openUserNotification}
         onNotificationRemove={removeUserNotification}
+        onAdmin={() => openAdminWorkspace()}
       />
+
+      {currentUser?.role === "admin" && <div className="admin-browsing-notice" role="note"><strong>Administrator · Marketplace view</strong><span>Browse listings and view sellers. Use Manage listing for moderation. Buying, selling and buyer messaging require a customer account.</span></div>}
 
       <Toast message={toastMessage} type={toastType} />
 
@@ -2000,6 +2023,7 @@ function Home() {
         onMessageSeller={openProductConversation}
         onReportListing={submitListingReport}
         onViewSeller={handleViewSellerListings}
+        onManageListing={openAdminWorkspace}
       />
 
       {selectedSeller && (

@@ -1,7 +1,7 @@
 from .category_catalog import canonical_category_name
 
 
-def serialize_user(user):
+def serialize_user(user, include_moderation=False):
     return {
         "id": user.id,
         "student_id": user.student_id,
@@ -10,6 +10,7 @@ def serialize_user(user):
         "email": user.email,
         "role": user.role,
         "status": user.status,
+        **({"suspension_reason": user.suspension_reason, "suspended_until": user.suspended_until} if include_moderation else {}),
         "verified": user.verified,
         "created_at": user.created_at,
         "updated_at": user.updated_at,
@@ -165,8 +166,15 @@ def serialize_user_report(report):
         "target_type": report.target_type,
         "target_id": report.target_id,
         "target_label": report.target_label,
+        "listing_id": report.listing_id,
+        "listing_snapshot": report.listing_snapshot or {},
         "reason": report.reason,
         "status": report.status,
+        "review_notes": report.review_notes,
+        "reviewed_by_id": report.reviewed_by_id,
+        "reviewed_by_username": report.reviewed_by_username,
+        "reviewed_at": report.reviewed_at,
+        "email_status": report.email_status,
         "created_at": report.created_at,
     }
 

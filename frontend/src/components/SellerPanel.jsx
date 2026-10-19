@@ -1,3 +1,5 @@
+import SearchInput from "./SearchInput";
+import { searchRecords } from "../utils/search.mjs";
 import React, { useEffect, useState } from "react";
 import OrderProgressTracker from "./OrderProgressTracker";
 import { LISTING_PHOTO_ACCEPT } from "../utils/listingPhoto";
@@ -48,9 +50,7 @@ function SellerPanel({
   const [inventoryStatus, setInventoryStatus] = useState("all");
   const [inventoryPage, setInventoryPage] = useState(1);
   const summary = inventorySummary(myListings);
-  const search = inventorySearch.trim().toLowerCase();
-  const matchingListings = myListings.filter((listing) =>
-    (!search || `${listing.name} ${listing.description} ${listing.category}`.toLowerCase().includes(search)) &&
+  const matchingListings = searchRecords(myListings, inventorySearch, (listing) => [listing.name, listing.id, listing.description, listing.category, sellerListingStatus(listing)]).filter((listing) =>
     (inventoryStatus === "all" || sellerListingStatus(listing) === inventoryStatus)
   );
   const pageSize = 10;
@@ -279,7 +279,7 @@ function SellerPanel({
                 </div>
                 <label className="inventory-search">
                   <span className="sr-only">Search My Listings</span>
-                  <input type="search" placeholder="Search your listings" value={inventorySearch} onChange={(event) => { setInventorySearch(event.target.value); setInventoryPage(1); onCloseMenu(); }} />
+                  <SearchInput label="Search My Listings" placeholder="Listing, ID, category or status" value={inventorySearch} onChange={(value) => { setInventorySearch(value); setInventoryPage(1); onCloseMenu(); }} />
                 </label>
                 {(inventorySearch || inventoryStatus !== "all") && <button type="button" className="inventory-clear" onClick={() => { setInventorySearch(""); setInventoryStatus("all"); setInventoryPage(1); onCloseMenu(); }}>Clear filters</button>}
               </div>

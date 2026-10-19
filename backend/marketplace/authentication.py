@@ -10,6 +10,7 @@ from django.utils.deprecation import MiddlewareMixin
 
 from .exceptions import ApiError
 from .models import User
+from .account_status import restore_expired_suspension
 
 
 def credential_version(user):
@@ -33,6 +34,7 @@ def token_user(token, purpose="access"):
             raise ApiError("Please sign in again", 401)
     except (signing.BadSignature, KeyError, TypeError, ValueError) as exc:
         raise ApiError("Please sign in again", 401) from exc
+    restore_expired_suspension(user)
     if user.status != "active":
         raise ApiError("Account is not active", 403)
     return user
@@ -71,6 +73,16 @@ class ApiIdentityMiddleware(MiddlewareMixin):
             request.marketplace_user = user
             if request.path.startswith("/api/admin/") and user.role != "admin":
                 raise ApiError("Admin access required", 403)
+
+            customer_actions = {
+                "items_collection", "item_detail", "purchase_item", "checkout_cart",
+                "item_conversation", "item_reservation", "seller_item_status",
+                "seller_order_stage", "confirm_payment_received", "confirm_cash_payment",
+                "cancel_order", "buyer_order_received", "report_user_activity",
+                "rating_review", "conversation_detail",
+            }
+            if user and user.role == "admin" and request.method != "GET" and name in customer_actions:
+                raise ApiError("Administrator accounts can browse and moderate listings. Use a customer account to buy, sell, message or submit reviews and reports.", 403)
 
             # Viewer parameters can never impersonate a seller or reserved buyer.
             if public_read:

@@ -3,7 +3,8 @@ import React, { useEffect, useState } from "react";
 
 import { API_URL } from "../config/api";
 
-function ProductModal({ listing, currentUser, onClose, onAddToCart, onMessageSeller, onReportListing, onViewSeller }) {
+function ProductModal({ listing, currentUser, onClose, onAddToCart, onMessageSeller, onReportListing, onViewSeller, onManageListing }) {
+  const isAdmin = currentUser?.role === "admin";
   const [reportReason, setReportReason] = useState("");
   const [reportTarget, setReportTarget] = useState("listing");
   const [reportMode, setReportMode] = useState(null);
@@ -80,7 +81,7 @@ function ProductModal({ listing, currentUser, onClose, onAddToCart, onMessageSel
         <div className="auth-header">
           <h2>{listing.name}</h2>
           <div className="product-header-actions">
-            {currentUser && !isOwnListing && (
+            {currentUser && !isAdmin && !isOwnListing && (
               <div className="admin-action-dropdown">
                 <button
                   type="button"
@@ -151,17 +152,21 @@ function ProductModal({ listing, currentUser, onClose, onAddToCart, onMessageSel
             isReservedForCurrentUser &&
             !showReservedPaymentDetails &&
             paymentDetailsError && <p role="alert">{paymentDetailsError}</p>}
-          {!isOwnListing &&
+          {!isAdmin && !isOwnListing &&
             ["mpaisa", "mycash"].includes(listing.payment_method) &&
             !isReservedForCurrentUser && (
               <p className="product-meta">The seller's receiving number is shown after they reserve this item for you.</p>
             )}
-          {currentUser && !isOwnListing && (
+          {currentUser && !isAdmin && !isOwnListing && (
             <button type="button" className="secondary-button" onClick={() => onMessageSeller(listing)} disabled={isSold}>
               Message Seller
             </button>
           )}
-          <button
+          {isAdmin ? <div className="admin-listing-controls">
+            <p>You are viewing this listing as an administrator. Customer purchases, reservations, messages and reports are unavailable.</p>
+            <button type="button" className="auth-submit" onClick={() => onManageListing(listing)}>Manage listing</button>
+            <button type="button" className="secondary-button" onClick={onClose}>Continue browsing</button>
+          </div> : <button
             type="button"
             className="auth-submit"
             onClick={() => onAddToCart(listing)}
@@ -174,11 +179,11 @@ function ProductModal({ listing, currentUser, onClose, onAddToCart, onMessageSel
                 : isReserved && !isReservedForCurrentUser
                   ? "Reserved"
                   : "Add to Cart"}
-          </button>
+          </button>}
         </div>
       </div>
 
-      {reportMode === "report" && currentUser && !isOwnListing && (
+      {reportMode === "report" && currentUser && !isAdmin && !isOwnListing && (
         <div className="nested-modal-backdrop" onClick={() => setReportMode(null)}>
           <div className="report-modal" onClick={(event) => event.stopPropagation()}>
             <div className="auth-header">
