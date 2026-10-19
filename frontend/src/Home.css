@@ -5640,6 +5640,7 @@
 @media (max-width: 600px) {
   .admin-filters > .shared-search-control { max-width: none; flex-basis: 100%; }
   .shared-search-control { padding: 0 9px; gap: 7px; }
+}
 
 .listing-quantity {
   display: flex;

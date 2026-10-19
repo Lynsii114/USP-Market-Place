@@ -787,6 +787,7 @@ function Home() {
   };
 
   const hideActivePages = () => {
+    setShowHelp(false);
     setShowAdminDashboard(false);
     setShowSellerPanel(false);
     setShowShopPage(false);
@@ -832,6 +833,29 @@ function Home() {
     showToast("You are browsing as an administrator. Sign in with a customer account to buy, sell or message sellers.", "error");
     return true;
   };
+
+  const openHelp = (topic = "") => {
+    const selectedTopic = typeof topic === "string" ? topic : "";
+    if (!showHelp) helpReturnRoute.current = window.location.pathname + window.location.search + window.location.hash;
+    setHelpTopic(selectedTopic);
+    setShowHelp(true);
+    pushViewState({ view: "help", topic: selectedTopic }, `/help${selectedTopic ? `#${encodeURIComponent(selectedTopic)}` : ""}`);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const closeHelp = () => {
+    setShowHelp(false);
+    if (helpReturnRoute.current) {
+      helpReturnRoute.current = null;
+      window.history.back();
+    } else {
+      openMarketplace();
+    }
+  };
+
+  if (showHelp) {
+    return <div className="home-page"><HelpPage topic={helpTopic} onBack={closeHelp} signedIn={Boolean(currentUser)} /></div>;
+  }
 
   if (!currentUser && !showAdminDashboard) {
     return (
@@ -1265,8 +1289,8 @@ function Home() {
   const selectedSellerListings = selectedSeller
     ? listings.filter((listing) => listing.seller_id === selectedSeller.id)
     : [];
-  const searchSuggestions = normalizedSearch
-    ? searchRecords(listings, searchQuery, (listing) => [listing.name, listing.category, listing.seller_username, listing.description, listing.id]).slice(0, 5)
+  const matchingSuggestions = normalizedSearch
+    ? searchRecords(listings, searchQuery, (listing) => [listing.name, listing.category, listing.seller_username, listing.description, listing.id])
     : [];
   const searchSuggestions = matchingSuggestions.slice(0, 4);
   const cartTotal = cartItems.reduce((total, item) => total + Number(item.price) * Number(item.quantity || 1), 0);
