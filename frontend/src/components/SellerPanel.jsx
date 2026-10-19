@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import OrderProgressTracker from "./OrderProgressTracker";
 import { LISTING_PHOTO_ACCEPT } from "../utils/listingPhoto";
 import ListingActionsMenu from "./ListingActionsMenu";
-import { inventorySummary, sellerListingStatus } from "../utils/inventory.mjs";
+import { inventorySummary, sellerListingStatus, availableStock } from "../utils/inventory.mjs";
 
 function SellerPanel({
   activeSellerTab,
@@ -183,20 +183,35 @@ function SellerPanel({
                 />
               </label>
 
-              <label>
-                Units in Stock
-                <input
-                  type="number"
-                  name="stock"
-                  value={listingForm.stock}
-                  onChange={onFieldChange}
-                  min="0"
-                  step="1"
-                  max="2147483647"
-                  placeholder="1"
-                  required
-                />
-              </label>
+              <div className="listing-quantity">
+                <label className="multiple-units-toggle">
+                  <input
+                    type="checkbox"
+                    name="multiple_units"
+                    checked={Boolean(listingForm.multiple_units)}
+                    onChange={onFieldChange}
+                  />
+                  Multiple units
+                </label>
+                {listingForm.multiple_units ? (
+                  <label>
+                    Quantity available
+                    <input
+                      className="listing-stock-input"
+                      type="number"
+                      name="stock"
+                      value={listingForm.stock}
+                      onChange={onFieldChange}
+                      min="1"
+                      step="1"
+                      max="2147483647"
+                      required
+                    />
+                  </label>
+                ) : (
+                  <small>{Number(listingForm.stock) === 0 ? "Sold out. Enable multiple units to enter a restock quantity." : "One item will be listed."}</small>
+                )}
+              </div>
 
               <label>
                 Category
@@ -316,7 +331,7 @@ function SellerPanel({
                                 ? `Reserved for ${listing.reserved_buyer_username || "buyer"}`
                                 : listing.status === "sold" || Number(listing.stock) <= 0
                                   ? "Sold"
-                                  : `${listing.stock} in stock`}
+                                  : `${availableStock(listing)} available${listing.reserved_stock ? `, ${listing.reserved_stock} reserved` : ""}`}
                         </span>
                       </div>
                       {listing.admin_restricted && <p>{listing.removed_reason || "Contact an administrator to restore this listing."}</p>}
@@ -327,20 +342,22 @@ function SellerPanel({
                             <button type="button" disabled={listing.admin_restricted || isSubmitting} onClick={() => onEditListing(listing)}>
                               Edit
                             </button>
-                            {listing.status === "reserved" ? (
+                            {listing.status === "reserved" || pendingPaymentOrder || listing.manual_reserved_stock > 0 ? (
                               <button
                                 type="button"
                                 onClick={() =>
-                                  pendingPaymentOrder
-                                    ? onCancelOrder(pendingPaymentOrder)
-                                    : onUpdateListingStatus(listing, "available")
+                                  listing.manual_reserved_stock > 0
+                                    ? onUpdateListingStatus(listing, "available")
+                                    : pendingPaymentOrder
+                                      ? onCancelOrder(pendingPaymentOrder)
+                                      : onUpdateListingStatus(listing, "available")
                                 }
                               >
-                                {pendingPaymentOrder ? "Release Unpaid Order" : "Cancel Reservation"}
+                                {pendingPaymentOrder && !listing.manual_reserved_stock ? "Release Unpaid Order" : "Cancel Reservation"}
                               </button>
                             ) : (
                               <button type="button" onClick={() => openReservationModal(listing)} disabled={listing.admin_restricted || listing.status === "hidden" || listing.status === "sold" || Number(listing.stock) <= 0 || isSubmitting}>
-                                Mark as Reserved
+                                Reserve One Unit
                               </button>
                             )}
                             <button
@@ -402,7 +419,7 @@ function SellerPanel({
                         </div>
                         {order.payment_status === "pending" && (
                           <p className="seller-order-payment-note">
-                            The listing is reserved. Confirm cash only after you receive it at delivery or pickup, or release the reservation if the buyer cancels.
+                            The ordered units are reserved. Confirm cash only after you receive it at delivery or pickup, or release the reservation if the buyer cancels.
                           </p>
                         )}
                         <OrderProgressTracker stage={order.order_stage} />

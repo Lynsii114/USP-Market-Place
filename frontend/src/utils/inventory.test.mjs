@@ -35,3 +35,13 @@ test("empty inventories show zeros and inconsistent zero stock is treated as sol
   assert.equal(sellerListingStatus({ status: "available", stock: 0 }), "sold");
   assert.equal(sellerListingStatus({ status: "hidden", stock: 0 }), "inactive");
 });
+
+
+test("available stock excludes other buyers' holds and includes an assigned manual unit", async () => {
+  const { availableStock } = await import("./inventory.mjs");
+  const listing = { stock: 3, available_stock: 1, manual_reserved_stock: 1, reserved_buyer_id: 7 };
+  assert.equal(availableStock(listing, 8), 1);
+  assert.equal(availableStock(listing, 7), 2);
+  assert.equal(availableStock({ stock: 3, available_stock: 0 }, 8), 0);
+  assert.equal(availableStock({ stock: 3 }), 3);
+});

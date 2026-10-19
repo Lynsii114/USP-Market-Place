@@ -1,3 +1,4 @@
+import { availableStock } from "../utils/inventory.mjs";
 import React, { useRef, useState } from "react";
 
 function CartPage({
@@ -37,11 +38,11 @@ function CartPage({
     if (item.status === "sold" || Number(item.stock) <= 0) {
       return "This item has sold out. Remove it to continue.";
     }
-    if (item.status === "reserved" && item.reserved_buyer_id !== currentUser?.id) {
+    if (availableStock(item, currentUser?.id) <= 0) {
       return "This item is reserved for another buyer. Remove it to continue.";
     }
-    if (quantityFor(item) > Number(item.stock)) {
-      return `Only ${item.stock} unit${Number(item.stock) === 1 ? " is" : "s are"} available. Reduce the quantity or remove this item.`;
+    if (quantityFor(item) > availableStock(item, currentUser?.id)) {
+      return `Only ${availableStock(item, currentUser?.id)} unit${availableStock(item, currentUser?.id) === 1 ? " is" : "s are"} available. Reduce the quantity or remove this item.`;
     }
     return "";
   };
@@ -463,8 +464,8 @@ function CartPage({
                 </div>
                 <div className="cart-item-action">
                   <span>${Number(item.price).toFixed(2)}</span>
-                  <small>{Number(item.stock) > 0 ? `${item.stock} in stock` : "Sold"}</small>
-                  {(Number(item.stock) > 1 || quantityFor(item) > 1) && (
+                  <small>{availableStock(item, currentUser?.id) > 0 ? `${availableStock(item, currentUser?.id)} available` : "Sold"}</small>
+                  {(availableStock(item, currentUser?.id) > 1 || quantityFor(item) > 1) && (
                     <div className="cart-quantity-control" aria-label={`Quantity for ${item.name}`}>
                       <button
                         type="button"
@@ -473,7 +474,7 @@ function CartPage({
                           isSubmitting ||
                           quantityFor(item) <= 1 ||
                           item.status === "sold" ||
-                          (item.status === "reserved" && item.reserved_buyer_id !== currentUser?.id)
+                          (availableStock(item, currentUser?.id) <= 0)
                         }
                         aria-label={`Decrease quantity for ${item.name}`}
                       >
@@ -485,9 +486,9 @@ function CartPage({
                         onClick={() => onQuantityChange(item.id, quantityFor(item) + 1)}
                         disabled={
                           isSubmitting ||
-                          quantityFor(item) >= Number(item.stock) ||
+                          quantityFor(item) >= availableStock(item, currentUser?.id) ||
                           item.status === "sold" ||
-                          (item.status === "reserved" && item.reserved_buyer_id !== currentUser?.id)
+                          (availableStock(item, currentUser?.id) <= 0)
                         }
                         aria-label={`Increase quantity for ${item.name}`}
                       >

@@ -23,7 +23,15 @@ export function inventorySummary(listings) {
   for (const listing of listings) {
     const status = sellerListingStatus(listing);
     summary[status] += 1;
-    if (status === "available") summary.units += Math.max(0, Number(listing.stock) || 0);
+    if (status === "available") summary.units += availableStock(listing);
   }
   return summary;
+}
+
+
+export function availableStock(listing, buyerId = null) {
+  if (listing.available_stock == null) return Math.max(0, Number(listing.stock) || 0);
+  const heldForBuyer = buyerId != null && listing.reserved_buyer_id === buyerId
+    ? Number(listing.manual_reserved_stock || 0) : 0;
+  return Math.max(0, Number(listing.available_stock) + heldForBuyer);
 }

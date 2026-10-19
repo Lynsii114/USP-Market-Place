@@ -62,3 +62,25 @@ Password reset:
 
 
 Users can select `Forgot password?` on the login page. The backend sends a six-digit reset code to the registered email. The code expires after 10 minutes, allows at most five attempts, and can only be used once. After resetting the password, Microsoft Authenticator is still required at login.
+
+
+### Existing databases and multiple-unit listings
+
+The listing form stores the multiple-unit choice in `items.multiple_units`, so a
+listing remains a multiple-unit listing when its remaining stock reaches one.
+For an existing database with automatic schema upgrades disabled, run this once
+using the appropriate settings before starting the updated backend:
+
+```powershell
+# Isolated local demo database
+.\.venv\Scripts\python.exe manage.py upgrade_listing_quantities --settings=usp_backend.local_settings
+```
+
+For a deployed database, run `python manage.py upgrade_listing_quantities` in its
+configured environment during deployment. The command adds the missing column
+and marks existing listings with multiple stock or recorded paid units as
+multiple-unit listings. Repeating it does not overwrite seller choices.
+
+Unpaid orders hold their requested quantities. Seller-created reservations hold
+one unit. Remaining units can be purchased by other buyers. Fully reserved
+listings are visible only to their seller and buyers holding a reservation.

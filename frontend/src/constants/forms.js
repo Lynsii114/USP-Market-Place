@@ -13,7 +13,8 @@ export const EMPTY_AUTH_FORM = {
 export const EMPTY_LISTING_FORM = {
   name: "",
   price: "",
-  stock: "",
+  stock: "1",
+  multiple_units: false,
   description: "",
   contact: "",
   payment_method: "cash",

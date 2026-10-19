@@ -27,7 +27,7 @@ import { API_URL } from "./config/api";
 import { categories as defaultCategories } from "./data/categories";
 import logo from "../logo.png";
 import { prepareListingPhoto } from "./utils/listingPhoto";
-import { priceRange, matchesPrice } from "./utils/inventory.mjs";
+import { priceRange, matchesPrice, availableStock } from "./utils/inventory.mjs";
 import { mergeCategoryOptions, canonicalCategoryName } from "./utils/categories.mjs";
 
 const PENDING_VERIFICATION_STORAGE_KEY = "usp-marketplace-pending-verification";
@@ -616,6 +616,16 @@ function Home() {
   };
 
   const openAuth = (mode) => {
+    if (isSubmitting) return;
+    if (mode === "login") {
+      setAuthForm(EMPTY_AUTH_FORM);
+      setLoginChallenge("");
+      setAuthenticatorUserId(null);
+      setAuthenticatorSecret("");
+      setAuthenticatorUri("");
+      setAuthenticatorQr("");
+      setVerificationEmail("");
+    }
     setAuthMode(mode);
     setFormMessage("");
     setEmailError("");
@@ -689,6 +699,9 @@ function Home() {
   const handleListingFieldChange = (event) => {
     const { name, value } = event.target;
     setListingForm((previous) => {
+      if (name === "multiple_units") {
+        return { ...previous, multiple_units: event.target.checked, stock: "1" };
+      }
       if (name === "payment_method") {
         const usesMobilePayment = value === "mpaisa" || value === "mycash";
         return {
@@ -814,6 +827,7 @@ function Home() {
       name: listing.name,
       price: String(listing.price),
       stock: String(listing.stock ?? 1),
+      multiple_units: listing.multiple_units ?? Number(listing.stock) > 1,
       description: listing.description,
       contact: listing.contact,
       category: listing.category,
@@ -1219,7 +1233,7 @@ function Home() {
       return;
     }
 
-    if (listing.status === "reserved" && listing.reserved_buyer_id !== currentUser.id) {
+    if (availableStock(listing, currentUser.id) <= 0) {
       setSelectedListing(null);
       showToast("This item is reserved for another buyer.", "error");
       return;
@@ -1246,7 +1260,7 @@ function Home() {
           return item;
         }
 
-        const stock = Math.max(1, Number(item.stock) || 1);
+        const stock = Math.max(1, availableStock(item, currentUser?.id));
         const quantity = Math.min(stock, Math.max(1, Number(nextQuantity) || 1));
         return { ...item, quantity };
       })
@@ -1287,8 +1301,7 @@ function Home() {
     const availableItems = cartItems.filter(
       (item) =>
         item.status !== "sold" &&
-        Number(item.stock) > 0 &&
-        (item.status !== "reserved" || item.reserved_buyer_id === currentUser.id)
+        availableStock(item, currentUser.id) > 0
     );
     if (!availableItems.length) {
       showToast("No available items to checkout.", "error");
