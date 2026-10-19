@@ -1162,24 +1162,33 @@ function Home() {
   const selectedSellerListings = selectedSeller
     ? listings.filter((listing) => listing.seller_id === selectedSeller.id)
     : [];
-  const searchSuggestions = normalizedSearch
+  const matchingSuggestions = normalizedSearch
     ? listings
         .filter(
           (listing) =>
             listing.name.toLowerCase().includes(normalizedSearch) ||
-            listing.category.toLowerCase().includes(normalizedSearch)
+            listing.category.toLowerCase().includes(normalizedSearch) ||
+            listing.description.toLowerCase().includes(normalizedSearch) ||
+            listing.seller_username.toLowerCase().includes(normalizedSearch)
         )
-        .slice(0, 5)
     : [];
+  const searchSuggestions = matchingSuggestions.slice(0, 4);
   const cartTotal = cartItems.reduce((total, item) => total + Number(item.price) * Number(item.quantity || 1), 0);
   const cartQuantityCount = cartItems.reduce((total, item) => total + Number(item.quantity || 1), 0);
 
-  const handleSearchSubmit = (event) => {
-    event.preventDefault();
+  const openSearchResults = () => {
     hideActivePages();
+    setSelectedCategory("All");
+    setMinimumPrice("");
+    setMaximumPrice("");
     setShowShopPage(true);
     pushViewState({ view: "shop" });
     window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const handleSearchSubmit = (event) => {
+    event.preventDefault();
+    openSearchResults();
   };
 
   const chooseCategory = (categoryName) => {
@@ -1752,10 +1761,7 @@ function Home() {
 
   const handleSuggestionSelect = (listing) => {
     setSearchQuery(listing.name);
-    hideActivePages();
-    setShowShopPage(true);
-    pushViewState({ view: "shop" });
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    openSearchResults();
   };
 
   const clearFilters = () => {
@@ -2084,8 +2090,10 @@ function Home() {
           <HeroSection
             searchQuery={searchQuery}
             suggestions={searchSuggestions}
+            suggestionCount={matchingSuggestions.length}
             onSearchChange={setSearchQuery}
             onSearchSubmit={handleSearchSubmit}
+            onViewAllResults={openSearchResults}
             onSuggestionSelect={handleSuggestionSelect}
           />
 

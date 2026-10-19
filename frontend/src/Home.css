@@ -3415,6 +3415,13 @@
   box-shadow: 0 18px 32px rgba(0, 0, 0, 0.18);
 }
 
+.search-suggestions-heading {
+  margin: 4px 12px 6px;
+  color: var(--usp-muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
 .search-suggestions button {
   display: flex;
   justify-content: space-between;
@@ -3439,6 +3446,13 @@
 .search-suggestions small {
   color: var(--usp-muted);
   font-weight: 700;
+}
+
+.search-suggestions .search-view-all {
+  margin-top: 4px;
+  border-top: 1px solid rgba(15, 48, 78, 0.14);
+  border-radius: 0 0 6px 6px;
+  color: var(--usp-blue);
 }
 
 .categories,
