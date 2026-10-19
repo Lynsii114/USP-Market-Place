@@ -1908,7 +1908,7 @@ function Home() {
   };
 
   const openAccountPage = (page, salesView = "active") => {
-    if (blockAdminCustomerAction()) return;
+    if (page !== "notifications" && blockAdminCustomerAction()) return;
     if (!currentUser) {
       openAuth("login");
       return;

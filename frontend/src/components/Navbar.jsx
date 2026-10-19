@@ -23,11 +23,33 @@ function Navbar({
   onAdmin,
 }) {
   const isAdmin = currentUser?.role === "admin";
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [expandedDropdown, setExpandedDropdown] = useState(null);
+  const headerRef = useRef(null);
+  const menuButtonRef = useRef(null);
   const [isNavHidden, setIsNavHidden] = useState(false);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [notificationToRemove, setNotificationToRemove] = useState(null);
   const notificationMenuRef = useRef(null);
   const notificationBellRef = useRef(null);
+
+  const closeMenu = () => {
+    setMenuOpen(false);
+    setExpandedDropdown(null);
+    setIsNotificationOpen(false);
+  };
+
+  useEffect(() => {
+    const closeOutside = (event) => {
+      if (!headerRef.current?.contains(event.target)) closeMenu();
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    return () => document.removeEventListener("pointerdown", closeOutside);
+  }, []);
+
+  useEffect(() => {
+    closeMenu();
+  }, [currentUser?.id]);
 
   const closeNotifications = () => {
     setNotificationToRemove(null);
@@ -86,13 +108,45 @@ function Navbar({
 
   return (
     <>
-    <header className={isNavHidden ? "navbar navbar-hidden" : "navbar"}>
+    <header
+      className={`navbar${isNavHidden && !menuOpen ? " navbar-hidden" : ""}${menuOpen ? " mobile-menu-open" : ""}`}
+      ref={headerRef}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && menuOpen) {
+          closeMenu();
+          menuButtonRef.current?.focus();
+        }
+      }}
+    >
       <div className="brand">
         <img src={logo} alt="USP logo" className="usp-logo" />
         <span>USP Marketplace</span>
       </div>
 
-      <nav className="nav-links">
+      <button
+        type="button"
+        className="mobile-menu-toggle"
+        ref={menuButtonRef}
+        aria-expanded={menuOpen}
+        aria-controls="marketplace-navigation"
+        onClick={() => {
+          setMenuOpen((open) => !open);
+          setExpandedDropdown(null);
+        }}
+      >
+        <span aria-hidden="true">{menuOpen ? "✕" : "☰"}</span>
+        {menuOpen ? "Close" : "Menu"}
+      </button>
+
+      <nav
+        className="nav-links"
+        id="marketplace-navigation"
+        aria-label="Main navigation"
+        onClick={(event) => {
+          const control = event.target.closest("a, button");
+          if (control && !control.hasAttribute("data-nav-toggle")) closeMenu();
+        }}
+      >
         <a href="#home" className={navClass("home")} onClick={(event) => { event.preventDefault(); onHome(); }}>
           <span aria-hidden="true">⌂</span>
           <span>Home</span>
@@ -106,12 +160,14 @@ function Navbar({
           <span>Sell Item</span>
         </a>}
         {currentUser && !isAdmin ? (
-          <div className="nav-dropdown activity-dropdown">
-            <button type="button" className={activePage === "activity" ? "nav-dropdown-button active" : "nav-dropdown-button"}>
+          <div className={`nav-dropdown activity-dropdown${expandedDropdown === "activity" ? " is-open" : ""}`}>
+            <button type="button" className={activePage === "activity" ? "nav-dropdown-button active" : "nav-dropdown-button"}
+              data-nav-toggle aria-expanded={expandedDropdown === "activity"} aria-controls="activity-navigation"
+              onClick={() => setExpandedDropdown((current) => current === "activity" ? null : "activity")}>
               <span aria-hidden="true">☷</span>
               <span>My Activity</span>
             </button>
-            <div className="nav-dropdown-menu activity-menu">
+            <div className="nav-dropdown-menu activity-menu" id="activity-navigation">
               <button type="button" onClick={() => onOpenAccountPage("dashboard")}>
                 My Dashboard
               </button>
@@ -143,9 +199,17 @@ function Navbar({
           {unreadMessageCount > 0 && <span className="notification-count">{unreadMessageCount}</span>}
         </button>}
         <div className="nav-actions">
-          <div className="nav-dropdown notification-dropdown" ref={notificationMenuRef}>
-            <button ref={notificationBellRef} type="button" className={activePage === "notifications" ? "nav-item nav-badge-button nav-symbol-button active" : "nav-item nav-badge-button nav-symbol-button"} aria-label="Notifications" title="Notifications" aria-expanded={isNotificationOpen} onClick={() => setIsNotificationOpen((open) => !open)}>
+          <div className={`nav-dropdown notification-dropdown${isNotificationOpen ? " is-open" : ""}`} ref={notificationMenuRef}>
+            <button ref={notificationBellRef} type="button" className={activePage === "notifications" ? "nav-item nav-badge-button nav-symbol-button active" : "nav-item nav-badge-button nav-symbol-button"} aria-label="Notifications" title="Notifications" aria-expanded={isNotificationOpen} data-nav-toggle onClick={() => {
+              if (window.matchMedia("(max-width: 900px)").matches) {
+                closeMenu();
+                onOpenAccountPage("notifications");
+              } else {
+                setIsNotificationOpen((open) => !open);
+              }
+            }}>
               <span aria-hidden="true">&#128276;</span>
+              <span className="mobile-notification-label">Notifications</span>
               {unreadNotifications.length > 0 && <span className="notification-count" aria-label={`${unreadNotifications.length} unread notifications`} title={`${unreadNotifications.length} unread notifications`}>{unreadNotifications.length > 10 ? "10+" : unreadNotifications.length}</span>}
             </button>
             {isNotificationOpen && <div className="nav-dropdown-menu notification-menu notification-menu-open">
@@ -176,6 +240,9 @@ function Navbar({
               ) : (
                 <p>No new notifications.</p>
               )}
+              <button type="button" className="notification-view-all" onClick={() => { closeNotifications(); onOpenAccountPage("notifications"); }}>
+                View all notifications
+              </button>
             </div>}
           </div>
           {isAdmin && <WorkspaceSwitcher active="marketplace" onAdmin={onAdmin} />}
@@ -186,12 +253,18 @@ function Navbar({
             <span className="nav-label">Cart</span>
             {cartCount > 0 && <span className="cart-count">{cartCount}</span>}
           </button>}
+          <button type="button" className="nav-item nav-help-button" onClick={onOpenHelp} aria-label="Help and frequently asked questions">
+            <span aria-hidden="true">?</span>
+            <span>Help</span>
+          </button>
           {currentUser ? (
-            <div className="nav-dropdown account-dropdown">
-              <button type="button" className={activePage === "account" ? "nav-item nav-badge-button nav-symbol-button active" : "nav-item nav-badge-button nav-symbol-button"} aria-label="My account" title="Account">
+            <div className={`nav-dropdown account-dropdown${expandedDropdown === "account" ? " is-open" : ""}`}>
+              <button type="button" className={activePage === "account" ? "nav-item nav-badge-button nav-symbol-button active" : "nav-item nav-badge-button nav-symbol-button"} aria-label="My account" title="Account"
+                data-nav-toggle aria-expanded={expandedDropdown === "account"} aria-controls="account-navigation"
+                onClick={() => setExpandedDropdown((current) => current === "account" ? null : "account")}>
                 <span aria-hidden="true">&#128100;</span><span className="nav-label">Account</span>
               </button>
-              <div className="nav-dropdown-menu account-menu">
+              <div className="nav-dropdown-menu account-menu" id="account-navigation">
                 {!isAdmin && <><button type="button" onClick={() => onOpenAccountPage("profile")}>
                   My Profile
                 </button>
