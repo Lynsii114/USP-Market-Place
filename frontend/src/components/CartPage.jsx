@@ -34,6 +34,7 @@ function CartPage({
   const [forceFailure, setForceFailure] = useState(false);
   const [paymentError, setPaymentError] = useState("");
   const checkoutInProgress = useRef(false);
+  const checkoutId = useRef(null);
   const deliveryOptions = [
     { value: "self_pickup", label: "Self Pickup", detail: "FREE", fee: 0 },
     { value: "delivery", label: "Delivery", detail: "Delivery fee applies", fee: 5 },
@@ -94,7 +95,9 @@ function CartPage({
     checkoutInProgress.current = true;
     setPaymentError("");
     try {
-      await onCheckout(paymentMethod, checkoutSummary, paymentDetails, forceFailure);
+      checkoutId.current = checkoutId.current || window.crypto.randomUUID();
+      await onCheckout(paymentMethod, checkoutSummary, paymentDetails, forceFailure, checkoutId.current);
+      checkoutId.current = null;
     } catch (error) {
       setPaymentError(error instanceof Error ? error.message : "Unable to process simulated payment");
     } finally {
@@ -193,6 +196,7 @@ function CartPage({
             disabled={isSubmitting}
             onClick={() => {
               setCheckoutStep("cart");
+              checkoutId.current = null;
               setDeliveryMethod("");
               setPaymentMethod("");
               setPaymentDetails({});
@@ -255,7 +259,9 @@ function CartPage({
                     value={option.value}
                     checked={deliveryMethod === option.value}
                     disabled={isSubmitting}
-                    onChange={(event) => setDeliveryMethod(event.target.value)}
+                    onChange={(event) => {
+                      setDeliveryMethod(event.target.value);
+                    }}
                   />
                   <span>
                     <strong>{option.label}</strong>
@@ -450,7 +456,15 @@ function CartPage({
           )}
           {paymentError && <p className="auth-message" role="alert">{paymentError}</p>}
           <div className="checkout-actions">
-            <button type="button" className="secondary-button" onClick={() => setCheckoutStep("cart")} disabled={isSubmitting}>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                checkoutId.current = null;
+                setCheckoutStep("cart");
+              }}
+              disabled={isSubmitting}
+            >
               Back to Cart
             </button>
             <button type="button" className="auth-submit" onClick={handleCheckout} disabled={isSubmitting || unavailableItems.length > 0 || !deliveryMethod || !paymentMethod || !paymentDetailsComplete}>

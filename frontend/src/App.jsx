@@ -1348,7 +1348,7 @@ function Home() {
     cash: "Cash",
   };
 
-  const checkoutCart = async (paymentMethod, checkoutSummary = {}, paymentDetails = {}, forceFailure = false) => {
+  const checkoutCart = async (paymentMethod, checkoutSummary = {}, paymentDetails = {}, forceFailure = false, checkoutId) => {
     if (!currentUser) {
       showToast("Please login to purchase items.", "error");
       openAuth("login");
@@ -1385,6 +1385,7 @@ function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           payment_method: paymentMethod,
+          checkout_id: checkoutId,
           delivery_method: deliveryMethod,
           payment_details: paymentDetails,
           simulate_failure: forceFailure,
