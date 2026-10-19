@@ -38,6 +38,12 @@ def health(request):
     return api_response({"status": "ok"})
 
 
+def user_session(request):
+    if request.method != "GET":
+        return method_not_allowed()
+    return api_response({"status": "active"})
+
+
 def database_health(request):
     if request.method != "GET":
         return method_not_allowed()
@@ -394,7 +400,14 @@ def admin_hide_listing(request, item_id):
 def admin_remove_listing(request, item_id):
     if request.method != "POST":
         return method_not_allowed()
-    return run(lambda: (services.remove_listing(get_admin_id(request), item_id, json_body(request).get("reason", "")), True))
+    return run(lambda: (services.moderate_listing(get_admin_id(request), item_id, "remove", json_body(request)), True))
+
+
+@csrf_exempt
+def admin_warn_listing(request, item_id):
+    if request.method != "POST":
+        return method_not_allowed()
+    return run(lambda: (services.moderate_listing(get_admin_id(request), item_id, "warning", json_body(request)), True))
 
 
 @csrf_exempt

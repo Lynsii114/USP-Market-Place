@@ -725,6 +725,7 @@
 .student-action-error { color: #991b1b; }
 .student-action-dialog [aria-invalid="true"] { border-color: #b91c1c; outline-color: #b91c1c; }
 .student-action-dialog p[role="alert"] { margin: 0; }
+.listing-moderation-reason { white-space: pre-wrap; overflow-wrap: anywhere; }
 .student-status-filter { display: grid; gap: 6px; color: #52647a; font-size: 0.85rem; font-weight: 700; }
 .student-status-filter select { padding: 9px 12px; border: 1px solid #bccbd9; border-radius: 8px; background: white; color: #172b4d; font: inherit; }
 .student-account-status { display: grid; justify-items: start; gap: 8px; }
@@ -1377,15 +1378,24 @@
 }
 
 .admin-sidebar {
+  box-sizing: border-box;
   position: sticky;
   top: 0;
   height: 100vh;
+  max-height: 100dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
   display: flex;
   flex-direction: column;
   gap: 22px;
   padding: 22px;
   background: #0b243d;
   color: #ffffff;
+}
+
+.admin-sidebar > * {
+  flex-shrink: 0;
 }
 
 .admin-brand {
@@ -2143,6 +2153,54 @@
 
 .admin-listing-row {
   min-height: 86px;
+}
+
+#admin-listings-results {
+  padding: 16px;
+}
+
+#admin-listings-results .admin-section-toolbar {
+  margin-bottom: 12px;
+  gap: 10px;
+}
+
+#admin-listings-results .admin-table {
+  gap: 6px;
+  align-content: start;
+}
+
+#admin-listings-results .listings-grid {
+  grid-template-columns: minmax(190px, 1.4fr) minmax(130px, 1fr) 110px 78px 86px 90px 132px 88px;
+  column-gap: 8px;
+}
+
+#admin-listings-results .admin-table-head {
+  padding: 0 10px 4px;
+}
+
+#admin-listings-results .admin-listing-row {
+  box-sizing: border-box;
+  min-height: 64px;
+  padding: 8px 10px;
+}
+
+#admin-listings-results .admin-listing-name {
+  gap: 8px;
+}
+
+#admin-listings-results .admin-listing-name img,
+#admin-listings-results .admin-listing-name > span {
+  width: 44px;
+  height: 44px;
+}
+
+#admin-listings-results .admin-listing-name div,
+#admin-listings-results .admin-listing-meta {
+  gap: 2px;
+}
+
+#admin-listings-results .inventory-pagination {
+  margin: 12px 0 0;
 }
 
 .admin-category-pill,

@@ -98,7 +98,7 @@ function ReviewDialog({ report, onClose, onSave, onViewUser }) {
         {confirming ? <>
           <p><strong>{action === "delete" ? "Delete listing" : "Send warning"}</strong> for {listing?.name || report.target_label}.</p>
           <p className="flag-preserve-lines">{reason}</p>
-          <p className="flag-review-note">The message will be emailed to <strong>{report.seller?.email}</strong>. {action === "delete" ? "The listing will be removed from the marketplace. Report evidence and existing order records are kept." : "The listing will remain available."}</p>
+          <p className="flag-review-note">The message will be emailed to <strong>{report.seller?.email}</strong>. {action === "delete" ? "The listing will be permanently deleted and cannot be restored. Report evidence and existing order records are kept." : "The listing will remain available."}</p>
         </> : <>
           <div className="flag-action-options" role="group" aria-label="Flag action">
             <button type="button" aria-pressed={action === "warning"} disabled={saving || !canWarn} onClick={() => { setAction("warning"); setReason(""); setSuggestion(""); }}><strong>Send warning</strong><span>Email the seller a warning. Keep the listing.</span></button>

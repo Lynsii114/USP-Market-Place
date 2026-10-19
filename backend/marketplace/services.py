@@ -28,13 +28,13 @@ from django.utils.dateparse import parse_date
 # import jwt
 # from jwt import PyJWKClient
 
-from .account_status import restore_expired_suspension
+from .account_status import restore_expired_suspension, suspension_error
 from .constants import ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_USERNAME
 from .category_catalog import DEFAULT_CATEGORY_NAMES, canonical_category_name, builtin_category_options
 from .exceptions import ApiError
 from .authentication import issue_token, token_user
 from .models import AdminNotification, Category, Conversation, EmailVerification, Item, Message, PasswordReset, PendingRegistration, Purchase, RatingReview, User, UserNotification, UserReport
-from .queries import reservation_stock, purchasable_stock, find_student, find_user_by_login, item_status, public_items, visible_items, visible_purchases
+from .queries import reservation_stock, purchasable_stock, find_student, find_user_by_login, item_status, public_items, visible_items, visible_purchases, available_seller_items
 from .serializers import serialize_category, serialize_conversation, serialize_item, serialize_item_for_user, serialize_message, serialize_notification, serialize_purchase, serialize_rating_review, serialize_user, serialize_user_report
 from .validators import is_usp_student_email, validate_item_payload, validate_signup, whole_number
 
@@ -58,7 +58,7 @@ def require_active_user(user_id):
         raise ApiError("User not found", 404)
     restore_expired_suspension(user)
     if user.status == "suspended":
-        raise ApiError("Account is suspended", 403)
+        raise suspension_error(user)
     return user
 
 
@@ -644,7 +644,7 @@ def login_user(data):
         raise ApiError("Please verify your email before logging in", 403)
     restore_expired_suspension(user)
     if user.status == "suspended":
-        raise ApiError("Account is suspended", 403)
+        raise suspension_error(user)
     if legacy_match:
         user.password_hash = hash_password(password)
         user.save(update_fields=["password_hash"])
@@ -860,7 +860,12 @@ def delete_category(admin_id, category_id):
 
 
 def list_seller_items(seller_id, requesting_user_id=None):
-    seller = require_active_user(seller_id)
+    seller = User.objects.filter(id=seller_id).first()
+    if not seller:
+        raise ApiError("User not found", 404)
+    restore_expired_suspension(seller)
+    if seller.status == "suspended":
+        return []
     items = visible_items().filter(seller_id=seller.id).exclude(status="removed").order_by("-id")
     if str(requesting_user_id) != str(seller.id):
         items = items.filter(status__in=["available", "reserved"], stock__gt=0)
@@ -901,7 +906,7 @@ def create_item(data):
 
 
 def get_public_item(item_id, requesting_user_id=None):
-    item = Item.objects.filter(id=item_id).first()
+    item = available_seller_items(Item.objects.all()).filter(id=item_id).first()
     if not item or item.status == "removed" or item.name.startswith("__test_") or (
         item.status == "hidden" and str(requesting_user_id) != str(item.seller_id)
     ):
@@ -1032,7 +1037,7 @@ def get_unread_message_count(user_id):
 
 def open_item_conversation(item_id, buyer_id):
     buyer = require_active_user(buyer_id)
-    item = Item.objects.filter(id=item_id).first()
+    item = available_seller_items(Item.objects.all()).filter(id=item_id).first()
     if not item or item.status in {"hidden", "removed"}:
         raise ApiError("Item not found", 404)
     if item.seller_id == buyer.id:
@@ -1380,7 +1385,7 @@ def checkout_cart(buyer_id, data):
 
         locked_items = {
             item.id: item
-            for item in Item.objects.select_for_update().filter(id__in=item_quantities).order_by("id")
+            for item in available_seller_items(Item.objects.select_for_update()).filter(id__in=item_quantities).order_by("id")
         }
         if len(locked_items) != len(item_quantities):
             raise ApiError("One or more items are no longer available", 404)
@@ -1502,7 +1507,7 @@ def purchase_item(
     requested_quantity = whole_number(quantity, "Quantity", minimum=1)
 
     buyer = require_active_user(buyer_id)
-    item = Item.objects.select_for_update().filter(id=item_id).first()
+    item = available_seller_items(Item.objects.select_for_update()).filter(id=item_id).first()
     if not item or item.status in {"hidden", "removed"}:
         raise ApiError("Item not found", 404)
     payment_method_key = str(payment_method or "").strip().lower()
@@ -1871,14 +1876,29 @@ def set_student_status(admin_id, student_id, status, data=None):
         if status == "suspended":
             title = "Account suspended"
             details = f"Reason: {reason}\nDuration: {hours} hours. Suspension ends {deadline_text}. You can sign in again after that time using your password and authenticator."
+            email_message = (
+                f"Dear {student.name.strip() or student.username},\n\n"
+                "We are writing to inform you that your USP Marketplace account has been temporarily suspended, effective immediately.\n\n"
+                f"Reason for suspension: {reason}\n\n"
+                f"Suspension duration: {hours} hours\n"
+                f"Access resumes: {deadline_text}\n\n"
+                "You will be unable to sign in or use your account during this period. "
+                "Once the suspension ends, you may sign in again using your usual sign-in details.\n\n"
+                "If you believe this decision was made in error or would like to request a review, "
+                "please contact the USP Marketplace administration team and include your registered email address.\n\n"
+                "Thank you for your understanding.\n\n"
+                "Kind regards,\nUSP Marketplace Administration Team"
+            )
         else:
             title = "Account reactivated"
             details = f"Your suspension has been reconsidered and your account reactivated by an administrator. Reason: {reason}\nYou can now sign in using your password and authenticator."
-        notify_user(student.id, title, details, "administration", admin)
+            email_message = f"Hello {student.username},\n\n{details}\n\nIf you believe this action was a mistake, contact the USP Marketplace admin team."
+            notify_user(student.id, title, details, "administration", admin)
     result = send_account_action_email(
         f"USP Marketplace: {title.lower()}",
-        f"Hello {student.username},\n\n{details}\n\nIf you believe this action was a mistake, contact the USP Marketplace admin team.",
+        email_message,
         student.email,
+        action_label="account suspension" if status == "suspended" else "account reactivation",
     )
     notify_admin(title, f"{student.username}: {details} Email status: {result['email_status']}.", "administration", admin)
     return {"user": serialize_user(student, include_moderation=True), **result}
@@ -1892,13 +1912,23 @@ def delete_student(admin_id, student_id, data=None):
         if not student:
             raise ApiError("Student not found", 404)
         username, email = student.username, student.email
+        display_name = student.name.strip() or username
         Item.objects.filter(seller_id=student.id).delete()
         PendingRegistration.objects.filter(email__iexact=email).delete()
         student.delete()
     result = send_account_action_email(
-        "Your USP Marketplace account has been deleted",
-        f"Hello {username},\n\nYour USP Marketplace account and its listings were permanently deleted by an administrator.\n\nReason: {reason}\n\nYou can no longer sign in to this account. If you believe this was a mistake, contact the USP Marketplace admin team.",
+        "USP Marketplace: Notice of account deletion",
+        (
+            f"Dear {display_name},\n\n"
+            "We are writing to confirm that your USP Marketplace account and its listings have been permanently deleted by an administrator.\n\n"
+            f"Reason for deletion: {reason}\n\n"
+            "You can no longer sign in to or use this account.\n\n"
+            "If you believe this decision was made in error or have any questions, "
+            "please contact the USP Marketplace administration team and include your registered email address.\n\n"
+            "Kind regards,\nUSP Marketplace Administration Team"
+        ),
         email,
+        action_label="account deletion",
     )
     notify_admin("Student account deleted", f"{username} ({email}). Reason: {reason}. Email status: {result['email_status']}.", "administration", admin)
     return {**result, "message": f"{username} was permanently deleted. {result['message']}"}
@@ -2141,13 +2171,14 @@ def review_user_report(admin_id, report_id, data):
         if action == "delete":
             if not item or item.status == "removed":
                 raise ApiError("This listing is already deleted or is no longer available", 409)
-            # Keep the item record for existing orders and report evidence.
-            # Removed listings cannot be viewed publicly or restored by sellers.
-            item.status = "removed"
-            item.removed_reason = reason[:255]
-            item.save(update_fields=["status", "removed_reason"])
+            # Orders store their own item details; preserve report evidence before
+            # permanently deleting the listing itself.
+            record.listing_snapshot = record.listing_snapshot or serialize_item(item)
+            record.listing_id = listing_id
+            item.delete()
+            item = None
             title = "Listing deleted"
-            details = f"An administrator deleted your listing '{listing_name}' (listing #{listing_id}) from the marketplace. Reason: {reason}"
+            details = f"An administrator permanently deleted your listing '{listing_name}' (listing #{listing_id}) from the marketplace. This listing cannot be restored. Reason: {reason}"
         else:
             title = "Marketplace warning"
             details = f"An administrator has issued a warning about '{listing_name}'{f' (listing #{listing_id})' if listing_id else ''}. Reason: {reason}. Please review your listing and follow marketplace rules."
@@ -2157,7 +2188,7 @@ def review_user_report(admin_id, report_id, data):
         record.reviewed_by_username = admin.username
         record.reviewed_at = timezone.now()
         record.email_status = "pending"
-        record.save(update_fields=["status", "review_notes", "reviewed_by_id", "reviewed_by_username", "reviewed_at", "email_status"])
+        record.save(update_fields=["status", "review_notes", "reviewed_by_id", "reviewed_by_username", "reviewed_at", "email_status", "listing_snapshot", "listing_id"])
         notify_user(seller.id, title, details[:1000], "administration", admin)
         notify_user(record.reporter_id, "Your report has been reviewed", f"An administrator reviewed report #{record.id} about {record.target_label} and {'deleted the listing' if action == 'delete' else 'issued a warning to the seller'}.", "administration", admin)
     email_result = send_account_action_email(
@@ -2179,7 +2210,7 @@ def list_rating_reviews(admin_id):
 
 def list_admin_items(admin_id, search=""):
     require_admin(admin_id)
-    query = visible_items()
+    query = visible_items().exclude(status="removed")
     if search:
         query = query.filter(
             Q(name__contains=search)
@@ -2207,22 +2238,51 @@ def hide_listing(admin_id, item_id, reason):
     return serialize_admin_item(item)
 
 
-@transaction.atomic
-def remove_listing(admin_id, item_id, reason):
-    require_admin(admin_id)
-    item = Item.objects.select_for_update().filter(id=item_id).first()
-    if not item:
-        raise ApiError("Item not found", 404)
-    item.status = "removed"
-    item.removed_reason = reason
-    item.save()
-    notify_user(
-        item.seller_id,
-        "Listing removed",
-        f"An administrator removed your listing '{item.name}'. Reason: {reason or 'No reason provided'}.",
-        "administration",
+def moderate_listing(admin_id, item_id, action, data):
+    admin = require_admin(admin_id)
+    reason = account_action_reason(data)
+    if action not in {"warning", "remove"}:
+        raise ApiError("Choose Warn seller or Remove listing", 422)
+    if data.get("confirmed") is not True:
+        raise ApiError("Confirm this action before sending an email to the seller", 422)
+    with transaction.atomic():
+        item = Item.objects.select_for_update().filter(id=item_id).first()
+        if not item:
+            raise ApiError("Item not found", 404)
+        if item.status == "removed" and action == "warning":
+            raise ApiError("This listing has already been removed", 409)
+        if data.get("expected_status") is not None and data["expected_status"] != item.status:
+            raise ApiError("This listing has changed. Reopen the item and review it before continuing.", 409)
+        seller = User.objects.filter(id=item.seller_id).first()
+        if not seller or not seller.email:
+            raise ApiError("The seller account is unavailable. An email action cannot be completed.", 409)
+        listing_id = item.id
+        title = "Listing removed" if action == "remove" else "Listing warning issued"
+        audit = notify_admin(title, f"Listing #{listing_id}: {item.name}. Seller: {seller.username}. Reason: {reason}. Email status: pending.", "administration", admin)
+        if action == "remove":
+            item.delete()
+    if action == "remove":
+        explanation = "Following an administrative review, your listing has been permanently deleted from USP Marketplace and is no longer visible or available for purchase. This listing cannot be restored."
+        next_steps = "Please review the marketplace rules before submitting any future listings."
+    else:
+        explanation = "Following an administrative review, we are issuing a formal warning regarding your listing on USP Marketplace. Your listing has not been removed by this action."
+        next_steps = "Please review the concern below and update your listing where necessary to comply with the marketplace rules. Further violations may result in listing removal or account restrictions."
+    result = send_account_action_email(
+        f"USP Marketplace: {'Notice of listing removal' if action == 'remove' else 'Formal warning about your listing'}",
+        (
+            f"Dear {seller.name.strip() or seller.username},\n\n{explanation}\n\n"
+            f"Listing: {item.name}\nListing reference: #{listing_id}\n\n"
+            f"Reason for {'removal' if action == 'remove' else 'warning'}: {reason}\n\n"
+            f"{next_steps}\n\n"
+            "If you believe this decision was made in error or would like to request a review, please contact the USP Marketplace administration team and include your listing reference and registered email address.\n\n"
+            "Kind regards,\nUSP Marketplace Administration Team"
+        ),
+        seller.email,
+        action_label="listing removal" if action == "remove" else "listing warning",
     )
-    return serialize_admin_item(item)
+    audit.message = f"Listing #{listing_id}: {item.name}. Seller: {seller.username}. Reason: {reason}. Email status: {result['email_status']}."
+    audit.save(update_fields=["message"])
+    return {"listing": None if action == "remove" else serialize_admin_item(item), "removed_id": listing_id if action == "remove" else None, **result}
 
 
 @transaction.atomic

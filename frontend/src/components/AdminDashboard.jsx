@@ -5,11 +5,13 @@ import ReportsPanel from "./ReportsPanel";
 import SearchInput from "./SearchInput";
 import FlagReviewPanel from "./FlagReviewPanel";
 import StudentActionDialog from "./StudentActionDialog";
+import ListingModerationDialog from "./ListingModerationDialog";
+import ActionsMenu from "./ListingActionsMenu";
 import NotificationDismissDialog from "./NotificationDismissDialog";
 import { searchRecords } from "../utils/search.mjs";
 import NotificationsPage from "./NotificationsPage";
 
-const adminTabs = ["Dashboard", "Students", "Listings", "Orders", "Categories", "Reports", "Flags", "Reviews", "Notifications"];
+const adminTabs = ["Dashboard", "Students", "Listings", "Orders", "Categories", "Reports", "Flags", "Reviews"];
 const ADMIN_LISTINGS_PAGE_SIZE = 20;
 
 function AdminDashboard({
@@ -31,8 +33,45 @@ function AdminDashboard({
   const [activeTab, setActiveTab] = useState(initialListing ? "Listings" : "Dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const sidebarToggleRef = useRef(null);
+  const sidebarRef = useRef(null);
+  const sidebarScrollRef = useRef({ frame: null, speed: 0, lastTime: null });
+
+  const stopSidebarScroll = () => {
+    const scroll = sidebarScrollRef.current;
+    if (scroll.frame !== null) window.cancelAnimationFrame(scroll.frame);
+    scroll.frame = null;
+    scroll.speed = 0;
+    scroll.lastTime = null;
+  };
+
+  const scrollSidebarNearEdge = (event) => {
+    if (event.pointerType !== "mouse") return;
+    const sidebar = sidebarRef.current;
+    if (!sidebar || sidebar.scrollHeight <= sidebar.clientHeight) return;
+    const bounds = sidebar.getBoundingClientRect();
+    const edge = Math.min(64, bounds.height / 4);
+    const pointerY = event.clientY - bounds.top;
+    const speed = pointerY < edge ? -240 * (1 - pointerY / edge)
+      : pointerY > bounds.height - edge ? 240 * (1 - (bounds.height - pointerY) / edge) : 0;
+    if (!speed) { stopSidebarScroll(); return; }
+    const scroll = sidebarScrollRef.current;
+    scroll.speed = speed;
+    if (scroll.frame !== null) return;
+    const step = (time) => {
+      const elapsed = scroll.lastTime === null ? 16 : Math.min(32, time - scroll.lastTime);
+      scroll.lastTime = time;
+      const previousTop = sidebar.scrollTop;
+      sidebar.scrollTop += scroll.speed * elapsed / 1000;
+      if (sidebar.scrollTop === previousTop) { stopSidebarScroll(); return; }
+      scroll.frame = window.requestAnimationFrame(step);
+    };
+    scroll.frame = window.requestAnimationFrame(step);
+  };
+
+  useEffect(() => stopSidebarScroll, [sidebarOpen]);
 
   const closeSidebar = () => {
+    stopSidebarScroll();
     setSidebarOpen(false);
     sidebarToggleRef.current?.focus();
   };
@@ -71,6 +110,7 @@ function AdminDashboard({
   const [selectedAdminListing, setSelectedAdminListing] = useState(initialListing);
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [studentAction, setStudentAction] = useState(null);
+  const [listingAction, setListingAction] = useState(null);
   const [openStudentActionId, setOpenStudentActionId] = useState(null);
   const [openListingActionId, setOpenListingActionId] = useState(null);
   const [openCategoryActionId, setOpenCategoryActionId] = useState(null);
@@ -159,6 +199,7 @@ function AdminDashboard({
   const loadListings = async (resetPage = false) => {
     const data = await fetchAdmin(`/admin/listings?search=${encodeURIComponent(listingSearch)}`, "Unable to load listings");
     setListings(data);
+    setSelectedAdminListing((current) => current ? data.find((listing) => listing.id === current.id) || current : null);
     if (resetPage) setListingPage(1);
     loadedTabsRef.current.add("Listings");
   };
@@ -462,30 +503,25 @@ function AdminDashboard({
     setOpenStudentActionId(null);
   };
 
-  const moderateListing = async (listing, action) => {
-    const verb = action === "hide" ? "hiding" : "removing";
-    const reason = window.prompt(`Reason for ${verb} "${listing.name}"`);
-    if (!reason) {
-      return;
-    }
+  const moderateListing = (listing, action) => {
+    setOpenListingActionId(null);
+    setListingAction({ listing, action });
+  };
 
-    setIsLoading(true);
-    try {
-      await fetchAdmin(`/admin/listings/${listing.id}/${action}`, `Unable to ${action} listing`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason }),
-      });
-      await loadListings();
-      await loadNotifications();
-      setOpenListingActionId(null);
-      showToast(action === "hide" ? "Listing hidden from the marketplace." : "Listing removed from student view.");
-      setSelectedAdminListing(null);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : `Unable to ${action} listing`);
-    } finally {
-      setIsLoading(false);
-    }
+  const confirmListingAction = async (details) => {
+    const { listing, action } = listingAction;
+    const data = await fetchAdmin(`/admin/listings/${listing.id}/${action}`, `Unable to ${action} listing`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(details),
+    });
+    const updatedListing = action === "hide" ? data : data.listing;
+    setListings((current) => action === "remove"
+      ? current.filter((row) => row.id !== listing.id)
+      : current.map((row) => row.id === listing.id ? updatedListing : row));
+    setSelectedAdminListing((current) => current?.id === listing.id ? (action === "remove" ? null : updatedListing) : current);
+    loadNotifications().catch(() => {});
+    return data;
   };
 
   const restoreListing = async (listing) => {
@@ -573,7 +609,9 @@ function AdminDashboard({
       if (event.key === "Escape" && sidebarOpen) closeSidebar();
     }}>
       {sidebarOpen && <button type="button" className="admin-sidebar-backdrop" onClick={closeSidebar} aria-label="Close admin menu" />}
-      <aside className="admin-sidebar" id="admin-navigation-sidebar">
+      <aside className="admin-sidebar" id="admin-navigation-sidebar" ref={sidebarRef}
+        onPointerMove={scrollSidebarNearEdge} onPointerLeave={stopSidebarScroll}
+        onPointerDown={stopSidebarScroll} onKeyDown={stopSidebarScroll}>
         <button type="button" className="admin-sidebar-close" onClick={closeSidebar}>Close menu <span aria-hidden="true">✕</span></button>
         <div className="admin-brand">
           <img src={logo} alt="USP logo" />
@@ -687,19 +725,12 @@ function AdminDashboard({
                   <span>{formatDate(student.created_at)}</span>
                   <div className="student-row-actions">
                   {student.status === "suspended" && <button type="button" className="secondary-button reactivate-account-button" onClick={() => updateStudentStatus(student, "reactivate")} aria-label={`Reactivate ${student.username} after reconsideration`}>Reactivate</button>}
-                  <div className="admin-action-dropdown">
-                    <button
-                      type="button"
-                      className="admin-action-trigger"
-                      onClick={() =>
-                        setOpenStudentActionId((currentId) => (currentId === student.id ? null : student.id))
-                      }
-                      aria-expanded={openStudentActionId === student.id}
-                    >
-                      Actions
-                    </button>
-                    {openStudentActionId === student.id && (
-                      <div className="admin-action-menu">
+                  {student.status !== "suspended" && <ActionsMenu
+                    listing={{ id: `student-${student.id}`, name: student.username }}
+                    isOpen={openStudentActionId === student.id}
+                    onToggle={() => setOpenStudentActionId((currentId) => currentId === student.id ? null : student.id)}
+                    onClose={() => setOpenStudentActionId(null)}
+                  >
                         <button
                           type="button"
                           onClick={() => {
@@ -714,13 +745,10 @@ function AdminDashboard({
                             Suspend
                           </button>
                         )}
-                        <div className="admin-action-divider" />
                         <button type="button" className="danger-action" onClick={() => deleteStudentPermanently(student)}>
                           Delete Permanently
                         </button>
-                      </div>
-                    )}
-                  </div>
+                  </ActionsMenu>}
                   </div>
                 </div>
               ))}
@@ -773,7 +801,7 @@ function AdminDashboard({
                         {listing.seller_username}
                       </button>
                       <small>{listing.contact || "No contact listed"}</small>
-                      {listing.seller?.status === "suspended" && <><span className="status-pill suspended">Account suspended</span><button type="button" className="secondary-button reactivate-account-button" onClick={() => updateStudentStatus(listing.seller, "reactivate")}>Reactivate account</button></>}
+                      {listing.seller?.status === "suspended" && <span className="status-pill suspended">Account suspended</span>}
                     </div>
                     <span className="admin-category-pill">{listing.category}</span>
                     <strong className="admin-money">${Number(listing.price).toFixed(2)}</strong>
@@ -782,19 +810,12 @@ function AdminDashboard({
                     </span>
                     <span className={`status-pill ${listing.status}`}>{listing.status}</span>
                     <time dateTime={listing.created_at}>{formatDate(listing.created_at)}</time>
-                    <div className="admin-action-dropdown">
-                      <button
-                        type="button"
-                        className="admin-action-trigger"
-                        onClick={() =>
-                          setOpenListingActionId((currentId) => (currentId === listing.id ? null : listing.id))
-                        }
-                        aria-expanded={openListingActionId === listing.id}
-                      >
-                        Actions
-                      </button>
-                      {openListingActionId === listing.id && (
-                        <div className="admin-action-menu">
+                    <ActionsMenu
+                      listing={listing}
+                      isOpen={openListingActionId === listing.id}
+                      onToggle={() => setOpenListingActionId((currentId) => currentId === listing.id ? null : listing.id)}
+                      onClose={() => setOpenListingActionId(null)}
+                    >
                           <button
                             type="button"
                             onClick={() => {
@@ -804,26 +825,20 @@ function AdminDashboard({
                           >
                             View
                           </button>
-                          {listing.status === "hidden" || listing.status === "removed" ? (
+                          {(listing.status === "hidden" || listing.status === "removed") && (
                             <button type="button" onClick={() => restoreListing(listing)}>
                               Restore
-                            </button>
-                          ) : (
-                            <button type="button" onClick={() => moderateListing(listing, "hide")}>
-                              Hide
                             </button>
                           )}
                           {listing.status !== "removed" && (
                             <>
-                              <div className="admin-action-divider" />
+                              <button type="button" onClick={() => moderateListing(listing, "warn")}>Warn seller</button>
                               <button type="button" className="danger-action" onClick={() => moderateListing(listing, "remove")}>
-                                Remove
+                                Remove listing
                               </button>
                             </>
                           )}
-                        </div>
-                      )}
-                    </div>
+                    </ActionsMenu>
                   </div>
                 ))
               ) : (
@@ -1105,18 +1120,20 @@ function AdminDashboard({
               </div>
             ) : null}
             <div className="admin-detail-actions">
-              {selectedAdminListing.status === "hidden" || selectedAdminListing.status === "removed" ? (
+              {(selectedAdminListing.status === "hidden" || selectedAdminListing.status === "removed") && (
                 <button type="button" className="secondary-button" disabled={isLoading} onClick={() => restoreListing(selectedAdminListing)}>Restore listing</button>
-              ) : (
-                <button type="button" className="secondary-button" disabled={isLoading} onClick={() => moderateListing(selectedAdminListing, "hide")}>Hide listing</button>
               )}
-              {selectedAdminListing.status !== "removed" && <button type="button" className="danger-outline-button" disabled={isLoading} onClick={() => moderateListing(selectedAdminListing, "remove")}>Remove listing</button>}
+              {selectedAdminListing.status !== "removed" && <>
+                <button type="button" className="secondary-button" disabled={isLoading} onClick={() => moderateListing(selectedAdminListing, "warn")}>Warn seller</button>
+                <button type="button" className="danger-outline-button" disabled={isLoading} onClick={() => moderateListing(selectedAdminListing, "remove")}>Remove listing</button>
+              </>}
             </div>
           </div>
         </div>
       )}
 
       {studentAction && <StudentActionDialog student={studentAction.student} action={studentAction.action} onConfirm={confirmStudentAction} onClose={() => setStudentAction(null)} />}
+      {listingAction && <ListingModerationDialog listing={listingAction.listing} action={listingAction.action} onConfirm={confirmListingAction} onClose={() => setListingAction(null)} />}
 
       {selectedStudent && (
         <div className="auth-modal-backdrop" onClick={() => setSelectedStudent(null)}>
@@ -1145,20 +1162,6 @@ function AdminDashboard({
               </>}
               <span>Registered</span>
               <strong>{formatDate(selectedStudent.created_at)}</strong>
-            </div>
-            <div className="admin-detail-actions">
-              {selectedStudent.status === "suspended" ? (
-                <button type="button" className="secondary-button" onClick={() => updateStudentStatus(selectedStudent, "reactivate")}>
-                  Reactivate after reconsideration
-                </button>
-              ) : (
-                <button type="button" className="danger-outline-button" onClick={() => updateStudentStatus(selectedStudent, "suspend")}>
-                  Suspend
-                </button>
-              )}
-              <button type="button" className="danger-outline-button" onClick={() => deleteStudentPermanently(selectedStudent)}>
-                Delete Permanently
-              </button>
             </div>
           </div>
         </div>

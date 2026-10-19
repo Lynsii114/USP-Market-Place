@@ -1,4 +1,6 @@
 from .models import Item, Purchase, User
+from django.db.models import Q
+from django.utils import timezone
 
 
 def item_status(stock):
@@ -10,7 +12,15 @@ def visible_items():
 
 
 def public_items():
-    return visible_items().filter(status__in=["available", "reserved"], stock__gt=0)
+    return available_seller_items(visible_items()).filter(status__in=["available", "reserved"], stock__gt=0)
+
+
+def available_seller_items(items):
+    """Hide currently suspended sellers without changing their listing state."""
+    suspended = User.objects.filter(status="suspended").filter(
+        Q(suspended_until__isnull=True) | Q(suspended_until__gt=timezone.now())
+    ).values("id")
+    return items.exclude(seller_id__in=suspended)
 
 
 def visible_purchases(include_test_records=False):

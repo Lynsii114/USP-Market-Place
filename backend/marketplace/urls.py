@@ -5,6 +5,7 @@ from . import views
 urlpatterns = [
     path("health", views.health),
     path("health/database", views.database_health),
+    path("users/session", views.user_session),
     path("users/signup", views.signup),
     path("users/verify-email", views.verify_email),
     path("users/resend-verification", views.resend_verification),
@@ -50,6 +51,7 @@ urlpatterns = [
     path("admin/listings", views.admin_listings),
     path("admin/listings/<int:item_id>/hide", views.admin_hide_listing),
     path("admin/listings/<int:item_id>/remove", views.admin_remove_listing),
+    path("admin/listings/<int:item_id>/warn", views.admin_warn_listing),
     path("admin/listings/<int:item_id>/restore", views.admin_restore_listing),
     path("admin/orders", views.admin_orders),
     path("admin/reports", views.admin_reports),

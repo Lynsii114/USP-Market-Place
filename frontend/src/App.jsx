@@ -131,6 +131,18 @@ function Home() {
   }, []);
 
   useEffect(() => {
+    const refreshListings = () => {
+      if (document.visibilityState === "visible") loadListings({ silent: true });
+    };
+    const intervalId = window.setInterval(refreshListings, 30000);
+    window.addEventListener("focus", refreshListings);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshListings);
+    };
+  }, [currentUser?.id]);
+
+  useEffect(() => {
     const applyRouteState = (state = window.history.state || {}) => {
       const pathname = window.location.pathname;
       const view = pathname === "/help" ? "help" : state.view || (pathname.startsWith("/admin") ? "admin" : "home");
@@ -194,6 +206,26 @@ function Home() {
   }, [currentUser]);
 
   useEffect(() => {
+    const onSessionEnded = (event) => handleLogout(event.detail.message);
+    window.addEventListener("marketplace-session-ended", onSessionEnded);
+    return () => window.removeEventListener("marketplace-session-ended", onSessionEnded);
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser) return undefined;
+    const checkSession = () => {
+      fetch(`${API_URL}/users/session`, { cache: "no-store" }).catch(() => {});
+    };
+    checkSession();
+    const intervalId = window.setInterval(checkSession, 5000);
+    window.addEventListener("focus", checkSession);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", checkSession);
+    };
+  }, [currentUser]);
+
+  useEffect(() => {
     if (!currentUser) {
       return undefined;
     }
@@ -250,7 +282,7 @@ function Home() {
     if (!response.ok) {
       const detail = data?.detail || data?.message || fallbackMessage;
       if (response.status === 503 || /database unavailable/i.test(detail)) {
-        throw new Error("Marketplace database is unavailable. Start MySQL in XAMPP, then refresh the page.");
+        throw new Error(detail || "Marketplace service is temporarily unavailable. Please try again shortly.");
       }
       const error = new Error(detail);
       error.status = response.status;
@@ -275,8 +307,8 @@ function Home() {
     window.setTimeout(() => setToastMessage(message), 10);
   };
 
-  const loadListings = async () => {
-    setIsLoadingListings(true);
+  const loadListings = async ({ silent = false } = {}) => {
+    if (!silent) setIsLoadingListings(true);
 
     try {
       const viewerId = currentUser?.id;
@@ -284,16 +316,20 @@ function Home() {
       const response = await fetch(`${API_URL}/items${query}`);
       const data = await parseResponse(response, "Unable to load listings");
       setListings(data.map((listing) => ({ ...listing, category: canonicalCategoryName(listing.category) })));
+      setSelectedListing((current) => {
+        if (!current || currentUser?.role === "admin" || current.seller_id === viewerId) return current;
+        return data.find((listing) => listing.id === current.id) || null;
+      });
       setCartItems((items) =>
-        items.map((cartItem) => {
+        items.filter((cartItem) => data.some((listing) => listing.id === cartItem.id)).map((cartItem) => {
           const latestListing = data.find((listing) => listing.id === cartItem.id);
           return latestListing ? { ...latestListing, quantity: cartItem.quantity } : cartItem;
         })
       );
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "Unable to load listings", "error");
+      if (!silent) showToast(error instanceof Error ? error.message : "Unable to load listings", "error");
     } finally {
-      setIsLoadingListings(false);
+      if (!silent) setIsLoadingListings(false);
     }
   };
 
@@ -793,19 +829,30 @@ function Home() {
     resetListingForm();
   };
 
-  const handleLogout = () => {
+  const handleLogout = (sessionMessage = null) => {
+    const message = typeof sessionMessage === "string" ? sessionMessage : null;
     setAccessToken(null);
     setLoginChallenge("");
     setPendingAuthenticatorAccessToken("");
+    setPendingAuthenticatorUser(null);
+    setAuthenticatorSecret("");
+    setAuthenticatorUri("");
+    setAuthenticatorQr("");
+    setAuthForm(EMPTY_AUTH_FORM);
+    setFormMessage(message || "");
     setCurrentUser(null);
     setAuthMode("login");
     hideActivePages();
+    setSelectedListing(null);
+    setSelectedSeller(null);
+    setCartItems([]);
     pushViewState({ view: "home" });
-    showToast("Logged out successfully.");
+    showToast(message || "Logged out successfully.", message ? "error" : "success");
   };
 
   const openMarketplace = () => {
     hideActivePages();
+    loadListings({ silent: true });
     pushViewState({ view: "home" });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
