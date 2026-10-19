@@ -39,6 +39,23 @@ Authenticator security:
 
 After email verification, users can choose whether to set up Microsoft Authenticator. Users who skip setup can log in with their username or email and password, and are offered setup again after login. Users who enable it must enter the six-digit rotating authenticator code after every password login. During setup, add the displayed QR code or secret to Microsoft Authenticator using the `Other account` option.
 
+Payment checkout demo:
+
+Checkout simulates authorization for demonstration only. It is not connected to Visa, MyCash, or M-PAiSA and never charges or stores real payment credentials. Use only these test values:
+
+- VISA success: card `4242 4242 4242 4242`; any cardholder name, future `MM/YY` expiry, and three-digit security code.
+- VISA insufficient-funds decline: card `4000 0000 0000 9995`; use the same expiry and security-code format.
+- MyCash or M-PAiSA success: any demo mobile number and authorization code `123456`.
+- MyCash or M-PAiSA insufficient-funds decline: any demo mobile number and authorization code `000000`.
+- Cash: no payment details are needed. Checkout creates a pending order and reserves the item without reducing stock or marking it paid. The seller confirms the cash after delivery or self-pickup; cancelling/releases the pending order clears the reservation without reducing stock.
+- To simulate a failed attempt with any selected method, check **Simulate failed payment (for testing)** before confirming checkout.
+
+Successful simulated digital payments create an order and update listing stock immediately. Cash remains pending until the seller confirms receipt, at which point stock is reduced. Failed attempts create no order and leave stock unchanged. Do not enter actual card numbers, CVVs, wallet PINs, or one-time passcodes.
+
+Listing payment details:
+
+Sellers can select Cash, MyCash, or M-PAiSA for a listing. MyCash and M-PAiSA require a valid phone number; Cash does not. The API never includes the receiving number in public listing responses. It is included only for the listing's seller or the buyer while that listing is actively reserved for them. This listing preference is informational and does not change the simulated checkout method or authorize a real transfer. The access check follows the API's existing caller-supplied user-ID convention; because requests are not authenticated, it does not prevent a client from forging another user's ID.
+
 Password reset:
 
 

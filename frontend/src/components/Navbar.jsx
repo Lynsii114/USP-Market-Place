@@ -1,9 +1,12 @@
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 function Navbar({
   logo,
   currentUser,
   cartCount,
+  unreadMessageCount = 0,
+  notifications = [],
+  activePage,
   onHome,
   onBrowse,
   onOpenSellerTab,
@@ -12,47 +15,143 @@ function Navbar({
   onOpenAccountPage,
   onOpenAuth,
   onLogout,
+  onNotificationView,
+  onNotificationRemove,
 }) {
+  const [isNavHidden, setIsNavHidden] = useState(false);
+  const lastScrollY = useRef(0);
+  const ticking = useRef(false);
+  const unreadNotifications = notifications.filter((notification) => !notification.is_read);
+  const navClass = (page) => (activePage === page ? "nav-item active" : "nav-item");
+
+  useEffect(() => {
+    lastScrollY.current = window.scrollY;
+
+    const updateNavbar = () => {
+      const currentScrollY = Math.max(window.scrollY, 0);
+      const scrollDifference = currentScrollY - lastScrollY.current;
+
+      if (currentScrollY <= 8) {
+        setIsNavHidden(false);
+      } else if (scrollDifference > 6 && currentScrollY > 96) {
+        setIsNavHidden(true);
+      } else if (scrollDifference < -6) {
+        setIsNavHidden(false);
+      }
+
+      lastScrollY.current = currentScrollY;
+      ticking.current = false;
+    };
+
+    const handleScroll = () => {
+      if (!ticking.current) {
+        window.requestAnimationFrame(updateNavbar);
+        ticking.current = true;
+      }
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
   return (
-    <header className="navbar">
+    <header className={isNavHidden ? "navbar navbar-hidden" : "navbar"}>
       <div className="brand">
         <img src={logo} alt="USP logo" className="usp-logo" />
-        <span>USP Buy & Sell</span>
+        <span>USP Online Marketplace</span>
       </div>
 
       <nav className="nav-links">
-        <a href="#home" onClick={onHome}>
-          Home
+        <a href="#home" className={navClass("home")} onClick={(event) => { event.preventDefault(); onHome(); }}>
+          <span aria-hidden="true">⌂</span>
+          <span>Home</span>
         </a>
-        <a href="#listings" onClick={onBrowse}>
-          Shop
+        <a href="#listings" className={navClass("shop")} onClick={(event) => { event.preventDefault(); onBrowse(); }}>
+          <span aria-hidden="true">▦</span>
+          <span>Shop</span>
         </a>
-        <a href="#seller-listings" onClick={() => onOpenSellerTab("add-listing")}>
-          Sell an Item
+        <a href="#seller-listings" className={navClass("sell")} onClick={(event) => { event.preventDefault(); onOpenSellerTab("add-listing"); }}>
+          <span aria-hidden="true">＋</span>
+          <span>Sell Item</span>
         </a>
         {currentUser ? (
           <div className="nav-dropdown activity-dropdown">
-            <button type="button" className="nav-dropdown-button">
-              My Activity
+            <button type="button" className={activePage === "activity" ? "nav-dropdown-button active" : "nav-dropdown-button"}>
+              <span aria-hidden="true">☷</span>
+              <span>My Activity</span>
             </button>
             <div className="nav-dropdown-menu activity-menu">
               <button type="button" onClick={() => onOpenAccountPage("dashboard")}>
                 My Dashboard
               </button>
-              <button type="button" onClick={onOpenPurchases}>
-                My Purchases
-              </button>
-              <button type="button" onClick={() => onOpenSellerTab("my-listings")}>
-                My Listings
-              </button>
-              <button type="button" onClick={() => onOpenAccountPage("sales")}>
-                My Sales
-              </button>
+              <div className="activity-menu-group">
+                <strong>Buying</strong>
+                <button type="button" onClick={onOpenPurchases}>
+                  <span aria-hidden="true">▤</span>
+                  My Purchases
+                </button>
+              </div>
+              <div className="activity-menu-group">
+                <strong>Selling</strong>
+                <button type="button" onClick={() => onOpenSellerTab("my-listings")}>
+                  <span aria-hidden="true">☰</span>
+                  My Listings
+                </button>
+                <button type="button" onClick={() => onOpenAccountPage("sales")}>
+                  <span aria-hidden="true">↗</span>
+                  My Sales
+                </button>
+              </div>
+              <div className="activity-menu-group">
+                <strong>Other</strong>
+                <button type="button" onClick={onOpenPurchases}>
+                  <span aria-hidden="true">★</span>
+                  Reviews & Ratings
+                </button>
+              </div>
             </div>
           </div>
         ) : null}
+        <button type="button" className={`${navClass("messages")} nav-symbol-button nav-badge-button`} onClick={() => onOpenAccountPage("messages")} aria-label="Messages" title="Messages">
+          <span aria-hidden="true">✉</span>
+          {unreadMessageCount > 0 && <span className="notification-count">{unreadMessageCount}</span>}
+        </button>
         <div className="nav-actions">
-          <button type="button" className="icon-nav-button cart-nav-button" onClick={onOpenCart} aria-label="Open cart">
+          <div className="nav-dropdown notification-dropdown">
+            <button type="button" className={activePage === "notifications" ? "nav-item nav-badge-button nav-symbol-button active" : "nav-item nav-badge-button nav-symbol-button"} aria-label="Notifications" title="Notifications">
+              <span aria-hidden="true">&#128276;</span>
+              {unreadNotifications.length > 0 && <span className="notification-count">{unreadNotifications.length}</span>}
+            </button>
+            <div className="nav-dropdown-menu notification-menu">
+              <strong>Notifications</strong>
+              {notifications.length ? (
+                notifications.slice(0, 4).map((notification) => (
+                  <div className={notification.is_read ? "notification-row viewed" : "notification-row unread"} key={notification.id}>
+                    <button
+                      type="button"
+                      className="notification-item"
+                      onClick={() => onNotificationView?.(notification)}
+                    >
+                      <span>{notification.title}</span>
+                      <small>{notification.is_read ? "Viewed" : "New"}</small>
+                      <p>{notification.message}</p>
+                    </button>
+                    <button
+                      type="button"
+                      className="notification-remove-button"
+                      onClick={() => onNotificationRemove?.(notification.id)}
+                      aria-label="Remove notification"
+                    >
+                      x
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <p>No new notifications.</p>
+              )}
+            </div>
+          </div>
+          <button type="button" className={activePage === "cart" ? "nav-item nav-badge-button nav-symbol-button active" : "nav-item nav-badge-button nav-symbol-button"} onClick={onOpenCart} aria-label="Open cart" title="Cart">
             <span className="cart-icon" aria-hidden="true">
               &#128722;
             </span>
@@ -60,7 +159,7 @@ function Navbar({
           </button>
           {currentUser ? (
             <div className="nav-dropdown account-dropdown">
-              <button type="button" className="icon-nav-button account-icon-button" aria-label="My account">
+              <button type="button" className={activePage === "account" ? "nav-item nav-badge-button nav-symbol-button active" : "nav-item nav-badge-button nav-symbol-button"} aria-label="My account" title="Account">
                 <span aria-hidden="true">&#128100;</span>
               </button>
               <div className="nav-dropdown-menu account-menu">

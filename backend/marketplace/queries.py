@@ -1,6 +1,3 @@
-from django.db.models import Q
-
-from .constants import HIDDEN_ITEM_NAMES
 from .models import Item, Purchase, User
 
 
@@ -9,25 +6,23 @@ def item_status(stock):
 
 
 def visible_items():
-    query = Item.objects.exclude(name__startswith="__test_")
-    for hidden_name in HIDDEN_ITEM_NAMES:
-        query = query.exclude(name=hidden_name)
-    return query
+    return Item.objects.exclude(name__startswith="__test_")
 
 
 def public_items():
-    return visible_items().exclude(status="removed")
+    return visible_items().filter(status__in=["available", "reserved"], stock__gt=0)
 
 
 def visible_purchases(include_test_records=False):
-    query = Purchase.objects.all() if include_test_records else Purchase.objects.exclude(item_name__startswith="__test_")
-    for hidden_name in HIDDEN_ITEM_NAMES:
-        query = query.exclude(item_name=hidden_name)
-    return query
+    return Purchase.objects.all() if include_test_records else Purchase.objects.exclude(item_name__startswith="__test_")
 
 
 def find_user_by_login(login_name):
-    return User.objects.filter(Q(username=login_name) | Q(email=login_name)).first()
+    if "@" in login_name:
+        user = User.objects.filter(email=login_name).first()
+        if user:
+            return user
+    return User.objects.filter(username=login_name).first()
 
 
 def find_student(student_id):

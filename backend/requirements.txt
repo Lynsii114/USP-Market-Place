@@ -1,7 +1,9 @@
 Django
 pymysql
 python-dotenv
+certifi
 pytest
 PyJWT[crypto]
 pyotp
 qrcode[pil]
+reportlab

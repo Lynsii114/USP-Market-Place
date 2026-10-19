@@ -16,6 +16,8 @@ export const EMPTY_LISTING_FORM = {
   stock: "",
   description: "",
   contact: "",
+  payment_method: "cash",
+  payment_number: "",
   category: "Books",
   photo: "",
 };

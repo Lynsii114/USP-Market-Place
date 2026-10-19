@@ -1,10 +1,9 @@
 {
+  "private": true,
   "scripts": {
-    "start": "npm run dev",
-    "dev": "concurrently \"npm run backend\" \"npm run frontend\"",
-    "backend": "echo Backend running at http://localhost:8000 && cd backend && python manage.py runserver localhost:8000",
-    "frontend": "echo Frontend running at http://localhost:5173 && cd frontend && npm run dev -- --host localhost",
-    "build": "cd frontend && npm run build"
+    "backend": "cd backend && python manage.py runserver 127.0.0.1:8000",
+    "frontend": "cd frontend && npm run dev",
+    "dev": "concurrently \"npm run backend\" \"npm run frontend\""
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

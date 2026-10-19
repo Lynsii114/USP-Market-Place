@@ -1,10 +1,12 @@
+from django.db import DatabaseError, connection
+from django.http import HttpResponse
 import logging
 
 from django.views.decorators.csrf import csrf_exempt
 
-from . import services
+from . import reporting, services
 from .exceptions import ApiError
-from .responses import api_response, handle_api_error, json_body, method_not_allowed
+from .responses import api_response, error_response, handle_api_error, json_body, method_not_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +21,11 @@ def run(action):
         return api_response(data, safe=safe)
     except ApiError as exc:
         return handle_api_error(exc)
+    except DatabaseError:
+        return api_response(
+            {"detail": "Marketplace database is temporarily unavailable. Check the backend database configuration."},
+            status=503,
+        )
     except Exception:
         logger.exception("Unexpected error while handling marketplace API request")
         return handle_api_error(ApiError("Unexpected server error. Check the backend terminal for details.", 500))
@@ -28,6 +35,21 @@ def health(request):
     if request.method != "GET":
         return method_not_allowed()
     return api_response({"status": "ok"})
+
+
+def database_health(request):
+    if request.method != "GET":
+        return method_not_allowed()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+    except DatabaseError:
+        logger.exception("Database health check failed")
+        return api_response({"status": "error", "database": "unavailable"}, status=503)
+
+    return api_response({"status": "ok", "database": "connected"})
 
 
 @csrf_exempt
@@ -66,6 +88,13 @@ def request_password_reset(request):
 
 
 @csrf_exempt
+def verify_password_reset_code(request):
+    if request.method != "POST":
+        return method_not_allowed()
+    return run(lambda: (services.verify_password_reset_code(json_body(request)), True))
+
+
+@csrf_exempt
 def reset_password(request):
     if request.method != "POST":
         return method_not_allowed()
@@ -90,22 +119,46 @@ def verify_authenticator(request):
 @csrf_exempt
 def items_collection(request):
     if request.method == "GET":
-        return run(lambda: (services.list_items(), False))
+        return run(lambda: (services.list_items(request.GET.get("user_id")), False))
     if request.method == "POST":
         return run(lambda: (services.create_item(json_body(request)), True))
+    return method_not_allowed()
+
+
+def categories_collection(request):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.list_categories(), False))
+
+
+@csrf_exempt
+def admin_categories(request):
+    if request.method == "GET":
+        return run(lambda: (services.list_categories(), False))
+    if request.method == "POST":
+        return run(lambda: (services.create_category(get_admin_id(request), json_body(request)), True))
+    return method_not_allowed()
+
+
+@csrf_exempt
+def admin_category_detail(request, category_id):
+    if request.method == "PUT":
+        return run(lambda: (services.update_category(get_admin_id(request), category_id, json_body(request)), True))
+    if request.method == "DELETE":
+        return run(lambda: (services.delete_category(get_admin_id(request), category_id), True))
     return method_not_allowed()
 
 
 def list_seller_items(request, seller_id):
     if request.method != "GET":
         return method_not_allowed()
-    return run(lambda: (services.list_seller_items(seller_id), False))
+    return run(lambda: (services.list_seller_items(seller_id, request.GET.get("viewer_id")), False))
 
 
 @csrf_exempt
 def item_detail(request, item_id):
     if request.method == "GET":
-        return run(lambda: (services.get_public_item(item_id), True))
+        return run(lambda: (services.get_public_item(item_id, request.GET.get("user_id")), True))
     if request.method == "PUT":
         return run(lambda: (services.update_item(item_id, request.GET.get("seller_id"), json_body(request)), True))
     if request.method == "DELETE":
@@ -117,7 +170,41 @@ def item_detail(request, item_id):
 def purchase_item(request, item_id):
     if request.method != "POST":
         return method_not_allowed()
-    return run(lambda: (services.purchase_item(item_id, request.GET.get("buyer_id")), True))
+    body = json_body(request)
+    data = {
+        "payment_method": "cash",
+        "delivery_method": "self_pickup",
+        **body,
+        "items": [{
+            "item_id": item_id,
+            "quantity": body.get("quantity", 1),
+        }],
+    }
+    return run(lambda: (services.checkout_cart(request.GET.get("buyer_id"), data), True))
+
+
+@csrf_exempt
+def checkout_cart(request):
+    if request.method != "POST":
+        return method_not_allowed()
+    return run(lambda: (
+        services.checkout_cart(request.GET.get("buyer_id"), json_body(request)),
+        True,
+    ))
+
+
+@csrf_exempt
+def report_user_activity(request):
+    if request.method != "POST":
+        return method_not_allowed()
+    return run(lambda: (services.submit_user_report(json_body(request)), True))
+
+
+@csrf_exempt
+def rating_review(request):
+    if request.method != "POST":
+        return method_not_allowed()
+    return run(lambda: (services.submit_rating_review(json_body(request)), True))
 
 
 def list_buyer_purchases(request, buyer_id):
@@ -126,16 +213,139 @@ def list_buyer_purchases(request, buyer_id):
     return run(lambda: (services.list_buyer_purchases(buyer_id), False))
 
 
+def seller_reviews(request, seller_id):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.list_seller_reviews(seller_id), True))
+
+
 def list_seller_orders(request, seller_id):
     if request.method != "GET":
         return method_not_allowed()
     return run(lambda: (services.list_seller_orders(seller_id), False))
 
 
+@csrf_exempt
+def item_conversation(request, item_id):
+    if request.method != "POST":
+        return method_not_allowed()
+    data = json_body(request)
+    return run(lambda: (services.open_item_conversation(item_id, data.get("buyer_id")), True))
+
+
+def user_conversations(request, user_id):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.list_conversations(user_id), False))
+
+
+def user_unread_messages(request, user_id):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.get_unread_message_count(user_id), True))
+
+
+def user_notifications(request, user_id):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.list_user_notifications(user_id), False))
+
+
+@csrf_exempt
+def user_notification_detail(request, user_id, notification_id):
+    if request.method == "POST":
+        return run(lambda: (services.mark_user_notification_viewed(user_id, notification_id), True))
+    if request.method == "DELETE":
+        return run(lambda: (services.delete_user_notification(user_id, notification_id), True))
+    return method_not_allowed()
+
+
+@csrf_exempt
+def conversation_detail(request, conversation_id):
+    if request.method == "GET":
+        return run(lambda: (services.get_conversation(conversation_id, request.GET.get("user_id")), False))
+    if request.method == "POST":
+        data = json_body(request)
+        return run(lambda: (services.send_conversation_message(conversation_id, data.get("sender_id"), data.get("body")), True))
+    return method_not_allowed()
+
+
+def item_message_buyers(request, item_id):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.list_item_message_buyers(item_id, request.GET.get("seller_id")), False))
+
+
+@csrf_exempt
+def item_reservation(request, item_id):
+    if request.method != "POST":
+        return method_not_allowed()
+    data = json_body(request)
+    return run(lambda: (services.reserve_item(item_id, data.get("seller_id"), data.get("buyer_id")), True))
+
+
+@csrf_exempt
+def seller_item_status(request, item_id):
+    if request.method != "POST":
+        return method_not_allowed()
+    data = json_body(request)
+    return run(lambda: (services.update_item_seller_status(item_id, data.get("seller_id"), data.get("status")), True))
+
+
+@csrf_exempt
+def seller_order_stage(request, purchase_id):
+    if request.method != "POST":
+        return method_not_allowed()
+    data = json_body(request)
+    return run(lambda: (services.update_seller_order_stage(purchase_id, data.get("seller_id"), data.get("stage")), True))
+
+
+@csrf_exempt
+def confirm_payment_received(request, purchase_id):
+    if request.method != "POST":
+        return method_not_allowed()
+    data = json_body(request)
+    return run(lambda: (services.confirm_payment_received(purchase_id, data.get("seller_id")), True))
+
+
+confirm_cash_payment = confirm_payment_received
+
+
+@csrf_exempt
+def cancel_order(request, purchase_id):
+    if request.method != "POST":
+        return method_not_allowed()
+    data = json_body(request)
+    return run(lambda: (services.cancel_order(purchase_id, data.get("user_id")), True))
+
+
+@csrf_exempt
+def buyer_order_received(request, purchase_id):
+    if request.method != "POST":
+        return method_not_allowed()
+    data = json_body(request)
+    return run(lambda: (services.confirm_order_received(purchase_id, data.get("buyer_id")), True))
+
+
 def admin_dashboard(request):
     if request.method != "GET":
         return method_not_allowed()
     return run(lambda: (services.dashboard(get_admin_id(request)), True))
+
+
+def admin_notifications(request):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.list_admin_notifications(get_admin_id(request)), False))
+
+
+@csrf_exempt
+def admin_notification_detail(request, notification_id):
+    if request.method == "POST":
+        return run(lambda: (services.mark_admin_notification_viewed(get_admin_id(request), notification_id), True))
+    if request.method == "DELETE":
+        return run(lambda: (services.delete_admin_notification(get_admin_id(request), notification_id), True))
+    return method_not_allowed()
 
 
 def admin_students(request):
@@ -158,10 +368,24 @@ def admin_reactivate_student(request, student_id):
     return run(lambda: (services.set_student_status(get_admin_id(request), student_id, "active"), True))
 
 
+@csrf_exempt
+def admin_delete_student(request, student_id):
+    if request.method != "DELETE":
+        return method_not_allowed()
+    return run(lambda: (services.delete_student(get_admin_id(request), student_id), True))
+
+
 def admin_listings(request):
     if request.method != "GET":
         return method_not_allowed()
     return run(lambda: (services.list_admin_items(get_admin_id(request), request.GET.get("search", "")), False))
+
+
+@csrf_exempt
+def admin_hide_listing(request, item_id):
+    if request.method != "POST":
+        return method_not_allowed()
+    return run(lambda: (services.hide_listing(get_admin_id(request), item_id, json_body(request).get("reason", "")), True))
 
 
 @csrf_exempt
@@ -197,4 +421,45 @@ def admin_orders(request):
 def admin_reports(request):
     if request.method != "GET":
         return method_not_allowed()
-    return run(lambda: (services.report(get_admin_id(request), request.GET.get("period", "daily")), True))
+    return run(
+        lambda: (
+            reporting.build_report(
+                get_admin_id(request),
+                request.GET.get("period", "daily"),
+                request.GET.get("from", ""),
+                request.GET.get("to", ""),
+            ),
+            True,
+        )
+    )
+
+
+def admin_reports_pdf(request):
+    if request.method != "GET":
+        return method_not_allowed()
+    try:
+        pdf_bytes, filename = reporting.build_report_pdf(
+            get_admin_id(request),
+            request.GET.get("period", "daily"),
+            request.GET.get("from", ""),
+            request.GET.get("to", ""),
+        )
+    except ApiError as exc:
+        return handle_api_error(exc)
+    except DatabaseError:
+        return error_response("Marketplace database is temporarily unavailable. Check the backend database configuration.", 503)
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+def admin_user_reports(request):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.list_user_reports(get_admin_id(request)), False))
+
+
+def admin_rating_reviews(request):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.list_rating_reviews(get_admin_id(request)), False))

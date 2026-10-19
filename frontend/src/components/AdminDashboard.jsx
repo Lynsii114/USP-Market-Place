@@ -1,72 +1,268 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { apiFetch as fetch } from "../config/request";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import ReportsPanel from "./ReportsPanel";
 
-const adminTabs = ["Dashboard", "Students", "Listings", "Orders", "Reports"];
+const adminTabs = ["Dashboard", "Students", "Listings", "Orders", "Categories", "Reports", "Flags", "Reviews"];
 
-function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarketplace, showToast }) {
+function AdminDashboard({
+  apiUrl,
+  categories = [],
+  currentUser,
+  logo,
+  onCategoryCreated,
+  onCategoryDeleted,
+  onCategoryUpdated,
+  onLogin,
+  onLogout,
+  onMarketplace,
+  showToast,
+}) {
   const [activeTab, setActiveTab] = useState("Dashboard");
   const [dashboard, setDashboard] = useState(null);
   const [students, setStudents] = useState([]);
   const [listings, setListings] = useState([]);
   const [orders, setOrders] = useState([]);
-  const [report, setReport] = useState(null);
   const [studentSearch, setStudentSearch] = useState("");
   const [listingSearch, setListingSearch] = useState("");
   const [orderSearch, setOrderSearch] = useState("");
-  const [orderStatus, setOrderStatus] = useState("");
   const [orderDate, setOrderDate] = useState("");
-  const [reportPeriod, setReportPeriod] = useState("daily");
+  const [userReports, setUserReports] = useState([]);
+  const [ratingReviews, setRatingReviews] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [isConfirmingReport, setIsConfirmingReport] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
+  const [selectedNotification, setSelectedNotification] = useState(null);
+  const [selectedAdminListing, setSelectedAdminListing] = useState(null);
+  const [selectedStudent, setSelectedStudent] = useState(null);
+  const [openStudentActionId, setOpenStudentActionId] = useState(null);
+  const [openListingActionId, setOpenListingActionId] = useState(null);
+  const [openCategoryActionId, setOpenCategoryActionId] = useState(null);
+  const [editingCategoryId, setEditingCategoryId] = useState(null);
+  const [categoryForm, setCategoryForm] = useState({ name: "", image: "" });
+  const [categoryImageName, setCategoryImageName] = useState("");
+  const loadedTabsRef = useRef(new Set());
+  const prefetchStartedRef = useRef(false);
 
   const isAdmin = currentUser?.role === "admin";
   const adminId = currentUser?.id;
+  const uniqueCategories = useMemo(() => {
+    const seenCategories = new Set();
+    return categories.filter((category) => {
+      const key = category.name.toLowerCase();
+      if (seenCategories.has(key)) {
+        return false;
+      }
+      seenCategories.add(key);
+      return true;
+    });
+  }, [categories]);
 
   const parseResponse = async (response, fallbackMessage) => {
-    const data = await response.json();
+    const responseBody = await response.text();
+    let data = null;
+    try {
+      data = responseBody ? JSON.parse(responseBody) : null;
+    } catch {
+      const preview = responseBody.replace(/\s+/g, " ").trim().slice(0, 160) || response.statusText || "No response body";
+      throw new Error(`Server returned a non-JSON response (HTTP ${response.status}) from ${response.url}. ${preview}`);
+    }
     if (!response.ok) {
-      throw new Error(data?.detail || fallbackMessage);
+      const detail = data?.detail || fallbackMessage;
+      if (response.status === 503 || /database unavailable/i.test(detail)) {
+        throw new Error("Marketplace database is unavailable. Check the backend database configuration.");
+      }
+      throw new Error(detail);
     }
     return data;
   };
 
   const fetchAdmin = async (path, fallbackMessage, options = {}) => {
     const joiner = path.includes("?") ? "&" : "?";
-    const response = await fetch(`${apiUrl}${path}${joiner}admin_id=${adminId}`, options);
+    const url = `${apiUrl}${path}${joiner}admin_id=${adminId}`;
+    let response;
+    try {
+      response = await fetch(url, options);
+    } catch {
+      throw new Error(`Cannot reach the admin API at ${apiUrl}. Check the backend deployment, API URL, and CORS settings.`);
+    }
     return parseResponse(response, fallbackMessage);
   };
 
   const loadDashboard = async () => {
     const data = await fetchAdmin("/admin/dashboard", "Unable to load dashboard");
     setDashboard(data);
+    loadedTabsRef.current.add("Dashboard");
   };
 
   const loadStudents = async () => {
     const data = await fetchAdmin(`/admin/students?search=${encodeURIComponent(studentSearch)}`, "Unable to load students");
     setStudents(data);
+    loadedTabsRef.current.add("Students");
   };
 
   const loadListings = async () => {
     const data = await fetchAdmin(`/admin/listings?search=${encodeURIComponent(listingSearch)}`, "Unable to load listings");
     setListings(data);
+    loadedTabsRef.current.add("Listings");
   };
 
   const loadOrders = async () => {
     const params = new URLSearchParams({
       search: orderSearch,
-      status: orderStatus,
       order_date: orderDate,
     });
     const data = await fetchAdmin(`/admin/orders?${params.toString()}`, "Unable to load orders");
     setOrders(data);
+    loadedTabsRef.current.add("Orders");
   };
 
-  const loadReport = async () => {
-    const data = await fetchAdmin(`/admin/reports?period=${reportPeriod}`, "Unable to load reports");
-    setReport(data);
+  const loadNotifications = async () => {
+    const data = await fetchAdmin("/admin/notifications", "Unable to load notifications");
+    setNotifications(data);
+  };
+
+  const loadUserReports = async () => {
+    const data = await fetchAdmin("/admin/user-reports", "Unable to load user reports");
+    setUserReports(data);
+    loadedTabsRef.current.add("Flags");
+  };
+
+  const loadRatingReviews = async () => {
+    const data = await fetchAdmin("/admin/ratings", "Unable to load ratings and reviews");
+    setRatingReviews(data);
+    loadedTabsRef.current.add("Reviews");
+  };
+
+  const readCompressedImageFile = (file) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const image = new Image();
+        image.onload = () => {
+          const maxSize = 900;
+          const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, Math.round(image.width * scale));
+          canvas.height = Math.max(1, Math.round(image.height * scale));
+          const context = canvas.getContext("2d");
+          if (!context) {
+            reject(new Error("Unable to process category image"));
+            return;
+          }
+          context.drawImage(image, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL("image/jpeg", 0.82));
+        };
+        image.onerror = () => reject(new Error("Unable to read category image"));
+        image.src = reader.result;
+      };
+      reader.onerror = () => reject(new Error("Unable to read category image"));
+      reader.readAsDataURL(file);
+    });
+
+  const handleCategoryImageChange = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      setCategoryImageName("");
+      setCategoryForm((currentForm) => ({ ...currentForm, image: "" }));
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      showToast("Please choose an image file.", "error");
+      event.target.value = "";
+      return;
+    }
+    try {
+      const image = await readCompressedImageFile(file);
+      setCategoryImageName(file.name);
+      setCategoryForm((currentForm) => ({ ...currentForm, image }));
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to read category image", "error");
+    }
+  };
+
+  const createCategory = async (event) => {
+    event.preventDefault();
+    const name = categoryForm.name.trim();
+    if (!name) {
+      showToast("Category name is required.", "error");
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const isEditing = Boolean(editingCategoryId);
+      const category = await fetchAdmin(
+        isEditing ? `/admin/categories/${editingCategoryId}` : "/admin/categories",
+        isEditing ? "Unable to update category" : "Unable to add category",
+        {
+          method: isEditing ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, image: categoryForm.image, icon: name.slice(0, 4) || "More" }),
+        }
+      );
+      if (isEditing) {
+        onCategoryUpdated?.(category);
+      } else {
+        onCategoryCreated?.(category);
+      }
+      setCategoryForm({ name: "", image: "" });
+      setCategoryImageName("");
+      setEditingCategoryId(null);
+      setActiveTab("Categories");
+      showToast(`${category.name} category ${isEditing ? "updated" : "added"}.`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to save category", "error");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const editCategory = (category) => {
+    if (!category.created_at) {
+      showToast("Built-in categories cannot be edited from this menu.", "error");
+      return;
+    }
+    setEditingCategoryId(category.id);
+    setCategoryForm({ name: category.name, image: category.image || "" });
+    setCategoryImageName("");
+    setOpenCategoryActionId(null);
+    setActiveTab("Edit Category");
+  };
+
+  const deleteCategory = async (category) => {
+    if (!category.created_at) {
+      showToast("Built-in categories cannot be deleted from this menu.", "error");
+      return;
+    }
+    if (!window.confirm(`Delete "${category.name}" from marketplace categories?`)) {
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      await fetchAdmin(`/admin/categories/${category.id}`, "Unable to delete category", { method: "DELETE" });
+      onCategoryDeleted?.(category);
+      setOpenCategoryActionId(null);
+      showToast(`${category.name} category deleted.`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to delete category", "error");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const refreshActiveTab = async () => {
     if (!isAdmin) {
+      return;
+    }
+
+    if (activeTab === "Reports" || activeTab === "Categories" || activeTab === "Add Category") {
+      loadNotifications().catch(() => {});
+      return;
+    }
+
+    if (loadedTabsRef.current.has(activeTab)) {
+      loadNotifications().catch(() => {});
       return;
     }
 
@@ -80,9 +276,12 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
         await loadListings();
       } else if (activeTab === "Orders") {
         await loadOrders();
-      } else if (activeTab === "Reports") {
-        await loadReport();
+      } else if (activeTab === "Flags") {
+        await loadUserReports();
+      } else if (activeTab === "Reviews") {
+        await loadRatingReviews();
       }
+      loadNotifications().catch(() => {});
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to load admin data");
     } finally {
@@ -92,7 +291,33 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
 
   useEffect(() => {
     refreshActiveTab();
-  }, [activeTab, isAdmin, reportPeriod]);
+  }, [activeTab, isAdmin]);
+
+  useEffect(() => {
+    if (isAdmin) {
+      loadNotifications().catch(() => {});
+    }
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin || prefetchStartedRef.current) {
+      return;
+    }
+
+    prefetchStartedRef.current = true;
+    const timerId = window.setTimeout(() => {
+      Promise.allSettled([
+        loadDashboard(),
+        loadStudents(),
+        loadListings(),
+        loadOrders(),
+        loadUserReports(),
+        loadRatingReviews(),
+      ]).catch(() => {});
+    }, 250);
+
+    return () => window.clearTimeout(timerId);
+  }, [isAdmin]);
 
   const stats = useMemo(
     () => [
@@ -115,6 +340,61 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
         })
       : "Not recorded";
 
+  const openUserProfile = (user) => {
+    if (!user) {
+      showToast("Profile details are not available for this user.");
+      return;
+    }
+    setSelectedStudent(user);
+  };
+
+  const unreadNotifications = notifications.filter((notification) => !notification.is_read);
+
+  const openNotification = async (notification) => {
+    setSelectedNotification(notification);
+    if (notification.is_read) {
+      return;
+    }
+
+    setNotifications((currentNotifications) =>
+      currentNotifications.map((currentNotification) =>
+        currentNotification.id === notification.id
+          ? { ...currentNotification, is_read: true }
+          : currentNotification
+      )
+    );
+
+    try {
+      const updatedNotification = await fetchAdmin(`/admin/notifications/${notification.id}/view`, "Unable to mark notification as viewed", {
+        method: "POST",
+      });
+      setSelectedNotification(updatedNotification);
+      setNotifications((currentNotifications) =>
+        currentNotifications.map((currentNotification) =>
+          currentNotification.id === updatedNotification.id ? updatedNotification : currentNotification
+        )
+      );
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to mark notification as viewed");
+    }
+  };
+
+  const removeNotification = async (notificationId) => {
+    try {
+      await fetchAdmin(`/admin/notifications/${notificationId}/view`, "Unable to remove notification", {
+        method: "DELETE",
+      });
+      setNotifications((currentNotifications) =>
+        currentNotifications.filter((notification) => notification.id !== notificationId)
+      );
+      if (selectedNotification?.id === notificationId) {
+        setSelectedNotification(null);
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to remove notification");
+    }
+  };
+
   const updateStudentStatus = async (student, action) => {
     const verb = action === "suspend" ? "suspend" : "reactivate";
     if (!window.confirm(`Are you sure you want to ${verb} ${student.username}?`)) {
@@ -123,9 +403,20 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
 
     setIsLoading(true);
     try {
-      await fetchAdmin(`/admin/students/${student.id}/${action}`, `Unable to ${verb} student`, { method: "POST" });
-      await loadStudents();
-      showToast(`Student ${action === "suspend" ? "suspended" : "reactivated"} successfully.`);
+      const data = await fetchAdmin(`/admin/students/${student.id}/${action}`, `Unable to ${verb} student`, { method: "POST" });
+      const notificationMessage =
+        data?.message || `${student.username} was ${action === "suspend" ? "suspended" : "reactivated"}.`;
+      if (data?.user) {
+        setStudents((currentStudents) =>
+          currentStudents.map((currentStudent) => (currentStudent.id === student.id ? data.user : currentStudent))
+        );
+        if (selectedStudent?.id === student.id) {
+          setSelectedStudent(data.user);
+        }
+      }
+      setOpenStudentActionId(null);
+      loadNotifications().catch(() => {});
+      showToast(`${student.username} ${action === "suspend" ? "suspended" : "reactivated"}. ${notificationMessage}`);
     } catch (error) {
       showToast(error instanceof Error ? error.message : `Unable to ${verb} student`);
     } finally {
@@ -133,23 +424,26 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
     }
   };
 
-  const removeListing = async (listing) => {
-    const reason = window.prompt(`Reason for removing "${listing.name}"`);
+  const moderateListing = async (listing, action) => {
+    const verb = action === "hide" ? "hiding" : "removing";
+    const reason = window.prompt(`Reason for ${verb} "${listing.name}"`);
     if (!reason) {
       return;
     }
 
     setIsLoading(true);
     try {
-      await fetchAdmin(`/admin/listings/${listing.id}/remove`, "Unable to remove listing", {
+      await fetchAdmin(`/admin/listings/${listing.id}/${action}`, `Unable to ${action} listing`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reason }),
       });
       await loadListings();
-      showToast("Listing removed from student view.");
+      await loadNotifications();
+      setOpenListingActionId(null);
+      showToast(action === "hide" ? "Listing hidden from the marketplace." : "Listing removed from student view.");
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "Unable to remove listing");
+      showToast(error instanceof Error ? error.message : `Unable to ${action} listing`);
     } finally {
       setIsLoading(false);
     }
@@ -164,6 +458,8 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
     try {
       await fetchAdmin(`/admin/listings/${listing.id}/restore`, "Unable to restore listing", { method: "POST" });
       await loadListings();
+      await loadNotifications();
+      setOpenListingActionId(null);
       showToast("Listing restored successfully.");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to restore listing");
@@ -172,73 +468,44 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
     }
   };
 
-  const createReportPdf = () => {
-    const rows = report?.rows ?? [];
-    const clean = (value) => String(value).replace(/[^\x20-\x7E]/g, "?").replace(/[\\()]/g, "\\$&");
-    const commands = [];
-    const addText = (text, x, y, size = 10, font = "F1", color = "0.08 0.14 0.22") => {
-      commands.push(`${color} rg BT /${font} ${size} Tf ${x} ${y} Td (${clean(text)}) Tj ET`);
-    };
-    const addLine = (x1, y1, x2, y2) => commands.push(`0.84 0.88 0.93 RG ${x1} ${y1} m ${x2} ${y2} l S`);
+  const deleteStudentPermanently = async (student) => {
+    const confirmed = window.confirm(
+      `Permanently delete ${student.username}? This removes the student account and all listings created by this student.`
+    );
+    if (!confirmed) {
+      return;
+    }
 
-    commands.push("0.05 0.18 0.30 rg 40 710 532 52 re f");
-    addText("USP", 58, 730, 18, "F2", "1 1 1");
-    addText("USP BUY & SELL ADMIN REPORT", 112, 736, 14, "F2", "1 1 1");
-    addText(`Period: ${reportPeriod}`, 112, 720, 10, "F1", "1 1 1");
-    addText(`Generated: ${new Date().toLocaleString()}`, 350, 720, 8, "F1", "1 1 1");
-    addText(`Total Orders: ${report?.total_orders ?? 0}`, 44, 676, 11, "F2");
-    addText(`Items Sold: ${report?.total_items_sold ?? 0}`, 230, 676, 11, "F2");
-    addText(`Total Sales: $${Number(report?.total_sales ?? 0).toFixed(2)}`, 405, 676, 11, "F2");
-    addLine(40, 650, 572, 650);
-    addText("Date", 44, 628, 9, "F2");
-    addText("Orders", 225, 628, 9, "F2");
-    addText("Items Sold", 335, 628, 9, "F2");
-    addText("Total Sales", 465, 628, 9, "F2");
-    addLine(40, 618, 572, 618);
+    setIsLoading(true);
+    try {
+      const data = await fetchAdmin(`/admin/students/${student.id}`, "Unable to delete student", { method: "DELETE" });
+      setStudents((currentStudents) => currentStudents.filter((currentStudent) => currentStudent.id !== student.id));
+      if (selectedStudent?.id === student.id) {
+        setSelectedStudent(null);
+      }
+      setOpenStudentActionId(null);
+      loadNotifications().catch(() => {});
+      showToast(data.message || "Student permanently deleted.");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to delete student");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-    let y = 598;
-    rows.slice(0, 22).forEach((row) => {
-      addText(row.date, 44, y);
-      addText(String(row.orders), 225, y);
-      addText(String(row.items_sold), 335, y);
-      addText(`$${Number(row.total_sales).toFixed(2)}`, 465, y);
-      addLine(40, y - 12, 572, y - 12);
-      y -= 24;
-    });
-
-    addText("USP Buy & Sell | Admin Office | Laucala Campus", 44, 44, 8);
-    const textCommands = commands.join("\n");
-    const objects = [
-      "<< /Type /Catalog /Pages 2 0 R >>",
-      "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>",
-      "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-      "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
-      `<< /Length ${textCommands.length} >>\nstream\n${textCommands}\nendstream`,
-    ];
-    let pdf = "%PDF-1.4\n";
-    const offsets = [0];
-    objects.forEach((object, index) => {
-      offsets.push(pdf.length);
-      pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
-    });
-    const xrefOffset = pdf.length;
-    pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-    offsets.slice(1).forEach((offset) => {
-      pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
-    });
-    pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
-
-    const blob = new Blob([pdf], { type: "application/pdf" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `usp-buy-sell-admin-report-${Date.now()}.pdf`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    setIsConfirmingReport(false);
+  const goBack = () => {
+    if (activeTab === "Add Category" || activeTab === "Edit Category") {
+      setCategoryForm({ name: "", image: "" });
+      setCategoryImageName("");
+      setEditingCategoryId(null);
+      setActiveTab("Categories");
+      return;
+    }
+    if (window.history.length > 1) {
+      window.history.back();
+      return;
+    }
+    onMarketplace();
   };
 
   if (!isAdmin) {
@@ -290,13 +557,87 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
 
       <section className="admin-content">
         <div className="admin-topbar">
-          <div>
-            <span className="section-kicker">Admin Panel</span>
-            <h1>{activeTab}</h1>
-          </div>
-          <button type="button" className="secondary-button" onClick={onMarketplace}>
-            USP Buy & Sell
+          <button
+            type="button"
+            className="admin-back-button"
+            onClick={goBack}
+            aria-label="Go back"
+            title="Go back"
+          >
+            <span aria-hidden="true">‹</span>
           </button>
+          <div className="admin-page-title">
+            {activeTab !== "Categories" && <h1>{activeTab}</h1>}
+          </div>
+          <div className="admin-topbar-actions">
+            <div className="notification-popover-anchor">
+              <button
+                type="button"
+                className="icon-nav-button notification-icon-button"
+                onClick={() => setIsNotificationPanelOpen((isOpen) => !isOpen)}
+                aria-label="Notifications"
+                aria-expanded={isNotificationPanelOpen}
+              >
+                <span aria-hidden="true">&#128276;</span>
+                {unreadNotifications.length > 0 && <span className="notification-count">{unreadNotifications.length}</span>}
+              </button>
+              {isNotificationPanelOpen && (
+                <div className="notification-center-modal">
+                  <div className="notification-center-header">
+                    <div>
+                      <h3>Notifications</h3>
+                    </div>
+                    <button
+                      type="button"
+                      className="close-button"
+                      onClick={() => setIsNotificationPanelOpen(false)}
+                      aria-label="Close notifications"
+                    >
+                      x
+                    </button>
+                  </div>
+                  <div className="notification-center-summary">
+                    <span>{notifications.length} total</span>
+                    <span>{unreadNotifications.length} unread</span>
+                  </div>
+                  <div className="notification-center-list">
+                    {notifications.length ? (
+                      notifications.map((notification) => (
+                        <div className={notification.is_read ? "notification-row viewed" : "notification-row unread"} key={notification.id}>
+                          <button
+                            type="button"
+                            className="notification-item"
+                            onClick={() => {
+                              setIsNotificationPanelOpen(false);
+                              openNotification(notification);
+                            }}
+                          >
+                            <span>{notification.title}</span>
+                            <small>{notification.is_read ? "Viewed" : "New"}</small>
+                            <p>{notification.message}</p>
+                            <time dateTime={notification.created_at}>{formatDate(notification.created_at)}</time>
+                          </button>
+                          <button
+                            type="button"
+                            className="notification-remove-button"
+                            onClick={() => removeNotification(notification.id)}
+                            aria-label="Remove notification"
+                          >
+                            x
+                          </button>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="empty-state">No admin notifications yet.</p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+            <button type="button" className="secondary-button" onClick={onMarketplace}>
+              USP Buy & Sell
+            </button>
+          </div>
         </div>
 
         {isLoading && <p className="admin-loading">Loading admin data...</p>}
@@ -313,14 +654,22 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
             </div>
             <div className="admin-table-card">
               <h2>Recent Orders</h2>
-              <AdminOrdersTable orders={dashboard?.recent_orders ?? []} formatDate={formatDate} />
+              <AdminOrdersTable orders={dashboard?.recent_orders ?? []} formatDate={formatDate} onViewProfile={openUserProfile} />
             </div>
           </>
         )}
 
         {activeTab === "Students" && (
           <div className="admin-table-card">
-            <AdminSearch value={studentSearch} onChange={setStudentSearch} onSearch={loadStudents} placeholder="Search name or email" />
+            <AdminSearch
+              value={studentSearch}
+              onChange={(value) => {
+                loadedTabsRef.current.delete("Students");
+                setStudentSearch(value);
+              }}
+              onSearch={loadStudents}
+              placeholder="Search name or email"
+            />
             <div className="admin-table">
               <div className="admin-table-head students-grid">
                 <span>Student ID</span>
@@ -328,22 +677,55 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
                 <span>Email</span>
                 <span>Status</span>
                 <span>Registered</span>
-                <span>Action</span>
+                <span>Actions</span>
               </div>
               {students.map((student) => (
                 <div className="admin-table-row students-grid" key={student.id}>
                   <span>{student.id}</span>
-                  <strong>{student.username}</strong>
+                  <button type="button" className="profile-name-button" onClick={() => openUserProfile(student)}>
+                    {student.username}
+                  </button>
                   <span>{student.email}</span>
                   <span className={`status-pill ${student.status}`}>{student.status}</span>
                   <span>{formatDate(student.created_at)}</span>
-                  <button
-                    type="button"
-                    className={student.status === "suspended" ? "secondary-button" : "danger-outline-button"}
-                    onClick={() => updateStudentStatus(student, student.status === "suspended" ? "reactivate" : "suspend")}
-                  >
-                    {student.status === "suspended" ? "Reactivate" : "Suspend"}
-                  </button>
+                  <div className="admin-action-dropdown">
+                    <button
+                      type="button"
+                      className="admin-action-trigger"
+                      onClick={() =>
+                        setOpenStudentActionId((currentId) => (currentId === student.id ? null : student.id))
+                      }
+                      aria-expanded={openStudentActionId === student.id}
+                    >
+                      Actions
+                    </button>
+                    {openStudentActionId === student.id && (
+                      <div className="admin-action-menu">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedStudent(student);
+                            setOpenStudentActionId(null);
+                          }}
+                        >
+                          View
+                        </button>
+                        {student.status === "suspended" ? (
+                          <button type="button" onClick={() => updateStudentStatus(student, "reactivate")}>
+                            Reactivate
+                          </button>
+                        ) : (
+                          <button type="button" onClick={() => updateStudentStatus(student, "suspend")}>
+                            Suspend
+                          </button>
+                        )}
+                        <div className="admin-action-divider" />
+                        <button type="button" className="danger-action" onClick={() => deleteStudentPermanently(student)}>
+                          Delete Permanently
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -353,7 +735,15 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
         {activeTab === "Listings" && (
           <div className="admin-table-card">
             <div className="admin-section-toolbar">
-              <AdminSearch value={listingSearch} onChange={setListingSearch} onSearch={loadListings} placeholder="Search listing, seller, or category" />
+              <AdminSearch
+                value={listingSearch}
+                onChange={(value) => {
+                  loadedTabsRef.current.delete("Listings");
+                  setListingSearch(value);
+                }}
+                onSearch={loadListings}
+                placeholder="Search listing, seller, or category"
+              />
               <span className="admin-record-count">
                 {listings.length} {listings.length === 1 ? "listing" : "listings"}
               </span>
@@ -367,7 +757,7 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
                 <span>Stock</span>
                 <span>Status</span>
                 <span>Date</span>
-                <span>Action</span>
+                <span>Actions</span>
               </div>
               {listings.length ? (
                 listings.map((listing) => (
@@ -380,7 +770,9 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
                       </div>
                     </div>
                     <div className="admin-listing-meta">
-                      <strong>{listing.seller_username}</strong>
+                      <button type="button" className="profile-name-button" onClick={() => openUserProfile(listing.seller)}>
+                        {listing.seller_username}
+                      </button>
                       <small>{listing.contact || "No contact listed"}</small>
                     </div>
                     <span className="admin-category-pill">{listing.category}</span>
@@ -390,15 +782,46 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
                     </span>
                     <span className={`status-pill ${listing.status}`}>{listing.status}</span>
                     <time dateTime={listing.created_at}>{formatDate(listing.created_at)}</time>
-                    <div className="admin-row-actions">
-                      {listing.status === "removed" ? (
-                        <button type="button" className="secondary-button" onClick={() => restoreListing(listing)}>
-                          Restore
-                        </button>
-                      ) : (
-                        <button type="button" className="danger-outline-button" onClick={() => removeListing(listing)}>
-                          Remove
-                        </button>
+                    <div className="admin-action-dropdown">
+                      <button
+                        type="button"
+                        className="admin-action-trigger"
+                        onClick={() =>
+                          setOpenListingActionId((currentId) => (currentId === listing.id ? null : listing.id))
+                        }
+                        aria-expanded={openListingActionId === listing.id}
+                      >
+                        Actions
+                      </button>
+                      {openListingActionId === listing.id && (
+                        <div className="admin-action-menu">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedAdminListing(listing);
+                              setOpenListingActionId(null);
+                            }}
+                          >
+                            View
+                          </button>
+                          {listing.status === "hidden" || listing.status === "removed" ? (
+                            <button type="button" onClick={() => restoreListing(listing)}>
+                              Restore
+                            </button>
+                          ) : (
+                            <button type="button" onClick={() => moderateListing(listing, "hide")}>
+                              Hide
+                            </button>
+                          )}
+                          {listing.status !== "removed" && (
+                            <>
+                              <div className="admin-action-divider" />
+                              <button type="button" className="danger-action" onClick={() => moderateListing(listing, "remove")}>
+                                Remove
+                              </button>
+                            </>
+                          )}
+                        </div>
                       )}
                     </div>
                   </div>
@@ -413,77 +836,345 @@ function AdminDashboard({ apiUrl, currentUser, logo, onLogin, onLogout, onMarket
         {activeTab === "Orders" && (
           <div className="admin-table-card">
             <div className="admin-filters">
-              <input value={orderSearch} onChange={(event) => setOrderSearch(event.target.value)} placeholder="Order ID, buyer, seller, or item" />
-              <input type="date" value={orderDate} onChange={(event) => setOrderDate(event.target.value)} />
-              <select value={orderStatus} onChange={(event) => setOrderStatus(event.target.value)}>
-                <option value="">All statuses</option>
-                <option value="completed">Completed</option>
-              </select>
+              <input
+                value={orderSearch}
+                onChange={(event) => {
+                  loadedTabsRef.current.delete("Orders");
+                  setOrderSearch(event.target.value);
+                }}
+                placeholder="Order ID, buyer, seller, or item"
+              />
+              <input
+                type="date"
+                value={orderDate}
+                onChange={(event) => {
+                  loadedTabsRef.current.delete("Orders");
+                  setOrderDate(event.target.value);
+                }}
+              />
               <button type="button" className="auth-submit" onClick={loadOrders}>
                 Search
               </button>
             </div>
-            <AdminOrdersTable orders={orders} formatDate={formatDate} />
+            <AdminOrdersTable orders={orders} formatDate={formatDate} onViewProfile={openUserProfile} />
           </div>
         )}
 
-        {activeTab === "Reports" && (
+        {activeTab === "Categories" && (
           <div className="admin-table-card">
-            <div className="admin-filters">
-              <select value={reportPeriod} onChange={(event) => setReportPeriod(event.target.value)}>
-                <option value="daily">Daily</option>
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Monthly</option>
-              </select>
-              <button type="button" className="auth-submit" onClick={() => setIsConfirmingReport(true)}>
-                Export PDF
-              </button>
-            </div>
-            <div className="admin-stat-grid compact">
-              <div className="admin-stat-card">
-                <span>Total Orders</span>
-                <strong>{report?.total_orders ?? 0}</strong>
-              </div>
-              <div className="admin-stat-card">
-                <span>Total Items Sold</span>
-                <strong>{report?.total_items_sold ?? 0}</strong>
-              </div>
-              <div className="admin-stat-card">
-                <span>Total Revenue</span>
-                <strong>${Number(report?.total_sales ?? 0).toFixed(2)}</strong>
+            <div className="admin-section-toolbar">
+              <h2>Marketplace Categories</h2>
+              <div className="admin-section-actions">
+                <span className="admin-record-count">
+                  {uniqueCategories.length} {uniqueCategories.length === 1 ? "category" : "categories"}
+                </span>
+                <button type="button" className="auth-submit" onClick={() => setActiveTab("Add Category")}>
+                  Add Category
+                </button>
               </div>
             </div>
-            <div className="admin-table">
-              <div className="admin-table-head reports-grid">
-                <span>Date</span>
-                <span>Orders</span>
-                <span>Items Sold</span>
-                <span>Total Sales</span>
-              </div>
-              {(report?.rows ?? []).map((row) => (
-                <div className="admin-table-row reports-grid" key={row.date}>
-                  <strong>{row.date}</strong>
-                  <span>{row.orders}</span>
-                  <span>{row.items_sold}</span>
-                  <span>${Number(row.total_sales).toFixed(2)}</span>
+            <div className="admin-category-grid">
+              {uniqueCategories.map((category) => (
+                <div className="admin-category-card" key={`${category.created_at ? "stored" : "default"}-${category.name}-${category.id}`}>
+                  {category.created_at && !category.built_in && <div className="admin-category-card-actions">
+                    <button
+                      type="button"
+                      className="admin-category-menu-trigger"
+                      onClick={() =>
+                        setOpenCategoryActionId((currentId) => (currentId === category.name ? null : category.name))
+                      }
+                      aria-label={`Actions for ${category.name}`}
+                      aria-expanded={openCategoryActionId === category.name}
+                    >
+                      ...
+                    </button>
+                    {openCategoryActionId === category.name && (
+                      <div className="admin-category-menu">
+                        <button type="button" onClick={() => editCategory(category)}>
+                          Edit
+                        </button>
+                        <button type="button" className="danger-action" onClick={() => deleteCategory(category)}>
+                          Delete
+                        </button>
+                      </div>
+                    )}
+                  </div>}
+                  {category.image ? <img src={category.image} alt={category.name} style={{ objectPosition: category.imagePosition || "center" }} /> : <span>{category.icon || category.name.charAt(0)}</span>}
+                  <strong>{category.name}</strong>
                 </div>
               ))}
             </div>
           </div>
         )}
+
+        {(activeTab === "Add Category" || activeTab === "Edit Category") && (
+          <div className="admin-table-card">
+            <div className="admin-section-toolbar">
+              <h2>{activeTab}</h2>
+            </div>
+            <form className="admin-category-form" onSubmit={createCategory}>
+              <label>
+                Category name
+                <input
+                  value={categoryForm.name}
+                  onChange={(event) => setCategoryForm((currentForm) => ({ ...currentForm, name: event.target.value }))}
+                  maxLength={64}
+                  placeholder="e.g. Sports"
+                />
+              </label>
+              <label>
+                Category image
+                <input type="file" accept="image/*" onChange={handleCategoryImageChange} />
+              </label>
+              {categoryForm.image ? (
+                <div className="admin-category-preview">
+                  <img src={categoryForm.image} alt={categoryForm.name || "Category preview"} />
+                  <span>{categoryImageName || "Selected image"}</span>
+                </div>
+              ) : null}
+              <div className="admin-category-form-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    setCategoryForm({ name: "", image: "" });
+                    setCategoryImageName("");
+                    setEditingCategoryId(null);
+                    setActiveTab("Categories");
+                  }}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="auth-submit" disabled={isLoading}>
+                  {activeTab === "Edit Category" ? "Update Category" : "Save Category"}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {activeTab === "Reports" && <ReportsPanel apiUrl={apiUrl} adminId={adminId} showToast={showToast} />}
+
+        {activeTab === "Flags" && (
+          <div className="admin-table-card">
+            <div className="admin-section-toolbar">
+              <h2>Flags</h2>
+              <span className="admin-record-count">
+                {userReports.length} {userReports.length === 1 ? "report" : "reports"}
+              </span>
+            </div>
+            <div className="admin-table">
+              <div className="admin-table-head user-reports-grid">
+                <span>Reporter</span>
+                <span>Target</span>
+                <span>Seller</span>
+                <span>Reason</span>
+                <span>Status</span>
+                <span>Date</span>
+              </div>
+              {userReports.length ? (
+                userReports.map((reportRecord) => (
+                  <div className="admin-table-row user-reports-grid" key={reportRecord.id}>
+                    <button type="button" className="profile-name-button" onClick={() => openUserProfile(reportRecord.reporter)}>
+                      {reportRecord.reporter_username}
+                    </button>
+                    <div className="flag-target">
+                      <strong>{reportRecord.target_label}</strong>
+                      {reportRecord.target_item ? (
+                        <button type="button" onClick={() => setSelectedAdminListing(reportRecord.target_item)}>
+                          View item
+                        </button>
+                      ) : (
+                        <span>{reportRecord.target_type}</span>
+                      )}
+                    </div>
+                    <div className="flag-target">
+                      {reportRecord.seller ? (
+                        <button
+                          type="button"
+                          className="profile-name-button"
+                          onClick={() => openUserProfile(reportRecord.seller)}
+                        >
+                          {reportRecord.seller.username}
+                        </button>
+                      ) : (
+                        <span>Not available</span>
+                      )}
+                    </div>
+                    <span>{reportRecord.reason}</span>
+                    <span className={`status-pill ${reportRecord.status}`}>{reportRecord.status}</span>
+                    <span>{formatDate(reportRecord.created_at)}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="empty-state">No user reports submitted.</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === "Reviews" && (
+          <div className="admin-table-card">
+            <div className="admin-section-toolbar">
+              <h2>Reviews</h2>
+              <span className="admin-record-count">
+                {ratingReviews.length} {ratingReviews.length === 1 ? "review" : "reviews"}
+              </span>
+            </div>
+            <div className="admin-table">
+              <div className="admin-table-head ratings-grid">
+                <span>Reviewer</span>
+                <span>Listing</span>
+                <span>Seller</span>
+                <span>Rating</span>
+                <span>Review</span>
+                <span>Date</span>
+              </div>
+              {ratingReviews.length ? (
+                ratingReviews.map((reviewRecord) => (
+                  <div className="admin-table-row ratings-grid" key={reviewRecord.id}>
+                    <button type="button" className="profile-name-button" onClick={() => openUserProfile(reviewRecord.reviewer)}>
+                      {reviewRecord.reviewer_username}
+                    </button>
+                    <span>{reviewRecord.item_name}</span>
+                    <button type="button" className="profile-name-button" onClick={() => openUserProfile(reviewRecord.seller)}>
+                      {reviewRecord.seller_username}
+                    </button>
+                    <span className="rating-stars">{"★".repeat(reviewRecord.rating)}{"☆".repeat(5 - reviewRecord.rating)}</span>
+                    <span>{reviewRecord.review}</span>
+                    <span>{formatDate(reviewRecord.created_at)}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="empty-state">No ratings or reviews submitted.</p>
+              )}
+            </div>
+          </div>
+        )}
       </section>
 
-      {isConfirmingReport && (
-        <div className="auth-modal-backdrop" onClick={() => setIsConfirmingReport(false)}>
-          <div className="report-confirm-modal" onClick={(event) => event.stopPropagation()}>
-            <h3>Download Admin Report?</h3>
-            <p>Your browser will save the selected admin report as a PDF.</p>
-            <div className="checkout-actions">
-              <button type="button" className="secondary-button" onClick={() => setIsConfirmingReport(false)}>
-                Cancel
+      {selectedNotification && (
+        <div className="auth-modal-backdrop" onClick={() => setSelectedNotification(null)}>
+          <div className="notification-detail-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="auth-header">
+              <div>
+                <span className={`notification-view-state ${selectedNotification.is_read ? "viewed" : "unread"}`}>
+                  {selectedNotification.is_read ? "Viewed" : "New"}
+                </span>
+                <h3>{selectedNotification.title}</h3>
+              </div>
+              <button type="button" className="close-button" onClick={() => setSelectedNotification(null)} aria-label="Close">
+                x
               </button>
-              <button type="button" className="auth-submit" onClick={createReportPdf}>
-                Confirm Download
+            </div>
+            <p>{selectedNotification.message}</p>
+            <div className="notification-detail-meta">
+              <span>Type: {selectedNotification.category}</span>
+              <span>
+                From:{" "}
+                {selectedNotification.actor ? (
+                  <button type="button" className="profile-name-button" onClick={() => openUserProfile(selectedNotification.actor)}>
+                    {selectedNotification.actor_username}
+                  </button>
+                ) : (
+                  selectedNotification.actor_username || "System"
+                )}
+              </span>
+              <span>{formatDate(selectedNotification.created_at)}</span>
+            </div>
+            <div className="admin-detail-actions">
+              <button type="button" className="danger-outline-button" onClick={() => removeNotification(selectedNotification.id)}>
+                Remove Notification
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedAdminListing && (
+        <div className="auth-modal-backdrop" onClick={() => setSelectedAdminListing(null)}>
+          <div className="admin-listing-detail-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="auth-header">
+              <div>
+                <span className={`status-pill ${selectedAdminListing.status}`}>{selectedAdminListing.status}</span>
+                <h3>{selectedAdminListing.name}</h3>
+              </div>
+              <button type="button" className="close-button" onClick={() => setSelectedAdminListing(null)} aria-label="Close">
+                x
+              </button>
+            </div>
+            {selectedAdminListing.photo ? (
+              <img src={selectedAdminListing.photo} alt={selectedAdminListing.name} className="admin-listing-detail-image" />
+            ) : null}
+            <div className="admin-listing-detail-grid">
+              <span>Listing ID</span>
+              <strong>#{selectedAdminListing.id}</strong>
+              <span>Seller</span>
+              {selectedAdminListing.seller ? (
+                <button type="button" className="profile-name-button" onClick={() => openUserProfile(selectedAdminListing.seller)}>
+                  {selectedAdminListing.seller_username}
+                </button>
+              ) : (
+                <strong>{selectedAdminListing.seller_username}</strong>
+              )}
+              <span>Category</span>
+              <strong>{selectedAdminListing.category}</strong>
+              <span>Price</span>
+              <strong>${Number(selectedAdminListing.price).toFixed(2)}</strong>
+              <span>Stock</span>
+              <strong>{selectedAdminListing.stock}</strong>
+              <span>Contact</span>
+              <strong>{selectedAdminListing.contact || "No contact listed"}</strong>
+              <span>Created</span>
+              <strong>{formatDate(selectedAdminListing.created_at)}</strong>
+            </div>
+            <p>{selectedAdminListing.description}</p>
+            {selectedAdminListing.removed_reason ? (
+              <div className="admin-listing-reason">
+                <strong>Moderation Reason</strong>
+                <p>{selectedAdminListing.removed_reason}</p>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      )}
+
+      {selectedStudent && (
+        <div className="auth-modal-backdrop" onClick={() => setSelectedStudent(null)}>
+          <div className="admin-student-detail-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="auth-header">
+              <div>
+                <span className={`status-pill ${selectedStudent.status}`}>{selectedStudent.status}</span>
+                <h3>{selectedStudent.username}</h3>
+              </div>
+              <button type="button" className="close-button" onClick={() => setSelectedStudent(null)} aria-label="Close">
+                x
+              </button>
+            </div>
+            <div className="admin-listing-detail-grid">
+              <span>Student ID</span>
+              <strong>{selectedStudent.student_id || selectedStudent.id}</strong>
+              <span>Email</span>
+              <strong>{selectedStudent.email}</strong>
+              <span>Role</span>
+              <strong>{selectedStudent.role}</strong>
+              <span>Status</span>
+              <strong>{selectedStudent.status}</strong>
+              <span>Registered</span>
+              <strong>{formatDate(selectedStudent.created_at)}</strong>
+            </div>
+            <div className="admin-detail-actions">
+              {selectedStudent.status === "suspended" ? (
+                <button type="button" className="secondary-button" onClick={() => updateStudentStatus(selectedStudent, "reactivate")}>
+                  Reactivate
+                </button>
+              ) : (
+                <button type="button" className="danger-outline-button" onClick={() => updateStudentStatus(selectedStudent, "suspend")}>
+                  Suspend
+                </button>
+              )}
+              <button type="button" className="danger-outline-button" onClick={() => deleteStudentPermanently(selectedStudent)}>
+                Delete Permanently
               </button>
             </div>
           </div>
@@ -504,7 +1195,7 @@ function AdminSearch({ value, onChange, onSearch, placeholder }) {
   );
 }
 
-function AdminOrdersTable({ orders, formatDate }) {
+function AdminOrdersTable({ orders, formatDate, onViewProfile }) {
   if (!orders.length) {
     return <p className="empty-state">No records found.</p>;
   }
@@ -519,18 +1210,20 @@ function AdminOrdersTable({ orders, formatDate }) {
         <span>Qty</span>
         <span>Total</span>
         <span>Date</span>
-        <span>Status</span>
       </div>
       {orders.map((order) => (
         <div className="admin-table-row orders-grid" key={order.id}>
           <strong>#{order.id}</strong>
-          <span>{order.buyer_username}</span>
-          <span>{order.seller_username}</span>
+          <button type="button" className="profile-name-button" onClick={() => onViewProfile(order.buyer)}>
+            {order.buyer_username}
+          </button>
+          <button type="button" className="profile-name-button" onClick={() => onViewProfile(order.seller)}>
+            {order.seller_username}
+          </button>
           <span>{order.item_name}</span>
           <span>{order.quantity}</span>
           <span>${Number(order.total_amount || order.price).toFixed(2)}</span>
           <span>{formatDate(order.purchased_at)}</span>
-          <span className={`status-pill ${order.status}`}>{order.status}</span>
         </div>
       ))}
     </div>

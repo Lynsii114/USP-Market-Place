@@ -1,4 +1,11 @@
 import re
+import math
+import base64
+import binascii
+import warnings
+from io import BytesIO
+
+from PIL import Image, UnidentifiedImageError
 
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
@@ -29,22 +36,85 @@ def validate_signup(data):
         raise ApiError("Password must be at least 6 characters long", 422)
 
 
+MAX_INVENTORY_INTEGER = 2_147_483_647
+
+
+def whole_number(value, label, minimum=0):
+    # JSON booleans and floats must not be silently converted into inventory units.
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ApiError(f"{label} must be a whole number", 422)
+    if isinstance(value, str) and not re.fullmatch(r"[0-9]+", value.strip()):
+        raise ApiError(f"{label} must be a whole number", 422)
+    try:
+        number = int(value)
+    except (ValueError, OverflowError) as exc:
+        raise ApiError(f"{label} must be a whole number", 422) from exc
+    if not minimum <= number <= MAX_INVENTORY_INTEGER:
+        raise ApiError(f"{label} must be between {minimum} and {MAX_INVENTORY_INTEGER}", 422)
+    return number
+
+
+def validate_listing_photo(photo):
+    if not isinstance(photo, str) or not photo.strip():
+        raise ApiError("Add a photo before saving your listing", 422)
+    if len(photo) > 1_400_000:
+        raise ApiError("The photo is too large. Choose a smaller image", 422)
+    match = re.fullmatch(r"data:image/(jpeg|png|webp|avif);base64,([A-Za-z0-9+/=]+)", photo)
+    if not match:
+        raise ApiError("Upload a JPEG, PNG, WebP or AVIF photo", 422)
+    try:
+        content = base64.b64decode(match.group(2), validate=True)
+        if len(content) > 1024 * 1024:
+            raise ApiError("The photo is too large. Choose a smaller image", 422)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(content)) as image:
+                if image.format != {"jpeg": "JPEG", "png": "PNG", "webp": "WEBP", "avif": "AVIF"}[match.group(1)]:
+                    raise ApiError("The photo contents do not match its image format", 422)
+                if image.width * image.height > 16_000_000:
+                    raise ApiError("Choose a photo with smaller dimensions", 422)
+                image.verify()
+            with Image.open(BytesIO(content)) as image:
+                image.load()
+    except (ValueError, OSError, SyntaxError, binascii.Error, UnidentifiedImageError, Image.DecompressionBombWarning, Image.DecompressionBombError) as exc:
+        raise ApiError("This photo could not be opened. Choose another image", 422) from exc
+
+
 def validate_item_payload(data, partial=False):
-    required = ["name", "price", "description", "category", "contact", "stock"]
+    if not isinstance(data, dict):
+        raise ApiError("Listing details must be a JSON object", 422)
+    required = ["name", "price", "description", "category", "contact", "stock", "photo"]
     if not partial:
         missing = [field for field in required if field not in data]
         if missing:
             raise ApiError(f"Missing field: {missing[0]}", 422)
 
+    for field, limit in {"name": 256, "description": 1000, "category": 64, "contact": 128}.items():
+        if field in data:
+            value = data[field]
+            if not isinstance(value, str) or not value.strip():
+                raise ApiError(f"{field.capitalize()} is required", 422)
+            if len(value.strip()) > limit:
+                raise ApiError(f"{field.capitalize()} must be {limit} characters or fewer", 422)
+
     if "stock" in data:
-        try:
-            if int(data["stock"]) < 0:
-                raise ApiError("Stock cannot be negative", 422)
-        except (TypeError, ValueError) as exc:
-            raise ApiError("Stock must be a number", 422) from exc
+        whole_number(data["stock"], "Stock")
+
+    if "photo" in data:
+        validate_listing_photo(data["photo"])
 
     if "price" in data:
         try:
-            float(data["price"])
-        except (TypeError, ValueError) as exc:
-            raise ApiError("Price must be a number", 422) from exc
+            price = float(data["price"])
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ApiError("Price must be a finite positive number", 422) from exc
+        if isinstance(data["price"], bool) or not math.isfinite(price) or price <= 0 or price > 999_999_999.99:
+            raise ApiError("Price must be greater than 0 and at most 999999999.99", 422)
+
+    payment_method = str(data.get("payment_method", "cash")).strip().lower()
+    if payment_method not in {"mpaisa", "mycash", "cash"}:
+        raise ApiError("Choose M-PAiSA, MyCash, or Cash as the seller payment method", 422)
+    if payment_method in {"mpaisa", "mycash"}:
+        payment_number = re.sub(r"[ ()-]", "", str(data.get("payment_number", "")).strip())
+        if not re.fullmatch(r"\+?\d{7,15}", payment_number):
+            raise ApiError("Enter a valid phone number for the selected mobile payment method", 422)
