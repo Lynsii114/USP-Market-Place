@@ -1,6 +1,16 @@
 from django.utils import timezone
 
 from .models import User
+from .exceptions import ApiError
+
+
+def suspension_error(user):
+    if user.suspended_until:
+        deadline = timezone.localtime(user.suspended_until, timezone.get_fixed_timezone(720)).strftime("%d %b %Y at %I:%M %p Fiji time (UTC+12)")
+        detail = f"Your USP Marketplace account is temporarily suspended until {deadline}. You cannot sign in or use your account during this period. Please check your email for the reason and review options."
+    else:
+        detail = "Your USP Marketplace account is suspended. You cannot sign in or use your account at this time. Please check your email for details or contact the administration team to request a review."
+    return ApiError(detail, 403, code="account_suspended")
 
 
 def restore_expired_suspension(user):

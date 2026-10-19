@@ -226,8 +226,12 @@ class InventoryTests(TestCase):
 
     def test_admin_hidden_and_removed_listings_reject_seller_mutations(self):
         Conversation.objects.create(item_id=self.item.id, seller_id=self.seller.id, buyer_id=self.buyer.id)
-        for action in (services.hide_listing, services.remove_listing):
-            action(self.admin.id, self.item.id, "Moderation")
+        for action in (
+            lambda: services.hide_listing(self.admin.id, self.item.id, "Moderation"),
+            lambda: services.moderate_listing(self.admin.id, self.item.id, "remove", {"reason": "Listing requires moderation.", "confirmed": True}),
+        ):
+            with patch("marketplace.services.send_email"):
+                action()
             for mutation in (
                 lambda: services.update_item(self.item.id, self.seller.id, {"description": "Changed"}),
                 lambda: services.update_item_seller_status(self.item.id, self.seller.id, "available"),
@@ -236,11 +240,12 @@ class InventoryTests(TestCase):
             ):
                 with self.assertRaises(ApiError):
                     mutation()
-            self.item.refresh_from_db()
-            self.assertIn(self.item.status, {"hidden", "removed"})
+        self.assertFalse(Item.objects.filter(id=self.item.id).exists())
 
     def test_hidden_listing_not_public_or_purchasable(self):
         services.hide_listing(self.admin.id, self.item.id, "Review")
+        for viewer in (Client(), self.client_for(self.buyer)):
+            self.assertNotIn(self.item.id, [row["id"] for row in viewer.get("/api/items").json()])
         self.assertEqual(Client().get(f"/api/items/{self.item.id}").status_code, 404)
         self.assertEqual(Client().get(f"/api/users/{self.seller.id}/items").json(), [])
         self.assertEqual(self.client_for(self.seller).get(f"/api/items/{self.item.id}").status_code, 200)
@@ -250,6 +255,9 @@ class InventoryTests(TestCase):
         self.assertFalse(Purchase.objects.exists())
         self.item.refresh_from_db()
         self.assertEqual(self.item.stock, 3)
+        self.assertIn(self.item.id, [row["id"] for row in self.client_for(self.admin).get("/api/admin/listings").json()])
+        services.restore_listing(self.admin.id, self.item.id)
+        self.assertIn(self.item.id, [row["id"] for row in self.client_for(self.buyer).get("/api/items").json()])
 
     def test_checkout_rejects_fractional_boolean_and_zero_quantities(self):
         for quantity in (1.5, True, 0, -1, "1.5", 2147483648):

@@ -10,7 +10,7 @@ from django.utils.deprecation import MiddlewareMixin
 
 from .exceptions import ApiError
 from .models import User
-from .account_status import restore_expired_suspension
+from .account_status import restore_expired_suspension, suspension_error
 
 
 def credential_version(user):
@@ -35,6 +35,8 @@ def token_user(token, purpose="access"):
     except (signing.BadSignature, KeyError, TypeError, ValueError) as exc:
         raise ApiError("Please sign in again", 401) from exc
     restore_expired_suspension(user)
+    if user.status == "suspended":
+        raise suspension_error(user)
     if user.status != "active":
         raise ApiError("Account is not active", 403)
     return user
@@ -131,6 +133,7 @@ class ApiIdentityMiddleware(MiddlewareMixin):
                     request._body = json.dumps(body).encode("utf-8")
             return None
         except ApiError as exc:
-            return JsonResponse({"detail": exc.detail}, status=exc.status)
+            from .responses import handle_api_error
+            return handle_api_error(exc)
         except DatabaseError:
             return JsonResponse({"detail": "Marketplace database is temporarily unavailable"}, status=503)

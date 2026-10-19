@@ -28,5 +28,5 @@ def api_response(data, safe=True, status=200):
 
 
 def handle_api_error(exc):
-    return error_response(exc.detail, exc.status)
+    return JsonResponse({"detail": exc.detail, **({"code": exc.code} if exc.code else {})}, status=exc.status)
 

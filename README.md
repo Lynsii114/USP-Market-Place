@@ -22,6 +22,14 @@ usp-marketplace/
 
 ## Backend
 
+For local XAMPP development, start MySQL in XAMPP and run `npm run backend`
+from the repository root (or `backend.cmd`). This uses `usp_backend.xampp_settings`
+and the existing `usp_marketplace` database at `127.0.0.1:3306`.
+The default local MySQL user is `root` with no password; override it with
+`LOCAL_DB_USERNAME` and `LOCAL_DB_PASSWORD` in `backend/.env` if needed.
+The local API runs at `http://localhost:8000` and the frontend at
+`http://localhost:5173` using `npm run frontend`.
+
 ```powershell
 cd backend
 python -m venv venv

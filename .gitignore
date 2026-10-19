@@ -20,6 +20,7 @@ dist/
 
 *.pyc
 *.log
+/tmp/*.sql
 
 # Local database recovery artifacts
 usp_marketplace_recovered_*.sql

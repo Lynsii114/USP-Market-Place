@@ -23,7 +23,7 @@ class AccountModerationTests(TestCase):
         return self.client.post(f"/api/admin/students/{self.student.id}/suspend", {"reason": self.reason, "duration_hours": 24, **changes}, content_type="application/json")
 
     @patch("marketplace.services.send_email")
-    def test_suspension_persists_reason_expiry_and_notifies_student(self, send):
+    def test_suspension_persists_reason_expiry_and_emails_without_user_notification(self, send):
         start = timezone.now()
         response = self.suspend()
         self.assertEqual(response.status_code, 200, response.content)
@@ -38,7 +38,12 @@ class AccountModerationTests(TestCase):
         self.assertIn("24 hours", body)
         self.assertIn("Fiji time", body)
         self.assertEqual(recipient, self.student.email)
-        self.assertTrue(UserNotification.objects.filter(user_id=self.student.id, title="Account suspended").exists())
+        self.assertTrue(body.startswith("Dear student,\n\n"))
+        self.assertIn("temporarily suspended, effective immediately", body)
+        self.assertIn("request a review", body)
+        self.assertTrue(body.endswith("Kind regards,\nUSP Marketplace Administration Team"))
+        self.assertEqual(send.call_count, 1)
+        self.assertFalse(UserNotification.objects.filter(user_id=self.student.id).exists())
         self.assertTrue(AdminNotification.objects.filter(title="Account suspended").exists())
 
     @patch("marketplace.services.send_email")
@@ -55,6 +60,30 @@ class AccountModerationTests(TestCase):
         self.assertEqual(token_user(old_token).status, "active")
         verified = services.verify_authenticator({"user_id": self.student.id, "login_challenge": login["login_challenge"], "code": pyotp.TOTP(self.student.authenticator_secret).now()})
         self.assertIn("access_token", verified)
+
+    @patch("marketplace.services.send_email")
+    def test_suspension_rejects_live_session_and_login_with_expiry_message(self, send):
+        login = services.login_user({"username": "student", "password": "Password314!"})
+        student_client = Client(HTTP_AUTHORIZATION=f"Bearer {issue_token(self.student)}")
+        self.assertEqual(student_client.get("/api/users/session").status_code, 200)
+        self.suspend()
+        for path in ("/api/users/session", "/api/items", f"/api/users/{self.student.id}/notifications"):
+            response = student_client.get(path)
+            self.assertEqual(response.status_code, 403)
+            self.assertEqual(response.json()["code"], "account_suspended")
+            self.assertIn("Fiji time", response.json()["detail"])
+            self.assertIn("check your email", response.json()["detail"])
+        anonymous = Client()
+        for path, body in (
+            ("/api/users/login", {"username": "student", "password": "Password314!"}),
+            ("/api/users/verify-authenticator", {"user_id": self.student.id, "login_challenge": login["login_challenge"], "code": pyotp.TOTP(self.student.authenticator_secret).now()}),
+        ):
+            response = anonymous.post(path, body, content_type="application/json")
+            self.assertEqual(response.status_code, 403)
+            self.assertEqual(response.json()["code"], "account_suspended")
+        User.objects.filter(id=self.student.id).update(suspended_until=timezone.now() - timedelta(seconds=1))
+        self.assertEqual(student_client.get("/api/users/session").status_code, 200)
+        self.assertEqual(anonymous.get("/api/users/session").status_code, 401)
 
     @patch("marketplace.services.send_email")
     def test_expired_suspension_restores_access_on_authenticated_request(self, send):
@@ -118,7 +147,54 @@ class AccountModerationTests(TestCase):
         self.assertEqual(seller["suspension_reason"], self.reason)
 
     @patch("marketplace.services.send_email")
+    def test_suspended_seller_listings_are_hidden_and_checkout_is_blocked(self, send):
+        buyer = User.objects.create(username="buyer", email="buyer@example.com", password_hash="hash", verified=True)
+        item = Item.objects.create(name="Campus textbook", price=20, stock=3, seller_id=self.student.id, seller_username=self.student.username)
+        client = Client(HTTP_AUTHORIZATION=f"Bearer {issue_token(buyer)}")
+        self.assertEqual(client.get(f"/api/items/{item.id}").status_code, 200)
+        self.suspend()
+        for viewer in (Client(), client):
+            self.assertNotIn(item.id, [row["id"] for row in viewer.get("/api/items").json()])
+            self.assertEqual(viewer.get(f"/api/items/{item.id}").status_code, 404)
+            self.assertEqual(viewer.get(f"/api/users/{self.student.id}/items").json(), [])
+        self.assertEqual(client.post(f"/api/items/{item.id}/conversation", {}, content_type="application/json").status_code, 404)
+        checkout = {"checkout_id": "suspended-seller-cart", "payment_method": "cash", "delivery_method": "self_pickup", "items": [{"item_id": item.id, "quantity": 1}]}
+        self.assertEqual(client.post("/api/checkout", checkout, content_type="application/json").status_code, 404)
+        with self.assertRaises(ApiError) as error:
+            services.purchase_item(item.id, buyer.id)
+        self.assertEqual(error.exception.status, 404)
+        item.refresh_from_db()
+        self.assertEqual(item.stock, 3)
+        self.assertEqual(item.status, "available")
+        self.assertEqual(client.get("/api/users/session").status_code, 200)
+        self.assertIn(item.id, [row["id"] for row in self.client.get("/api/admin/listings").json()])
+
+    @patch("marketplace.services.send_email")
+    def test_reactivation_restores_public_listings_without_restoring_hidden_items(self, send):
+        item = Item.objects.create(name="Campus textbook", price=20, stock=3, seller_id=self.student.id, seller_username=self.student.username)
+        hidden = Item.objects.create(name="Moderated listing", price=20, stock=1, status="hidden", removed_reason="Under review", seller_id=self.student.id, seller_username=self.student.username)
+        self.suspend()
+        response = self.client.post(f"/api/admin/students/{self.student.id}/reactivate", {"reason": "The appeal was reviewed and approved."}, content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+        ids = [row["id"] for row in Client().get("/api/items").json()]
+        self.assertIn(item.id, ids)
+        self.assertNotIn(hidden.id, ids)
+        hidden.refresh_from_db()
+        self.assertEqual(hidden.status, "hidden")
+
+    @patch("marketplace.services.send_email")
+    def test_seller_listings_return_after_timed_suspension_expires(self, send):
+        item = Item.objects.create(name="Campus textbook", price=20, stock=3, seller_id=self.student.id, seller_username=self.student.username)
+        self.suspend()
+        User.objects.filter(id=self.student.id).update(suspended_until=timezone.now() - timedelta(seconds=1))
+        self.assertIn(item.id, [row["id"] for row in Client().get("/api/items").json()])
+        self.assertEqual(Client().get(f"/api/items/{item.id}").status_code, 200)
+        self.assertEqual(len(Client().get(f"/api/users/{self.student.id}/items").json()), 1)
+
+    @patch("marketplace.services.send_email")
     def test_delete_requires_reason_then_emails_deleted_account_address(self, send):
+        self.student.name = "Alex Kumar"
+        self.student.save(update_fields=["name"])
         path = f"/api/admin/students/{self.student.id}"
         self.assertEqual(self.client.delete(path, {}, content_type="application/json").status_code, 422)
         for reason in ("", "   ", "short", "x" * 501, None, ["not", "text"]):
@@ -127,13 +203,20 @@ class AccountModerationTests(TestCase):
         self.assertTrue(User.objects.filter(id=self.student.id).exists())
         send.assert_not_called()
         Item.objects.create(name="Student book", price=10, description="Book", category="Books", contact="Library", stock=1, seller_id=self.student.id, seller_username=self.student.username)
-        response = self.client.delete(path, {"reason": self.reason}, content_type="application/json")
+        with patch("marketplace.services.notify_user") as notify_user:
+            response = self.client.delete(path, {"reason": self.reason}, content_type="application/json")
+        notify_user.assert_not_called()
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(response.json()["email_status"], "sent")
         self.assertFalse(User.objects.filter(id=self.student.id).exists())
         self.assertFalse(Item.objects.filter(seller_id=self.student.id).exists())
         self.assertEqual(send.call_args.args[2], "student@example.com")
         self.assertIn(self.reason, send.call_args.args[1])
+        self.assertTrue(send.call_args.args[1].startswith("Dear Alex Kumar,\n\n"))
+        self.assertIn("permanently deleted", send.call_args.args[1])
+        self.assertTrue(send.call_args.args[1].endswith("Kind regards,\nUSP Marketplace Administration Team"))
+        self.assertEqual(send.call_count, 1)
+        self.assertFalse(UserNotification.objects.filter(user_id=self.student.id).exists())
         self.assertTrue(AdminNotification.objects.filter(title="Student account deleted", message__contains=self.reason).exists())
 
     @patch("marketplace.services.send_email", side_effect=RuntimeError("SMTP unavailable"))
@@ -143,6 +226,7 @@ class AccountModerationTests(TestCase):
         self.assertEqual(response.json()["email_status"], "failed")
         self.student.refresh_from_db()
         self.assertEqual(self.student.status, "suspended")
+        self.assertFalse(UserNotification.objects.filter(user_id=self.student.id).exists())
 
     @override_settings(EMAIL_PROVIDER="console", EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend")
     @patch("marketplace.services.send_email")
