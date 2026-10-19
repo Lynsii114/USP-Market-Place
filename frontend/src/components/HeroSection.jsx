@@ -1,6 +1,6 @@
 import React from "react";
 
-function HeroSection({ searchQuery, suggestions, onSearchChange, onSearchSubmit, onSuggestionSelect }) {
+function HeroSection({ searchQuery, suggestions, suggestionCount, onSearchChange, onSearchSubmit, onSuggestionSelect, onViewAllResults }) {
   return (
     <section className="hero" id="home">
       <h1>Buy and Sell With USP Students</h1>
@@ -19,13 +19,17 @@ function HeroSection({ searchQuery, suggestions, onSearchChange, onSearchSubmit,
       </form>
 
       {suggestions.length > 0 && (
-        <div className="search-suggestions">
+        <div className="search-suggestions" aria-label="Search suggestions">
+          <p className="search-suggestions-heading">Suggested listings</p>
           {suggestions.map((listing) => (
             <button type="button" key={listing.id} onClick={() => onSuggestionSelect(listing)}>
               <span>{listing.name}</span>
               <small>{listing.category}</small>
             </button>
           ))}
+          <button type="button" className="search-view-all" onClick={onViewAllResults}>
+            View all {suggestionCount} {suggestionCount === 1 ? "result" : "results"} in Shop <span aria-hidden="true">→</span>
+          </button>
         </div>
       )}
     </section>

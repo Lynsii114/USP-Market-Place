@@ -59,7 +59,7 @@ function PastPurchasesPage({
               </div>
               <div className="purchase-report-table-head">
                 <span>Item</span>
-                <span>Unit Cost</span>
+                <span>Order Total</span>
                 <span>Date &amp; Time</span>
               </div>
               {orderHistory.length ? (

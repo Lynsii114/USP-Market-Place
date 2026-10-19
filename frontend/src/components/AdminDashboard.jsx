@@ -1,8 +1,10 @@
+import Breadcrumbs from "./Breadcrumbs";
 import { apiFetch as fetch } from "../config/request";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReportsPanel from "./ReportsPanel";
+import NotificationsPage from "./NotificationsPage";
 
-const adminTabs = ["Dashboard", "Students", "Listings", "Orders", "Categories", "Reports", "Flags", "Reviews"];
+const adminTabs = ["Dashboard", "Students", "Listings", "Orders", "Categories", "Reports", "Flags", "Reviews", "Notifications"];
 
 function AdminDashboard({
   apiUrl,
@@ -15,6 +17,8 @@ function AdminDashboard({
   onLogin,
   onLogout,
   onMarketplace,
+  onOpenMessages,
+  unreadMessageCount = 0,
   showToast,
 }) {
   const [activeTab, setActiveTab] = useState("Dashboard");
@@ -30,7 +34,6 @@ function AdminDashboard({
   const [ratingReviews, setRatingReviews] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [notifications, setNotifications] = useState([]);
-  const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
   const [selectedNotification, setSelectedNotification] = useState(null);
   const [selectedAdminListing, setSelectedAdminListing] = useState(null);
   const [selectedStudent, setSelectedStudent] = useState(null);
@@ -514,13 +517,13 @@ function AdminDashboard({
         <section className="admin-access-panel">
           <img src={logo} alt="USP logo" />
           <h1>Admin Access Required</h1>
-          <p>Only active USP Buy & Sell administrators can open this dashboard.</p>
+          <p>Only active USP Marketplace administrators can open this dashboard.</p>
           <div className="admin-access-actions">
             <button type="button" className="auth-submit" onClick={onLogin}>
               Admin Login
             </button>
             <button type="button" className="secondary-button" onClick={onMarketplace}>
-              Back to USP Buy & Sell
+              Back to USP Marketplace
             </button>
           </div>
         </section>
@@ -534,7 +537,7 @@ function AdminDashboard({
         <div className="admin-brand">
           <img src={logo} alt="USP logo" />
           <div>
-            <strong>USP Buy & Sell</strong>
+            <strong>USP Marketplace</strong>
             <span>Administrator</span>
           </div>
         </div>
@@ -556,6 +559,7 @@ function AdminDashboard({
       </aside>
 
       <section className="admin-content">
+        <Breadcrumbs items={[{ label: "Home", onClick: onMarketplace }, { label: "Administration", onClick: () => setActiveTab("Dashboard") }, { label: activeTab }]} />
         <div className="admin-topbar">
           <button
             type="button"
@@ -567,80 +571,27 @@ function AdminDashboard({
             <span aria-hidden="true">‹</span>
           </button>
           <div className="admin-page-title">
-            {activeTab !== "Categories" && <h1>{activeTab}</h1>}
+            {activeTab !== "Categories" && activeTab !== "Notifications" && <h1>{activeTab}</h1>}
           </div>
           <div className="admin-topbar-actions">
-            <div className="notification-popover-anchor">
-              <button
-                type="button"
-                className="icon-nav-button notification-icon-button"
-                onClick={() => setIsNotificationPanelOpen((isOpen) => !isOpen)}
-                aria-label="Notifications"
-                aria-expanded={isNotificationPanelOpen}
-              >
-                <span aria-hidden="true">&#128276;</span>
-                {unreadNotifications.length > 0 && <span className="notification-count">{unreadNotifications.length}</span>}
-              </button>
-              {isNotificationPanelOpen && (
-                <div className="notification-center-modal">
-                  <div className="notification-center-header">
-                    <div>
-                      <h3>Notifications</h3>
-                    </div>
-                    <button
-                      type="button"
-                      className="close-button"
-                      onClick={() => setIsNotificationPanelOpen(false)}
-                      aria-label="Close notifications"
-                    >
-                      x
-                    </button>
-                  </div>
-                  <div className="notification-center-summary">
-                    <span>{notifications.length} total</span>
-                    <span>{unreadNotifications.length} unread</span>
-                  </div>
-                  <div className="notification-center-list">
-                    {notifications.length ? (
-                      notifications.map((notification) => (
-                        <div className={notification.is_read ? "notification-row viewed" : "notification-row unread"} key={notification.id}>
-                          <button
-                            type="button"
-                            className="notification-item"
-                            onClick={() => {
-                              setIsNotificationPanelOpen(false);
-                              openNotification(notification);
-                            }}
-                          >
-                            <span>{notification.title}</span>
-                            <small>{notification.is_read ? "Viewed" : "New"}</small>
-                            <p>{notification.message}</p>
-                            <time dateTime={notification.created_at}>{formatDate(notification.created_at)}</time>
-                          </button>
-                          <button
-                            type="button"
-                            className="notification-remove-button"
-                            onClick={() => removeNotification(notification.id)}
-                            aria-label="Remove notification"
-                          >
-                            x
-                          </button>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="empty-state">No admin notifications yet.</p>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
+            <button type="button" className="secondary-button" onClick={onOpenMessages}>
+              Messages{unreadMessageCount > 0 ? ` (${unreadMessageCount} unread)` : ""}
+            </button>
+            <button type="button" className={activeTab === "Notifications" ? "icon-nav-button notification-icon-button active" : "icon-nav-button notification-icon-button"} onClick={() => setActiveTab("Notifications")} aria-label="Notifications" aria-current={activeTab === "Notifications" ? "page" : undefined}>
+              <span aria-hidden="true">&#128276;</span>
+              {unreadNotifications.length > 0 && <span className="notification-count">{unreadNotifications.length}</span>}
+            </button>
             <button type="button" className="secondary-button" onClick={onMarketplace}>
-              USP Buy & Sell
+              USP Marketplace
             </button>
           </div>
         </div>
 
         {isLoading && <p className="admin-loading">Loading admin data...</p>}
+
+        {activeTab === "Notifications" && (
+          <NotificationsPage notifications={notifications} onBack={() => setActiveTab("Dashboard")} onOpen={openNotification} onRemove={removeNotification} />
+        )}
 
         {activeTab === "Dashboard" && (
           <>

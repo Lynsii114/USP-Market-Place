@@ -1,6 +1,6 @@
 import React from "react";
 
-function Footer({ logo, onLegalNavigate }) {
+function Footer({ logo, onLegalNavigate, onHelp }) {
   const handleLegalClick = (event, page) => {
     event.preventDefault();
     onLegalNavigate(page);
@@ -10,7 +10,7 @@ function Footer({ logo, onLegalNavigate }) {
     <footer className="footer">
       <div className="footer-container">
         <div className="footer-brand">
-          <h2>USP Buy & Sell</h2>
+          <h2>USP Marketplace</h2>
           <p>
             Buy and sell safely within the
             <br />
@@ -27,10 +27,12 @@ function Footer({ logo, onLegalNavigate }) {
 
         <div className="footer-copyright">
           <img src={logo} alt="USP logo" className="footer-logo" />
-          <p>&copy; 2026 USP Buy & Sell. All rights reserved.</p>
+          <p>&copy; 2026 USP Marketplace. All rights reserved.</p>
         </div>
 
         <div className="footer-legal">
+          <a href="/help" onClick={(event) => { event.preventDefault(); onHelp(); }}>Help & FAQs</a>
+          <span>|</span>
           <a href="/privacy" onClick={(event) => handleLegalClick(event, "privacy")}>
             Privacy Policy
           </a>

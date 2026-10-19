@@ -12,7 +12,10 @@ import HeroSection from "./components/HeroSection";
 import InfoSection from "./components/InfoSection";
 import ListingsSection from "./components/ListingsSection";
 import LegalPage from "./components/LegalPage";
+import HelpPage from "./components/HelpPage";
+import Breadcrumbs from "./components/Breadcrumbs";
 import Navbar from "./components/Navbar";
+import NotificationsPage from "./components/NotificationsPage";
 import PastPurchasesPage from "./components/PastPurchasesPage";
 import ProductCard from "./components/ProductCard";
 import ProductModal from "./components/ProductModal";
@@ -102,6 +105,9 @@ function Home() {
   const [purchaseHistory, setPurchaseHistory] = useState([]);
   const [sellerOrders, setSellerOrders] = useState([]);
   const [activeLegalPage, setActiveLegalPage] = useState(null);
+  const [showHelp, setShowHelp] = useState(() => window.location.pathname === "/help");
+  const [helpTopic, setHelpTopic] = useState(() => window.location.hash.slice(1));
+  const helpReturnRoute = useRef(null);
   const [activeAccountPage, setActiveAccountPage] = useState(null);
   const [activeSalesView, setActiveSalesView] = useState("active");
   const [conversations, setConversations] = useState([]);
@@ -121,7 +127,12 @@ function Home() {
   useEffect(() => {
     const applyRouteState = (state = window.history.state || {}) => {
       const pathname = window.location.pathname;
-      const view = state.view || (pathname.startsWith("/admin") ? "admin" : "home");
+      const view = pathname === "/help" ? "help" : state.view || (pathname.startsWith("/admin") ? "admin" : "home");
+      setShowHelp(view === "help");
+      if (view === "help") {
+        setHelpTopic(state.topic || window.location.hash.slice(1));
+        return;
+      }
 
       setShowAdminDashboard(view === "admin");
       setShowSellerPanel(view === "seller");
@@ -139,7 +150,7 @@ function Home() {
     };
 
     if (!window.history.state) {
-      window.history.replaceState({ view: window.location.pathname.startsWith("/admin") ? "admin" : "home" }, "", window.location.pathname);
+      window.history.replaceState({ view: window.location.pathname === "/help" ? "help" : window.location.pathname.startsWith("/admin") ? "admin" : "home" }, "", window.location.pathname + window.location.hash);
     }
 
     const handleRouteChange = () => {
@@ -672,6 +683,53 @@ function Home() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const openHelp = (topic = "") => {
+    if (!showHelp) {
+      helpReturnRoute.current = { state: window.history.state, url: window.location.pathname + window.location.hash };
+      window.history.pushState({ view: "help", topic }, "", `/help${topic ? `#${topic}` : ""}`);
+    }
+    setActiveLegalPage(null);
+    setHelpTopic(topic);
+    setShowHelp(true);
+    window.scrollTo({ top: 0 });
+  };
+
+  const closeHelp = () => {
+    setShowHelp(false);
+    if (helpReturnRoute.current) {
+      window.history.back();
+    } else {
+      window.history.replaceState({ view: "home" }, "", "/");
+    }
+  };
+
+  function openLegalFromHelp(page) {
+    setShowHelp(false);
+    setShowAdminDashboard(false);
+    setShowSellerPanel(false);
+    setShowShopPage(false);
+    setShowCartPanel(false);
+    setShowPurchasesPage(false);
+    setActiveCategoryPage(null);
+    setActiveAccountPage(null);
+    window.history.replaceState({ view: "legal", page }, "", `/${page}`);
+    setActiveLegalPage(page);
+    window.scrollTo({ top: 0 });
+  }
+
+  if (!currentUser && activeLegalPage) {
+    return <div className="home-page"><LegalPage page={activeLegalPage} onBack={() => { setActiveLegalPage(null); openHelp(); }} /><Footer logo={logo} onLegalNavigate={openLegalFromHelp} onHelp={() => { setActiveLegalPage(null); openHelp(); }} /></div>;
+  }
+
+  if (showHelp) {
+    return (
+      <div className="home-page">
+        <HelpPage key={helpTopic} topic={helpTopic} onBack={closeHelp} signedIn={Boolean(currentUser)} />
+        <Footer logo={logo} onLegalNavigate={openLegalFromHelp} onHelp={() => openHelp()} />
+      </div>
+    );
+  }
+
   if (!currentUser && !showAdminDashboard) {
     return (
       <AuthModal
@@ -682,6 +740,7 @@ function Home() {
         isSubmitting={isSubmitting}
         verificationEmail={verificationEmail}
         resendSecondsRemaining={resendSecondsRemaining}
+        onOpenHelp={openHelp}
         onClose={resetAuth}
         onSubmit={handleAuthSubmit}
         onFieldChange={handleAuthFieldChange}
@@ -1103,24 +1162,33 @@ function Home() {
   const selectedSellerListings = selectedSeller
     ? listings.filter((listing) => listing.seller_id === selectedSeller.id)
     : [];
-  const searchSuggestions = normalizedSearch
+  const matchingSuggestions = normalizedSearch
     ? listings
         .filter(
           (listing) =>
             listing.name.toLowerCase().includes(normalizedSearch) ||
-            listing.category.toLowerCase().includes(normalizedSearch)
+            listing.category.toLowerCase().includes(normalizedSearch) ||
+            listing.description.toLowerCase().includes(normalizedSearch) ||
+            listing.seller_username.toLowerCase().includes(normalizedSearch)
         )
-        .slice(0, 5)
     : [];
+  const searchSuggestions = matchingSuggestions.slice(0, 4);
   const cartTotal = cartItems.reduce((total, item) => total + Number(item.price) * Number(item.quantity || 1), 0);
   const cartQuantityCount = cartItems.reduce((total, item) => total + Number(item.quantity || 1), 0);
 
-  const handleSearchSubmit = (event) => {
-    event.preventDefault();
+  const openSearchResults = () => {
     hideActivePages();
+    setSelectedCategory("All");
+    setMinimumPrice("");
+    setMaximumPrice("");
     setShowShopPage(true);
     pushViewState({ view: "shop" });
     window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const handleSearchSubmit = (event) => {
+    event.preventDefault();
+    openSearchResults();
   };
 
   const chooseCategory = (categoryName) => {
@@ -1280,7 +1348,7 @@ function Home() {
     cash: "Cash",
   };
 
-  const checkoutCart = async (paymentMethod, checkoutSummary = {}, paymentDetails = {}, forceFailure = false) => {
+  const checkoutCart = async (paymentMethod, checkoutSummary = {}, paymentDetails = {}, forceFailure = false, checkoutId) => {
     if (!currentUser) {
       showToast("Please login to purchase items.", "error");
       openAuth("login");
@@ -1317,6 +1385,7 @@ function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           payment_method: paymentMethod,
+          checkout_id: checkoutId,
           delivery_method: deliveryMethod,
           payment_details: paymentDetails,
           simulate_failure: forceFailure,
@@ -1693,10 +1762,7 @@ function Home() {
 
   const handleSuggestionSelect = (listing) => {
     setSearchQuery(listing.name);
-    hideActivePages();
-    setShowShopPage(true);
-    pushViewState({ view: "shop" });
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    openSearchResults();
   };
 
   const clearFilters = () => {
@@ -1730,6 +1796,13 @@ function Home() {
       setActiveSalesView(salesView);
       loadSellerOrders(currentUser.id);
       loadSellerListings(currentUser.id);
+    }
+    if (page === "messages") {
+      loadConversations(currentUser.id);
+      loadUnreadMessageCount(currentUser.id);
+    }
+    if (page === "notifications") {
+      loadUserNotifications(currentUser.id);
     }
 
     setShowAdminDashboard(false);
@@ -1774,6 +1847,21 @@ function Home() {
     }
   };
 
+  const breadcrumbItems = [{ label: "Home", onClick: openMarketplace }];
+  if (activeCategoryPage) breadcrumbItems.push({ label: "Shop", onClick: handleBrowse }, { label: activeCategoryPage });
+  else if (showShopPage) breadcrumbItems.push({ label: "Shop" });
+  else if (showCartPanel) breadcrumbItems.push({ label: "Cart" });
+  else if (showPurchasesPage) breadcrumbItems.push({ label: "My Activity" }, { label: "My Purchases" });
+  else if (showSellerPanel) {
+    if (activeSellerTab === "my-listings") breadcrumbItems.push({ label: "My Activity" }, { label: "My Listings" });
+    else breadcrumbItems.push({ label: editingListingId ? "Edit Listing" : "Sell Item" });
+  } else if (activeAccountPage) {
+    if (activeAccountPage === "sales") breadcrumbItems.push({ label: "My Activity" }, { label: "My Sales" });
+    else if (activeAccountPage === "messages") breadcrumbItems.push({ label: "Messages" });
+    else if (activeAccountPage === "notifications") breadcrumbItems.push({ label: "Notifications" });
+    else breadcrumbItems.push({ label: "Account" }, { label: activeAccountPage === "profile" ? "My Profile" : "Settings" });
+  } else if (activeLegalPage) breadcrumbItems.push({ label: activeLegalPage === "privacy" ? "Privacy Policy" : "Terms of Use" });
+
   const activeNavPage = showCartPanel
     ? "cart"
     : showPurchasesPage || (showSellerPanel && activeSellerTab === "my-listings") || activeAccountPage === "sales"
@@ -1782,6 +1870,8 @@ function Home() {
         ? "sell"
         : activeAccountPage === "messages"
           ? "messages"
+          : activeAccountPage === "notifications"
+            ? "notifications"
           : activeAccountPage
             ? "account"
             : activeCategoryPage
@@ -1803,7 +1893,8 @@ function Home() {
             isSubmitting={isSubmitting}
             verificationEmail={verificationEmail}
             resendSecondsRemaining={resendSecondsRemaining}
-            onClose={resetAuth}
+            onOpenHelp={openHelp}
+        onClose={resetAuth}
             onSubmit={handleAuthSubmit}
             onFieldChange={handleAuthFieldChange}
             onResendVerification={resendVerification}
@@ -1820,12 +1911,15 @@ function Home() {
             onLogin={() => openAuth("login")}
             onLogout={handleLogout}
             onMarketplace={openMarketplace}
+            onOpenMessages={() => openAccountPage("messages")}
+            unreadMessageCount={unreadMessageCount}
             showToast={showToast}
           />
         </>
       ) : (
         <>
       <Navbar
+        onOpenHelp={() => openHelp()}
         logo={logo}
         currentUser={currentUser}
         cartCount={cartQuantityCount}
@@ -1840,10 +1934,9 @@ function Home() {
         onOpenAccountPage={openAccountPage}
         onOpenAuth={openAuth}
         onLogout={handleLogout}
-        onNotificationView={openUserNotification}
-        onNotificationRemove={removeUserNotification}
       />
 
+      <Breadcrumbs items={breadcrumbItems} />
       <Toast message={toastMessage} type={toastType} />
 
       <AuthModal
@@ -1854,6 +1947,7 @@ function Home() {
         isSubmitting={isSubmitting}
         verificationEmail={verificationEmail}
         resendSecondsRemaining={resendSecondsRemaining}
+        onOpenHelp={openHelp}
         onClose={resetAuth}
         onSubmit={handleAuthSubmit}
         onFieldChange={handleAuthFieldChange}
@@ -1872,6 +1966,7 @@ function Home() {
 
       {showCartPanel && (
         <CartPage
+          onOpenHelp={openHelp}
           cartItems={cartItems}
           cartTotal={cartTotal}
           currentUser={currentUser}
@@ -1900,7 +1995,7 @@ function Home() {
       )}
 
       <AccountPage
-        page={activeAccountPage}
+        page={activeAccountPage === "notifications" ? null : activeAccountPage}
         currentUser={currentUser}
         myListings={myListings}
         purchaseHistory={purchaseHistory}
@@ -1913,8 +2008,23 @@ function Home() {
         onViewConversationListing={(listing) => listing && setSelectedListing(listing)}
         onMessageDraftChange={setMessageDraft}
         onSendMessage={sendConversationMessage}
-        onBack={hideActivePages}
+        onBack={() => {
+          hideActivePages();
+          if (currentUser?.role === "admin" && activeAccountPage === "messages") {
+            setShowAdminDashboard(true);
+            pushViewState({ view: "admin" }, "/admin/dashboard");
+          }
+        }}
       />
+
+      {activeAccountPage === "notifications" && (
+        <NotificationsPage
+          notifications={userNotifications}
+          onBack={hideActivePages}
+          onOpen={openUserNotification}
+          onRemove={removeUserNotification}
+        />
+      )}
 
       <LegalPage page={activeLegalPage} onBack={hideActivePages} />
 
@@ -1940,6 +2050,7 @@ function Home() {
 
       {showSellerPanel && !showShopPage && !activeCategoryPage && !showCartPanel && !showPurchasesPage && !activeLegalPage && !activeAccountPage && (
         <SellerPanel
+          onOpenHelp={openHelp}
           isProcessingPhoto={isProcessingPhoto}
           activeSellerTab={activeSellerTab}
           categories={marketplaceCategories}
@@ -1980,8 +2091,10 @@ function Home() {
           <HeroSection
             searchQuery={searchQuery}
             suggestions={searchSuggestions}
+            suggestionCount={matchingSuggestions.length}
             onSearchChange={setSearchQuery}
             onSearchSubmit={handleSearchSubmit}
+            onViewAllResults={openSearchResults}
             onSuggestionSelect={handleSuggestionSelect}
           />
 
@@ -2152,7 +2265,7 @@ function Home() {
         </div>
       )}
 
-      <Footer logo={logo} onLegalNavigate={openLegalPage} />
+      <Footer logo={logo} onLegalNavigate={openLegalPage} onHelp={() => openHelp()} />
         </>
       )}
     </div>

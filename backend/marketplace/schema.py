@@ -134,6 +134,17 @@ def ensure_item_quantity_field():
             Item.objects.filter(pk=item.id).update(multiple_units=True)
 
 
+def ensure_purchase_checkout_id_field():
+    if "purchases" not in connection.introspection.table_names():
+        return
+    with connection.cursor() as cursor:
+        columns = {column.name for column in connection.introspection.get_table_description(cursor, "purchases")}
+    if "checkout_id" in columns:
+        return
+    with connection.schema_editor() as editor:
+        editor.add_field(Purchase, Purchase._meta.get_field("checkout_id"))
+
+
 def ensure_schema():
     models = [User, EmailVerification, PasswordReset, PendingRegistration, Item, Category, Purchase, AdminNotification, UserNotification, Conversation, Message, UserReport, RatingReview]
 
@@ -149,6 +160,7 @@ def ensure_schema():
             return
 
     ensure_item_quantity_field()
+    ensure_purchase_checkout_id_field()
 
     # Local demo/test databases are created directly from the current models;
     # the following legacy ALTER/UPDATE statements are specifically MySQL SQL.

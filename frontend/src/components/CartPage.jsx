@@ -1,7 +1,20 @@
+import ContextHelp from "./ContextHelp";
 import { availableStock } from "../utils/inventory.mjs";
 import React, { useRef, useState } from "react";
 
+const formatCardNumber = (value) =>
+  value.replace(/\D/g, "").slice(0, 16).replace(/(\d{4})(?=\d)/g, "$1 ");
+
+const formatCardExpiry = (value) => {
+  const digits = value.replace(/\D/g, "").slice(0, 4);
+  if (digits.length > 2) {
+    return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  }
+  return digits.length === 2 ? `${digits}/` : digits;
+};
+
 function CartPage({
+  onOpenHelp,
   cartItems,
   cartTotal,
   currentUser,
@@ -21,6 +34,7 @@ function CartPage({
   const [forceFailure, setForceFailure] = useState(false);
   const [paymentError, setPaymentError] = useState("");
   const checkoutInProgress = useRef(false);
+  const checkoutId = useRef(null);
   const deliveryOptions = [
     { value: "self_pickup", label: "Self Pickup", detail: "FREE", fee: 0 },
     { value: "delivery", label: "Delivery", detail: "Delivery fee applies", fee: 5 },
@@ -65,7 +79,10 @@ function CartPage({
   const paymentDetailsComplete =
     paymentMethod === "cash" ||
     (paymentMethod === "visa"
-      ? paymentDetails.cardholder_name && paymentDetails.card_number && paymentDetails.expiry && paymentDetails.security_code
+      ? paymentDetails.cardholder_name?.trim() &&
+        paymentDetails.card_number?.replace(/\D/g, "").length === 16 &&
+        /^\d{2}\/\d{2}$/.test(paymentDetails.expiry || "") &&
+        /^\d{3}$/.test(paymentDetails.security_code || "")
       : paymentDetails.phone_number && paymentDetails.authorization_code);
   const handleCheckout = async () => {
     if (checkoutInProgress.current || isSubmitting) {
@@ -78,7 +95,9 @@ function CartPage({
     checkoutInProgress.current = true;
     setPaymentError("");
     try {
-      await onCheckout(paymentMethod, checkoutSummary, paymentDetails, forceFailure);
+      checkoutId.current = checkoutId.current || window.crypto.randomUUID();
+      await onCheckout(paymentMethod, checkoutSummary, paymentDetails, forceFailure, checkoutId.current);
+      checkoutId.current = null;
     } catch (error) {
       setPaymentError(error instanceof Error ? error.message : "Unable to process simulated payment");
     } finally {
@@ -177,6 +196,7 @@ function CartPage({
             disabled={isSubmitting}
             onClick={() => {
               setCheckoutStep("cart");
+              checkoutId.current = null;
               setDeliveryMethod("");
               setPaymentMethod("");
               setPaymentDetails({});
@@ -239,7 +259,9 @@ function CartPage({
                     value={option.value}
                     checked={deliveryMethod === option.value}
                     disabled={isSubmitting}
-                    onChange={(event) => setDeliveryMethod(event.target.value)}
+                    onChange={(event) => {
+                      setDeliveryMethod(event.target.value);
+                    }}
                   />
                   <span>
                     <strong>{option.label}</strong>
@@ -263,7 +285,7 @@ function CartPage({
           </div>
 
           <div className="payment-method-panel">
-            <span>Payment Method</span>
+            <div className="field-label-row"><span>Payment Method</span><ContextHelp label="Help with payment methods" topic="payments" onOpenHelp={onOpenHelp}>Pay cash to the seller at pickup or delivery. M-PAiSA, MyCash and card payments are demonstrations and do not transfer real money.</ContextHelp></div>
             <div className="payment-method-options">
               {paymentOptions.map((option) => (
                 <label className={paymentMethod === option.value ? "payment-option selected" : "payment-option"} key={option.value}>
@@ -311,10 +333,14 @@ function CartPage({
                     inputMode="numeric"
                     autoComplete="off"
                     placeholder="4242 4242 4242 4242"
+                    maxLength={19}
                     value={paymentDetails.card_number || ""}
                     disabled={isSubmitting}
                     onChange={(event) => {
-                      setPaymentDetails((details) => ({ ...details, card_number: event.target.value }));
+                      setPaymentDetails((details) => ({
+                        ...details,
+                        card_number: formatCardNumber(event.target.value),
+                      }));
                       setPaymentError("");
                     }}
                   />
@@ -327,10 +353,14 @@ function CartPage({
                       inputMode="numeric"
                       autoComplete="off"
                       placeholder="12/30"
+                      maxLength={5}
                       value={paymentDetails.expiry || ""}
                       disabled={isSubmitting}
                       onChange={(event) => {
-                        setPaymentDetails((details) => ({ ...details, expiry: event.target.value }));
+                        setPaymentDetails((details) => ({
+                          ...details,
+                          expiry: formatCardExpiry(event.target.value),
+                        }));
                         setPaymentError("");
                       }}
                     />
@@ -345,7 +375,10 @@ function CartPage({
                       value={paymentDetails.security_code || ""}
                       disabled={isSubmitting}
                       onChange={(event) => {
-                        setPaymentDetails((details) => ({ ...details, security_code: event.target.value }));
+                        setPaymentDetails((details) => ({
+                          ...details,
+                          security_code: event.target.value.replace(/\D/g, "").slice(0, 3),
+                        }));
                         setPaymentError("");
                       }}
                     />
@@ -423,7 +456,15 @@ function CartPage({
           )}
           {paymentError && <p className="auth-message" role="alert">{paymentError}</p>}
           <div className="checkout-actions">
-            <button type="button" className="secondary-button" onClick={() => setCheckoutStep("cart")} disabled={isSubmitting}>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                checkoutId.current = null;
+                setCheckoutStep("cart");
+              }}
+              disabled={isSubmitting}
+            >
               Back to Cart
             </button>
             <button type="button" className="auth-submit" onClick={handleCheckout} disabled={isSubmitting || unavailableItems.length > 0 || !deliveryMethod || !paymentMethod || !paymentDetailsComplete}>
