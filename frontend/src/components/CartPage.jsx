@@ -2,6 +2,17 @@ import ContextHelp from "./ContextHelp";
 import { availableStock } from "../utils/inventory.mjs";
 import React, { useRef, useState } from "react";
 
+const formatCardNumber = (value) =>
+  value.replace(/\D/g, "").slice(0, 16).replace(/(\d{4})(?=\d)/g, "$1 ");
+
+const formatCardExpiry = (value) => {
+  const digits = value.replace(/\D/g, "").slice(0, 4);
+  if (digits.length > 2) {
+    return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  }
+  return digits.length === 2 ? `${digits}/` : digits;
+};
+
 function CartPage({
   onOpenHelp,
   cartItems,
@@ -67,7 +78,10 @@ function CartPage({
   const paymentDetailsComplete =
     paymentMethod === "cash" ||
     (paymentMethod === "visa"
-      ? paymentDetails.cardholder_name && paymentDetails.card_number && paymentDetails.expiry && paymentDetails.security_code
+      ? paymentDetails.cardholder_name?.trim() &&
+        paymentDetails.card_number?.replace(/\D/g, "").length === 16 &&
+        /^\d{2}\/\d{2}$/.test(paymentDetails.expiry || "") &&
+        /^\d{3}$/.test(paymentDetails.security_code || "")
       : paymentDetails.phone_number && paymentDetails.authorization_code);
   const handleCheckout = async () => {
     if (checkoutInProgress.current || isSubmitting) {
@@ -313,10 +327,14 @@ function CartPage({
                     inputMode="numeric"
                     autoComplete="off"
                     placeholder="4242 4242 4242 4242"
+                    maxLength={19}
                     value={paymentDetails.card_number || ""}
                     disabled={isSubmitting}
                     onChange={(event) => {
-                      setPaymentDetails((details) => ({ ...details, card_number: event.target.value }));
+                      setPaymentDetails((details) => ({
+                        ...details,
+                        card_number: formatCardNumber(event.target.value),
+                      }));
                       setPaymentError("");
                     }}
                   />
@@ -329,10 +347,14 @@ function CartPage({
                       inputMode="numeric"
                       autoComplete="off"
                       placeholder="12/30"
+                      maxLength={5}
                       value={paymentDetails.expiry || ""}
                       disabled={isSubmitting}
                       onChange={(event) => {
-                        setPaymentDetails((details) => ({ ...details, expiry: event.target.value }));
+                        setPaymentDetails((details) => ({
+                          ...details,
+                          expiry: formatCardExpiry(event.target.value),
+                        }));
                         setPaymentError("");
                       }}
                     />
@@ -347,7 +369,10 @@ function CartPage({
                       value={paymentDetails.security_code || ""}
                       disabled={isSubmitting}
                       onChange={(event) => {
-                        setPaymentDetails((details) => ({ ...details, security_code: event.target.value }));
+                        setPaymentDetails((details) => ({
+                          ...details,
+                          security_code: event.target.value.replace(/\D/g, "").slice(0, 3),
+                        }));
                         setPaymentError("");
                       }}
                     />
