@@ -29,6 +29,13 @@ function AdminDashboard({
   initialListing = null,
 }) {
   const [activeTab, setActiveTab] = useState(initialListing ? "Listings" : "Dashboard");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const sidebarToggleRef = useRef(null);
+
+  const closeSidebar = () => {
+    setSidebarOpen(false);
+    sidebarToggleRef.current?.focus();
+  };
   const [dashboard, setDashboard] = useState(null);
   const [students, setStudents] = useState([]);
   const [listings, setListings] = useState([]);
@@ -562,8 +569,12 @@ function AdminDashboard({
   }
 
   return (
-    <main className="admin-shell">
-      <aside className="admin-sidebar">
+    <main className={`admin-shell${sidebarOpen ? " admin-menu-open" : ""}`} onKeyDown={(event) => {
+      if (event.key === "Escape" && sidebarOpen) closeSidebar();
+    }}>
+      {sidebarOpen && <button type="button" className="admin-sidebar-backdrop" onClick={closeSidebar} aria-label="Close admin menu" />}
+      <aside className="admin-sidebar" id="admin-navigation-sidebar">
+        <button type="button" className="admin-sidebar-close" onClick={closeSidebar}>Close menu <span aria-hidden="true">✕</span></button>
         <div className="admin-brand">
           <img src={logo} alt="USP logo" />
           <div>
@@ -577,7 +588,7 @@ function AdminDashboard({
               type="button"
               className={activeTab === tab ? "active" : ""}
               key={tab}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => { setActiveTab(tab); closeSidebar(); }}
             >
               {tab}
             </button>
@@ -591,6 +602,9 @@ function AdminDashboard({
       <section className="admin-content">
         <Breadcrumbs items={[{ label: "Home", onClick: onMarketplace }, { label: "Administration", onClick: () => setActiveTab("Dashboard") }, { label: activeTab }]} />
         <div className="admin-topbar">
+          <button type="button" className="secondary-button admin-menu-toggle" ref={sidebarToggleRef}
+            aria-expanded={sidebarOpen} aria-controls="admin-navigation-sidebar"
+            onClick={() => setSidebarOpen((open) => !open)}><span aria-hidden="true">☰</span> Menu</button>
           <button
             type="button"
             className="admin-back-button"

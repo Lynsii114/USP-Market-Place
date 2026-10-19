@@ -8,21 +8,25 @@ function HeroSection({ searchQuery, suggestions, suggestionCount, onSearchChange
       <p>A simple marketplace for USP students to buy and sell items within the university community.</p>
 
       <form className="search-bar" onSubmit={onSearchSubmit}>
-        <SearchInput id="marketplace-search" value={searchQuery} onChange={onSearchChange} label="Search listings" placeholder="Item, category, seller or listing ID" />
+        <SearchInput id="marketplace-search" value={searchQuery} onChange={onSearchChange} label="Search listings" placeholder="Search listings" />
         <button type="submit">Search</button>
       </form>
 
       {suggestions.length > 0 && (
         <div className="search-suggestions" aria-label="Search suggestions">
           <p className="search-suggestions-heading">Suggested listings</p>
-          {suggestions.map((listing) => (
-            <button type="button" key={listing.id} onClick={() => onSuggestionSelect(listing)}>
-              <span>{listing.name}</span>
-              <small>{listing.category}</small>
-            </button>
-          ))}
-          <button type="button" className="search-view-all" onClick={onViewAllResults}>
-            View all {suggestionCount} {suggestionCount === 1 ? "result" : "results"} in Shop <span aria-hidden="true">→</span>
+          <div className="search-suggestion-list">
+            {suggestions.map((listing) => (
+              <button type="button" className="search-suggestion-item" key={listing.id} onClick={() => onSuggestionSelect(listing)}>
+                <span className="search-suggestion-name">{listing.name}</span>
+                <small>{listing.category}</small>
+              </button>
+            ))}
+          </div>
+          <button type="button" className="search-view-all" onClick={onViewAllResults}
+            aria-label={`View all ${suggestionCount} ${suggestionCount === 1 ? "result" : "results"} in Shop`}>
+            <span>View all {suggestionCount} {suggestionCount === 1 ? "result" : "results"}</span>
+            <span aria-hidden="true">→</span>
           </button>
         </div>
       )}
