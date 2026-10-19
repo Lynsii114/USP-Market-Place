@@ -7,6 +7,7 @@ import AuthModal from "./components/AuthModal";
 import CartPage from "./components/CartPage";
 import CategoriesSection from "./components/CategoriesSection";
 import CategoryPage from "./components/CategoryPage";
+import DashboardPage from "./components/DashboardPage";
 import Footer from "./components/Footer";
 import HeroSection from "./components/HeroSection";
 import InfoSection from "./components/InfoSection";
@@ -61,6 +62,8 @@ function Home() {
   const [resendAvailableAt, setResendAvailableAt] = useState(0);
   const [resendSecondsRemaining, setResendSecondsRemaining] = useState(0);
   const [authenticatorUserId, setAuthenticatorUserId] = useState(null);
+  const [pendingAuthenticatorUser, setPendingAuthenticatorUser] = useState(null);
+  const [pendingAuthenticatorAccessToken, setPendingAuthenticatorAccessToken] = useState("");
   const [loginChallenge, setLoginChallenge] = useState("");
   const [authenticatorSecret, setAuthenticatorSecret] = useState("");
   const [authenticatorUri, setAuthenticatorUri] = useState("");
@@ -104,6 +107,7 @@ function Home() {
   const [checkoutReviewForm, setCheckoutReviewForm] = useState({ rating: "5", review: "" });
   const [purchaseHistory, setPurchaseHistory] = useState([]);
   const [sellerOrders, setSellerOrders] = useState([]);
+  const [isLoadingUserActivity, setIsLoadingUserActivity] = useState(false);
   const [activeLegalPage, setActiveLegalPage] = useState(null);
   const [showHelp, setShowHelp] = useState(() => window.location.pathname === "/help");
   const [helpTopic, setHelpTopic] = useState(() => window.location.hash.slice(1));
@@ -163,14 +167,20 @@ function Home() {
 
   useEffect(() => {
     if (currentUser) {
-      loadListings();
-      loadSellerListings(currentUser.id);
-      loadPurchaseHistory(currentUser.id);
-      loadSellerOrders(currentUser.id);
-      loadConversations(currentUser.id);
-      loadUnreadMessageCount(currentUser.id);
-      loadUserNotifications(currentUser.id, { silent: true });
+      setIsLoadingUserActivity(true);
+      Promise.all([
+        loadListings(),
+        loadSellerListings(currentUser.id),
+        loadPurchaseHistory(currentUser.id),
+        loadSellerOrders(currentUser.id),
+        loadConversations(currentUser.id),
+        loadUnreadMessageCount(currentUser.id),
+        loadUserNotifications(currentUser.id, { silent: true }),
+      ]).finally(() => {
+        setIsLoadingUserActivity(false);
+      });
     } else {
+      setIsLoadingUserActivity(false);
       setSellerListings([]);
       setPurchaseHistory([]);
       setSellerOrders([]);
@@ -354,6 +364,9 @@ function Home() {
     setFormMessage("");
     setEmailError("");
     setAuthenticatorUserId(null);
+    setPendingAuthenticatorUser(null);
+    setPendingAuthenticatorAccessToken("");
+    setLoginChallenge("");
     setAuthenticatorSecret("");
     setAuthenticatorUri("");
     setAuthenticatorQr("");
@@ -398,6 +411,10 @@ function Home() {
     return isValid;
   };
 
+  const validateSignupEmail = (email) => {
+    return validateEmail(email);
+  };
+
   const validateUsername = (username) => {
     const normalizedUsername = username.trim();
     return normalizedUsername.length >= 3 && /^[a-zA-Z0-9_-]+$/.test(normalizedUsername);
@@ -409,7 +426,82 @@ function Home() {
     setFormMessage("");
 
     if (name === "email" && authMode === "signup") {
-      validateEmail(value);
+      validateSignupEmail(value);
+    }
+  };
+
+  const skipAuthenticatorSetup = () => {
+    if (!pendingAuthenticatorUser || !pendingAuthenticatorAccessToken) {
+      setFormMessage("Unable to complete sign in. Please try again.");
+      return;
+    }
+    setAccessToken(pendingAuthenticatorAccessToken);
+    setCurrentUser(pendingAuthenticatorUser);
+    setPendingAuthenticatorUser(null);
+    setPendingAuthenticatorAccessToken("");
+    setLoginChallenge("");
+    setAuthForm(EMPTY_AUTH_FORM);
+    setAuthMode(null);
+    setVerificationEmail("");
+    setAuthenticatorUserId(null);
+    setAuthenticatorSecret("");
+    setAuthenticatorUri("");
+    setAuthenticatorQr("");
+    showToast("Welcome to USP Marketplace.");
+  };
+
+  const beginAuthenticatorSetup = () => {
+    setAuthForm((previous) => ({ ...previous, authenticator_code: "" }));
+    setAuthMode("authenticator-setup");
+  };
+
+  const handleAuthBack = () => {
+    setFormMessage("");
+    if (authMode === "authenticator-setup") {
+      setAuthForm((previous) => ({ ...previous, authenticator_code: "" }));
+      setAuthMode("authenticator-choice");
+      return;
+    }
+    if (authMode === "authenticator") {
+      setAuthForm((previous) => ({ ...previous, authenticator_code: "" }));
+      setLoginChallenge("");
+      setAuthMode("login");
+      return;
+    }
+    if (authMode === "authenticator-choice") {
+      setPendingAuthenticatorUser(null);
+      setPendingAuthenticatorAccessToken("");
+      setLoginChallenge("");
+      setAuthenticatorUserId(null);
+      setAuthenticatorSecret("");
+      setAuthenticatorUri("");
+      setAuthenticatorQr("");
+      setAuthForm(EMPTY_AUTH_FORM);
+      setAuthMode("login");
+      return;
+    }
+    if (authMode === "verify-email") {
+      const email = verificationEmail;
+      resetAuth();
+      setAuthMode("signup");
+      if (email) {
+        fetch(`${API_URL}/users/cancel-verification`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        }).catch(() => {
+          showToast("Unable to cancel email verification. Please try again.", "error");
+        });
+      }
+      return;
+    }
+    if (authMode === "reset-password") {
+      setAuthForm((previous) => ({ ...previous, reset_code: "", new_password: "", new_password_confirmation: "" }));
+      setAuthMode("forgot-password");
+      return;
+    }
+    if (authMode === "forgot-password") {
+      setAuthMode("login");
     }
   };
 
@@ -427,7 +519,18 @@ function Home() {
         });
         const data = await parseResponse(response, "Email verification failed");
         window.sessionStorage.removeItem(PENDING_VERIFICATION_STORAGE_KEY);
-        if (data.authenticator_setup_required) {
+        if (data.authenticator_setup_offer) {
+          setAuthenticatorUserId(data.user_id);
+          setPendingAuthenticatorUser(data.user);
+          setPendingAuthenticatorAccessToken(data.access_token || "");
+          setLoginChallenge(data.login_challenge || "");
+          setAuthenticatorSecret(data.authenticator_secret);
+          setAuthenticatorUri(data.authenticator_uri);
+          setAuthenticatorQr(data.authenticator_qr);
+          setAuthForm(EMPTY_AUTH_FORM);
+          setVerificationEmail("");
+          setAuthMode("authenticator-choice");
+        } else if (data.authenticator_setup_required) {
           setAuthenticatorUserId(data.user_id);
           setLoginChallenge(data.login_challenge);
           setAuthenticatorSecret(data.authenticator_secret);
@@ -439,6 +542,8 @@ function Home() {
         } else {
           setAccessToken(data.access_token);
           setCurrentUser(data.user);
+          setPendingAuthenticatorUser(null);
+          setPendingAuthenticatorAccessToken("");
           setAuthForm(EMPTY_AUTH_FORM);
           setAuthMode(null);
           setVerificationEmail("");
@@ -458,6 +563,9 @@ function Home() {
         const data = await parseResponse(response, "Authenticator verification failed");
         setAccessToken(data.access_token);
         setCurrentUser(data.user);
+        setPendingAuthenticatorUser(null);
+        setPendingAuthenticatorAccessToken("");
+        setLoginChallenge("");
         setAuthForm(EMPTY_AUTH_FORM);
         setAuthMode(null);
         setVerificationEmail("");
@@ -531,8 +639,8 @@ function Home() {
         return;
       }
 
-      if (authMode === "signup" && !validateEmail(authForm.email)) {
-        setFormMessage("Please enter a valid email address");
+      if (authMode === "signup" && !validateSignupEmail(authForm.email)) {
+        setFormMessage("Use your USP student email, e.g. S12345678@student.usp.ac.fj");
         return;
       }
 
@@ -562,14 +670,27 @@ function Home() {
       }
       const data = await parseResponse(response, "Authentication failed");
 
-      if (data.authenticator_setup_required || data.authenticator_required) {
+      if (data.authenticator_required) {
         setAuthenticatorUserId(data.user_id);
         setLoginChallenge(data.login_challenge);
         setAuthenticatorSecret(data.authenticator_secret || "");
         setAuthenticatorUri(data.authenticator_uri || "");
         setAuthenticatorQr(data.authenticator_qr || "");
         setAuthForm((previous) => ({ ...previous, authenticator_code: "" }));
-        setAuthMode(data.authenticator_setup_required ? "authenticator-setup" : "authenticator");
+        setAuthMode("authenticator");
+        return;
+      }
+
+      if (data.authenticator_setup_offer) {
+        setAuthenticatorUserId(data.user_id);
+        setPendingAuthenticatorUser(data.user);
+        setPendingAuthenticatorAccessToken(data.access_token || "");
+        setLoginChallenge(data.login_challenge || "");
+        setAuthenticatorSecret(data.authenticator_secret);
+        setAuthenticatorUri(data.authenticator_uri);
+        setAuthenticatorQr(data.authenticator_qr);
+        setAuthForm(EMPTY_AUTH_FORM);
+        setAuthMode("authenticator-choice");
         return;
       }
 
@@ -670,6 +791,7 @@ function Home() {
   const handleLogout = () => {
     setAccessToken(null);
     setLoginChallenge("");
+    setPendingAuthenticatorAccessToken("");
     setCurrentUser(null);
     setAuthMode("login");
     hideActivePages();
@@ -751,6 +873,9 @@ function Home() {
         authenticatorSecret={authenticatorSecret}
         authenticatorUri={authenticatorUri}
         authenticatorQr={authenticatorQr}
+        onEnableAuthenticator={beginAuthenticatorSetup}
+        onSkipAuthenticator={skipAuthenticatorSetup}
+        onBack={handleAuthBack}
       />
     );
   }
@@ -1899,6 +2024,12 @@ function Home() {
             onFieldChange={handleAuthFieldChange}
             onResendVerification={resendVerification}
             onCancelVerification={cancelVerification}
+            authenticatorSecret={authenticatorSecret}
+            authenticatorUri={authenticatorUri}
+            authenticatorQr={authenticatorQr}
+            onEnableAuthenticator={beginAuthenticatorSetup}
+            onSkipAuthenticator={skipAuthenticatorSetup}
+            onBack={handleAuthBack}
           />
           <AdminDashboard
             apiUrl={API_URL}
@@ -1953,6 +2084,12 @@ function Home() {
         onFieldChange={handleAuthFieldChange}
         onResendVerification={resendVerification}
         onCancelVerification={cancelVerification}
+        authenticatorSecret={authenticatorSecret}
+        authenticatorUri={authenticatorUri}
+        authenticatorQr={authenticatorQr}
+        onEnableAuthenticator={beginAuthenticatorSetup}
+        onSkipAuthenticator={skipAuthenticatorSetup}
+        onBack={handleAuthBack}
       />
 
       <CategoryPage
@@ -1995,7 +2132,7 @@ function Home() {
       )}
 
       <AccountPage
-        page={activeAccountPage === "notifications" ? null : activeAccountPage}
+        page={["notifications", "dashboard"].includes(activeAccountPage) ? null : activeAccountPage}
         currentUser={currentUser}
         myListings={myListings}
         purchaseHistory={purchaseHistory}
@@ -2023,6 +2160,18 @@ function Home() {
           onBack={hideActivePages}
           onOpen={openUserNotification}
           onRemove={removeUserNotification}
+        />
+      )}
+
+      {activeAccountPage === "dashboard" && (
+        <DashboardPage
+          currentUser={currentUser}
+          myListings={myListings}
+          purchases={purchaseHistory}
+          sellerOrders={sellerOrders}
+          isLoading={isLoadingUserActivity || isLoadingListings}
+          onBack={hideActivePages}
+          onManageListings={() => openSellerTab("my-listings")}
         />
       )}
 

@@ -4,6 +4,7 @@ SQLite deliberately skips these tests: it cannot prove MySQL locking behavior.
 """
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
+import uuid
 
 from django.db import connections, close_old_connections
 from django.test import TransactionTestCase, skipUnlessDBFeature
@@ -39,7 +40,7 @@ class InventoryConcurrencyTests(TransactionTestCase):
             return [future.result(timeout=20) for future in futures]
 
     def checkout(self, buyer):
-        return services.checkout_cart(buyer.id, {"payment_method": "cash", "delivery_method": "self_pickup", "items": [{"item_id": self.item.id, "quantity": 1}]})
+        return services.checkout_cart(buyer.id, {"payment_method": "cash", "delivery_method": "self_pickup", "checkout_id": uuid.uuid4().hex, "items": [{"item_id": self.item.id, "quantity": 1}]})
 
     def test_two_buyers_cannot_reserve_the_same_unit(self):
         outcomes = self.race(lambda: self.checkout(self.buyers[0]), lambda: self.checkout(self.buyers[1]))
