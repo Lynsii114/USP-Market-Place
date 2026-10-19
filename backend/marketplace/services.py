@@ -1255,6 +1255,50 @@ def simulate_payment_authorization(payment_method, payment_details, amount, forc
     }
 
 
+def checkout_response_from_purchases(purchases):
+    orders = [enrich_purchase_order(purchase) for purchase in purchases]
+    total = round(sum(purchase.final_total for purchase in purchases), 2)
+    payment_method = purchases[0].payment_method
+    payment_statuses = {purchase.payment_status for purchase in purchases}
+    if "pending" in payment_statuses:
+        status = "pending"
+    elif payment_method == "cash":
+        status = "paid"
+    else:
+        status = "approved"
+    payment = {
+        "status": status,
+        "provider": "Cash handoff" if payment_method == "cash" else f"{PAYMENT_METHODS[payment_method]} demo processor",
+        "reference": purchases[0].payment_reference,
+        "amount": total,
+        "message": (
+            "Order placed. Cash is due to the seller at delivery or self-pickup. "
+            "The ordered units are reserved until the seller confirms receipt."
+            if status == "pending"
+            else "Payment recorded. Contact the seller to arrange meetup or collection."
+        ),
+        "method": payment_method,
+    }
+    item_ids = {purchase.item_id for purchase in purchases}
+    items = {
+        item.id: item
+        for item in Item.objects.filter(id__in=item_ids)
+    }
+    return {
+        "orders": orders,
+        "items": [
+            {
+                "item": serialize_admin_item(items[purchase.item_id]) if purchase.item_id in items else None,
+                "payment_method": purchase.payment_method,
+                "purchased_quantity": purchase.quantity,
+            }
+            for purchase in purchases
+        ],
+        "payment": payment,
+        "total": total,
+    }
+
+
 def refresh_reservation_status(item, manual):
     pending, _, _ = reservation_stock(item)
     if manual and item.stock > 0:
@@ -1275,6 +1319,24 @@ def checkout_cart(buyer_id, data):
         raise ApiError("Checkout details must be provided as a JSON object", 422)
     if not buyer_id:
         raise ApiError("User not found", 404)
+
+    checkout_id = data.get("checkout_id")
+    if not isinstance(checkout_id, str):
+        raise ApiError("A valid checkout ID is required", 422)
+    checkout_id = checkout_id.strip()
+    if not checkout_id or len(checkout_id) > 64:
+        raise ApiError("A valid checkout ID is required", 422)
+
+    buyer = User.objects.filter(id=buyer_id).first()
+    if not buyer:
+        raise ApiError("User not found", 404)
+    existing_purchases = list(
+        Purchase.objects.filter(buyer_id=buyer.id, checkout_id=checkout_id).order_by("id")
+    )
+    if existing_purchases:
+        return checkout_response_from_purchases(existing_purchases)
+    if buyer.status == "suspended":
+        raise ApiError("Account is suspended", 403)
 
     payment_method = str(data.get("payment_method", "")).strip().lower()
     if payment_method not in PAYMENT_METHODS:
@@ -1298,8 +1360,18 @@ def checkout_cart(buyer_id, data):
     if len(item_quantities) > 50:
         raise ApiError("A checkout can contain at most 50 items", 422)
 
-    buyer = require_active_user(buyer_id)
     with transaction.atomic():
+        buyer = User.objects.select_for_update().filter(id=buyer_id).first()
+        if not buyer:
+            raise ApiError("User not found", 404)
+        existing_purchases = list(
+            Purchase.objects.filter(buyer_id=buyer.id, checkout_id=checkout_id).order_by("id")
+        )
+        if existing_purchases:
+            return checkout_response_from_purchases(existing_purchases)
+        if buyer.status == "suspended":
+            raise ApiError("Account is suspended", 403)
+
         locked_items = {
             item.id: item
             for item in Item.objects.select_for_update().filter(id__in=item_quantities).order_by("id")
@@ -1374,6 +1446,7 @@ def checkout_cart(buyer_id, data):
                 payment_status=payment["status"],
                 payment_reference=payment["reference"],
                 simulate_failure=simulate_failure,
+                checkout_id=checkout_id,
             )
             updated_items.append({
                 "item": updated_item,
@@ -1410,6 +1483,7 @@ def purchase_item(
     payment_status=None,
     payment_reference="",
     simulate_failure=False,
+    checkout_id=None,
 ):
     if simulate_failure:
         raise ApiError("Payment failed. No order was placed and stock was unchanged.", 402)
@@ -1456,6 +1530,7 @@ def purchase_item(
         payment_status = "paid" if payment_confirmed else "pending"
     purchase = Purchase.objects.create(
         buyer_id=buyer.id,
+        checkout_id=checkout_id,
         buyer_username=buyer.username,
         item_id=item.id,
         item_name=item.name,

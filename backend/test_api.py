@@ -375,6 +375,7 @@ def test_checkout_simulates_success_and_marks_listing_sold(payment_method, payme
         f"/api/checkout?buyer_id={buyer.id}",
         {
             "payment_method": payment_method,
+            "checkout_id": f"checkout-{suffix}",
             "delivery_method": "self_pickup",
             "payment_details": payment_details,
             "items": [{"item_id": item.id, "quantity": 1}],
@@ -404,6 +405,50 @@ def test_checkout_simulates_success_and_marks_listing_sold(payment_method, payme
     assert history.json()[0]["payment_status"] == "approved"
 
 
+def test_checkout_idempotency_reuses_existing_order_without_reducing_stock_twice():
+    suffix = random.randint(10_000_000, 99_999_999)
+    buyer = create_active_test_user("idempotent_buyer", suffix)
+    seller = create_active_test_user("idempotent_seller", suffix + 1)
+    item = create_test_item(seller, suffix, name=f"__test_idempotent_item_{suffix}")
+    item.stock = 3
+    item.save(update_fields=["stock"])
+    checkout_id = f"checkout-{suffix}"
+    payload = {
+        "checkout_id": checkout_id,
+        "payment_method": "visa",
+        "payment_details": {
+            "cardholder_name": "Demo Buyer",
+            "card_number": "4242 4242 4242 4242",
+            "expiry": "12/30",
+            "security_code": "123",
+        },
+        "delivery_method": "self_pickup",
+        "items": [{"item_id": item.id, "quantity": 1}],
+    }
+
+    first_response = client.post(
+        f"/api/checkout?buyer_id={buyer.id}",
+        payload,
+        content_type="application/json",
+    )
+    retry_response = client.post(
+        f"/api/checkout?buyer_id={buyer.id}",
+        payload,
+        content_type="application/json",
+    )
+
+    assert first_response.status_code == retry_response.status_code == 200
+    first_order = first_response.json()["orders"][0]
+    retry_order = retry_response.json()["orders"][0]
+    assert retry_order["id"] == first_order["id"]
+    assert retry_response.json()["payment"]["reference"] == first_response.json()["payment"]["reference"]
+    purchase = Purchase.objects.get(item_id=item.id, buyer_id=buyer.id)
+    assert purchase.checkout_id == checkout_id
+    assert Purchase.objects.filter(item_id=item.id, buyer_id=buyer.id).count() == 1
+    item.refresh_from_db()
+    assert item.stock == 2
+
+
 @pytest.mark.parametrize(("payment_method", "payment_details"), [
     ("mpaisa", {"phone_number": "+679 8111222", "authorization_code": "123456"}),
     ("mycash", {"phone_number": "+679 9000000", "authorization_code": "123456"}),
@@ -427,6 +472,7 @@ def test_forced_payment_failure_does_not_create_order_or_change_stock(payment_me
         f"/api/checkout?buyer_id={buyer.id}",
         {
             "payment_method": payment_method,
+            "checkout_id": f"checkout-{suffix}",
             "payment_details": payment_details,
             "delivery_method": "self_pickup",
             "simulate_failure": True,
@@ -488,6 +534,7 @@ def test_insufficient_funds_failure_preserves_stock_and_creates_no_order(payment
         f"/api/checkout?buyer_id={buyer.id}",
         {
             "payment_method": payment_method,
+            "checkout_id": f"checkout-{suffix}",
             "payment_details": payment_details,
             "delivery_method": "self_pickup",
             "items": [{"item_id": item.id, "quantity": 1}],
@@ -514,6 +561,7 @@ def test_failed_multi_item_payment_does_not_partially_create_orders_or_reduce_st
         f"/api/checkout?buyer_id={buyer.id}",
         {
             "payment_method": "mycash",
+            "checkout_id": f"checkout-{suffix}",
             "payment_details": {"phone_number": "+679 9000000", "authorization_code": "000000"},
             "delivery_method": "delivery",
             "force_failure": False,
@@ -545,6 +593,7 @@ def test_checkout_rejects_quantity_above_current_stock_without_order_or_stock_ch
         f"/api/checkout?buyer_id={buyer.id}",
         {
             "payment_method": "visa",
+            "checkout_id": f"checkout-{suffix}",
             "payment_details": {
                 "cardholder_name": "Demo Buyer",
                 "card_number": "4242 4242 4242 4242",
@@ -576,6 +625,7 @@ def test_cash_checkout_reserves_until_seller_confirms_handoff(delivery_method):
         f"/api/checkout?buyer_id={buyer.id}",
         {
             "payment_method": "cash",
+            "checkout_id": f"checkout-{suffix}",
             "delivery_method": delivery_method,
             "items": [{"item_id": item.id, "quantity": 1}],
         },
@@ -624,6 +674,7 @@ def test_seller_can_release_cash_order_reservation_without_changing_stock():
         f"/api/checkout?buyer_id={buyer.id}",
         {
             "payment_method": "cash",
+            "checkout_id": f"checkout-{suffix}",
             "delivery_method": "delivery",
             "items": [{"item_id": item.id, "quantity": 1}],
         },
@@ -656,6 +707,7 @@ def test_cash_order_requires_seller_confirmation_before_preparing():
         f"/api/checkout?buyer_id={buyer.id}",
         {
             "payment_method": "cash",
+            "checkout_id": f"checkout-{suffix}",
             "delivery_method": "self_pickup",
             "items": [{"item_id": item.id, "quantity": 1}],
         },
@@ -712,6 +764,7 @@ def test_failed_cash_checkout_creates_no_order_and_leaves_listing_available():
         f"/api/checkout?buyer_id={buyer.id}",
         {
             "payment_method": "cash",
+            "checkout_id": f"checkout-{suffix}",
             "delivery_method": "self_pickup",
             "force_failure": True,
             "items": [{"item_id": item.id, "quantity": 2}],
@@ -732,6 +785,7 @@ def test_sold_listing_cannot_be_purchased_twice():
     item = create_test_item(seller, suffix, name=f"__test_cash_duplicate_item_{suffix}")
     payload = {
         "payment_method": "cash",
+        "checkout_id": f"checkout-{suffix}-first",
         "delivery_method": "self_pickup",
         "items": [{"item_id": item.id, "quantity": 1}],
     }
@@ -745,6 +799,7 @@ def test_sold_listing_cannot_be_purchased_twice():
         f"/api/checkout?buyer_id={buyer.id}",
         {
             **payload,
+            "checkout_id": f"checkout-{suffix}-second",
             "payment_method": "mycash",
         },
         content_type="application/json",
@@ -767,6 +822,7 @@ def test_cash_checkout_decrements_only_purchased_quantity():
         f"/api/checkout?buyer_id={buyer.id}",
         {
             "payment_method": "cash",
+            "checkout_id": f"checkout-{suffix}",
             "delivery_method": "self_pickup",
             "items": [{"item_id": item.id, "quantity": 2}],
         },
