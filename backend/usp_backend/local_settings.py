@@ -13,7 +13,5 @@ DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": BASE_DI
 AUTO_ENSURE_SCHEMA = False
 LOCAL_DB_SYNC = False
 LOCAL_DB_SYNC_ON_START = False
-EMAIL_PROVIDER = "console"
-EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 CORS_ALLOWED_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 CORS_ALLOWED_ORIGIN_SUFFIXES = []

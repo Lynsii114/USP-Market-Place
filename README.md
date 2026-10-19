@@ -16,6 +16,7 @@ usp-marketplace/
 ├── Dockerfile
 ├── README.md
 ├── backend.cmd
+├── backend-demo.cmd
 └── frontend.cmd
 ```
 
@@ -32,6 +33,23 @@ python manage.py runserver 127.0.0.1:8000
 API health check: `http://127.0.0.1:8000/api/health`
 
 Database health check: `http://127.0.0.1:8000/api/health/database`
+
+### Local showcase demo
+
+The showcase seed commands use an isolated SQLite database at `backend/inventory-demo.db`; they do not add demo data to MySQL or Vercel. To view that data in the local web app, start the API with the same SQLite settings:
+
+```powershell
+.\backend-demo.cmd
+```
+
+Then start the frontend with `.\frontend.cmd` and open `http://localhost:5173/`. Re-run the seed commands from the repository root if needed:
+
+```powershell
+backend\venv\Scripts\python.exe backend\manage.py seed_inventory_demo --settings=usp_backend.local_settings --count 1000
+backend\venv\Scripts\python.exe backend\manage.py seed_report_demo --settings=usp_backend.local_settings --count 1000
+```
+
+The normal `backend.cmd` continues to use the database configured for the regular backend; it will not show records stored only in the isolated demo database.
 
 ## Frontend
 

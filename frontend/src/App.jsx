@@ -414,7 +414,14 @@ function Home() {
   };
 
   const validateSignupEmail = (email) => {
-    return validateEmail(email);
+    if (!email) {
+      setEmailError("");
+      return true;
+    }
+
+    const isValid = /^S\d+@student\.usp\.ac\.fj$/i.test(email.trim());
+    setEmailError(isValid ? "" : "Use your USP student email, e.g. S12345678@student.usp.ac.fj");
+    return isValid;
   };
 
   const validateUsername = (username) => {
@@ -504,20 +511,6 @@ function Home() {
     }
     if (authMode === "forgot-password") {
       setAuthMode("login");
-    }
-  };
-
-  const finishAuthNavigation = (user, successMessage) => {
-    if (user?.role === "admin") {
-      hideActivePages();
-      setShowAdminDashboard(true);
-      pushViewState({ view: "admin" }, "/admin/dashboard");
-      showToast(successMessage);
-    } else if (showAdminDashboard || window.location.pathname.startsWith("/admin")) {
-      openMarketplace();
-      showToast("Signed in, but this account does not have administrator access.", "error");
-    } else {
-      showToast(successMessage);
     }
   };
 
@@ -2160,6 +2153,18 @@ function Home() {
           }
         }}
       />
+
+      {activeAccountPage === "dashboard" && (
+        <DashboardPage
+          currentUser={currentUser}
+          myListings={myListings}
+          purchases={purchaseHistory}
+          sellerOrders={sellerOrders}
+          isLoading={isLoadingUserActivity || isLoadingListings}
+          onBack={hideActivePages}
+          onManageListings={() => openSellerTab("my-listings")}
+        />
+      )}
 
       {activeAccountPage === "notifications" && (
         <NotificationsPage

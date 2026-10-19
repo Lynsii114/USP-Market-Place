@@ -12,7 +12,7 @@ Open http://127.0.0.1:8000/api/health to check the API.
 
 Database:
 
-This backend uses MySQL/phpMyAdmin only. SQLite is disabled.
+The regular backend uses MySQL/phpMyAdmin. The optional showcase demo uses a separate, isolated SQLite database and is not used by production.
 
 1. Create a MySQL database, for example `usp_marketplace`.
 2. Set `DATABASE_URL` in a `.env` file in the `backend` folder:
@@ -23,21 +23,18 @@ DATABASE_URL=mysql+pymysql://user:password@localhost:3306/usp_marketplace
 
 The app will create tables automatically on startup.
 
-Local report load demo:
+## Local showcase demo
 
-From the repository root, seed showcase listings first, then add 1,000 completed
-purchase records for testing the daily, weekly and monthly reports:
+To use the local demo data instead of the MySQL database, start the backend from the repository root with `backend-demo.cmd`. This runs Django with `usp_backend.local_settings` and reads/writes only `backend/inventory-demo.db`. Start the frontend with `frontend.cmd` and open `http://localhost:5173/`.
+
+Seed up to 1,000 active listings and 1,000 completed demo orders into that SQLite database:
 
 ```powershell
-backend/.venv/Scripts/python.exe backend/manage.py seed_inventory_demo --settings=usp_backend.local_settings --count 1000
-backend/.venv/Scripts/python.exe backend/manage.py seed_report_demo --settings=usp_backend.local_settings
+backend\venv\Scripts\python.exe backend\manage.py seed_inventory_demo --settings=usp_backend.local_settings --count 1000
+backend\venv\Scripts\python.exe backend\manage.py seed_report_demo --settings=usp_backend.local_settings --count 1000
 ```
 
-These commands use only `backend/inventory-demo.db` and refuse production
-settings. The report orders span the preceding 365 days, cover the seeded
-categories, and vary in price and quantity. Repeating the report command does
-not duplicate its 1,000 tagged orders or change listing stock. Existing orders
-are preserved, so the total shown in Reports can exceed 1,000.
+These commands are repeat-safe: rerunning them does not add duplicate generated listings or orders. The demo records are local only and do not appear in MySQL or the deployed Vercel app.
 
 Email verification:
 
@@ -47,15 +44,13 @@ Resend is also supported. Set `EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, and `RE
 
 Resend SMTP is supported as well. Set `EMAIL_HOST=smtp.resend.com`, `EMAIL_PORT=587`, `EMAIL_USE_TLS=1`, `EMAIL_HOST_USER=resend`, `EMAIL_HOST_PASSWORD` to your Resend API key, and `DEFAULT_FROM_EMAIL` to a verified sender. SMTP takes priority when `EMAIL_HOST` is configured.
 
-Testing with non-USP email addresses:
-
-For local testing, any valid email address is allowed by default. To restore USP student email-only registration, set `ALLOW_NON_USP_EMAILS=0` in `backend/.env` and restart the backend. Non-USP test accounts do not receive a student ID.
+Registration is restricted to USP student email addresses in the `S<number>@student.usp.ac.fj` format (for example, `S12345678@student.usp.ac.fj`). Other email addresses are rejected in all environments.
 
 Verification codes are sent to the exact email address used at registration. For actual delivery, configure SMTP or Resend as described above; without an email provider, codes are printed in the backend terminal.
 
 Authenticator security:
 
-After email verification, add the displayed secret to Microsoft Authenticator using the `Other account` option. Every password login then requires the six-digit rotating code from Microsoft Authenticator.
+After email verification, users can choose whether to set up Microsoft Authenticator. Users who skip setup can log in with their username or email and password, and are offered setup again after login. Users who enable it must enter the six-digit rotating authenticator code after every password login. During setup, add the displayed QR code or secret to Microsoft Authenticator using the `Other account` option.
 
 Payment checkout demo:
 
@@ -98,5 +93,4 @@ and marks existing listings with multiple stock or recorded paid units as
 multiple-unit listings. Repeating it does not overwrite seller choices.
 
 Unpaid orders hold their requested quantities. Seller-created reservations hold
-one unit. Remaining units can be purchased by other buyers. Fully reserved
-listings are visible only to their seller and buyers holding a reservation.
+one unit. Remaining units can be purchased by other buyers. Fully reserved listings are visible only to their seller and buyers holding a reservation.
