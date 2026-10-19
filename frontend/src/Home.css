@@ -3070,7 +3070,8 @@
 
 #inventory-results,
 #sales-results,
-#shop-results {
+#shop-results,
+#admin-listings-results {
   scroll-margin-top: 100px;
 }
 
