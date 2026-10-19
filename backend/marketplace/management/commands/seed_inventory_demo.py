@@ -11,6 +11,7 @@ from marketplace.models import Item, Category, User
 from marketplace.services import get_or_create_admin_user, hash_password, hide_listing
 from marketplace.category_catalog import BUILTIN_CATEGORIES
 from marketplace.demo_catalog import DEMO_CATALOG, DEMO_MARKER
+from marketplace.schema import ensure_schema
 
 
 def category_photo(relative_path):
@@ -23,12 +24,28 @@ def category_photo(relative_path):
 
 
 class Command(BaseCommand):
-    help = "Create 75 showcase listings plus existing local samples; refuses non-local settings."
+    help = "Create local showcase listings plus sample inventory; refuses non-local settings."
+
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--count",
+            type=int,
+            default=75,
+            help="Target number of generated active showcase listings (maximum 1000).",
+        )
+
+    def execute(self, *args, **options):
+        if settings.SETTINGS_MODULE == "usp_backend.local_settings" and settings.DATABASES["default"]["ENGINE"] == "django.db.backends.sqlite3":
+            ensure_schema()
+        return super().execute(*args, **options)
 
     @transaction.atomic
     def handle(self, *args, **options):
         if settings.SETTINGS_MODULE != "usp_backend.local_settings" or settings.DATABASES["default"]["ENGINE"] != "django.db.backends.sqlite3":
             raise CommandError("Use --settings=usp_backend.local_settings for this demo command")
+        count = options["count"]
+        if not 0 <= count <= 1000:
+            raise CommandError("--count must be between 0 and 1000")
         admin = get_or_create_admin_user()
         for name, _ in BUILTIN_CATEGORIES:
             Category.objects.get_or_create(name=name)
@@ -71,5 +88,42 @@ class Command(BaseCommand):
                 )
                 created_count += int(created)
                 counter += 1
-        self.stdout.write(self.style.SUCCESS(f"Showcase: {created_count} added, {counter - created_count} existing. Photos are representative category images. Existing records were preserved."))
+        generated_marker = f"{DEMO_MARKER} [Generated showcase listing]"
+        existing_names = set(
+            Item.objects.filter(description__startswith=generated_marker).values_list("name", flat=True)
+        )
+        catalog_entries = [
+            (category, photo_path, name, price)
+            for category, (photo_path, entries) in DEMO_CATALOG.items()
+            for name, price in entries
+        ]
+        photo_cache = {}
+        generated_items = []
+        for index in range(count):
+            category, photo_path, base_name, price = catalog_entries[index % len(catalog_entries)]
+            name = f"{base_name} - Showcase {index + 1:04d}"
+            if name in existing_names:
+                continue
+            seller = sellers[index % len(sellers)]
+            if photo_path not in photo_cache:
+                photo_cache[photo_path] = category_photo(photo_path)
+            generated_items.append(Item(
+                name=name,
+                price=price,
+                description=f"{generated_marker} {name}. Fictional showcase listing for local demonstration.",
+                category=category,
+                contact="Arrange pickup through marketplace messages",
+                payment_method="cash",
+                photo=photo_cache[photo_path],
+                stock=1 + index % 4,
+                status="available",
+                seller_id=seller.id,
+                seller_username=seller.username,
+            ))
+        Item.objects.bulk_create(generated_items, batch_size=250)
+        self.stdout.write(self.style.SUCCESS(
+            f"Showcase: {len(generated_items)} generated listings added; "
+            f"{count - len(generated_items)} already existed. "
+            "Generated listings are active. Existing records were preserved."
+        ))
         self.stdout.write(self.style.SUCCESS("Local demo ready. Admin@usp.ac.fj / Admin12345. Student accounts: demo_seller or demo_buyer / Demo314! (authenticator setup on first login)."))
