@@ -556,7 +556,7 @@ function Home() {
           setVerificationEmail("");
           setVerificationToken("");
           setResendAvailableAt(0);
-          showToast(data.message || "Email verified successfully.");
+          finishAuthNavigation(data.user, data.message || "Email verified successfully.");
         }
         return;
       }
@@ -581,7 +581,7 @@ function Home() {
         setAuthenticatorSecret("");
         setAuthenticatorUri("");
         setAuthenticatorQr("");
-        showToast(data.message || "Login successful.");
+        finishAuthNavigation(data.user, data.message || "Login successful.");
         return;
       }
 
@@ -721,12 +721,7 @@ function Home() {
       setCurrentUser(data.user);
       setAuthForm(EMPTY_AUTH_FORM);
       setAuthMode(null);
-      if (data.user?.role === "admin") {
-        hideActivePages();
-        setShowAdminDashboard(true);
-        pushViewState({ view: "admin" }, "/admin/dashboard");
-      }
-      showToast(authMode === "signup" ? "Registration successful. Welcome to USP Marketplace!" : data.message || "Login successful!");
+      finishAuthNavigation(data.user, authMode === "signup" ? "Registration successful. Welcome to USP Marketplace!" : data.message || "Login successful!");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Something went wrong";
       setFormMessage(message);
@@ -1480,7 +1475,7 @@ function Home() {
     cash: "Cash",
   };
 
-  const checkoutCart = async (paymentMethod, checkoutSummary = {}, paymentDetails = {}, forceFailure = false) => {
+  const checkoutCart = async (paymentMethod, checkoutSummary = {}, paymentDetails = {}, forceFailure = false, checkoutId) => {
     if (!currentUser) {
       showToast("Please login to purchase items.", "error");
       openAuth("login");
@@ -1517,6 +1512,7 @@ function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           payment_method: paymentMethod,
+          checkout_id: checkoutId,
           delivery_method: deliveryMethod,
           payment_details: paymentDetails,
           simulate_failure: forceFailure,
@@ -2138,7 +2134,7 @@ function Home() {
       )}
 
       <AccountPage
-        page={activeAccountPage === "notifications" ? null : activeAccountPage}
+        page={["notifications", "dashboard"].includes(activeAccountPage) ? null : activeAccountPage}
         currentUser={currentUser}
         myListings={myListings}
         purchaseHistory={purchaseHistory}
@@ -2178,6 +2174,18 @@ function Home() {
           onBack={hideActivePages}
           onOpen={openUserNotification}
           onRemove={removeUserNotification}
+        />
+      )}
+
+      {activeAccountPage === "dashboard" && (
+        <DashboardPage
+          currentUser={currentUser}
+          myListings={myListings}
+          purchases={purchaseHistory}
+          sellerOrders={sellerOrders}
+          isLoading={isLoadingUserActivity || isLoadingListings}
+          onBack={hideActivePages}
+          onManageListings={() => openSellerTab("my-listings")}
         />
       )}
 

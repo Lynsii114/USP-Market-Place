@@ -93,6 +93,7 @@ class Category(models.Model):
 
 class Purchase(models.Model):
     buyer_id = models.IntegerField(db_index=True)
+    checkout_id = models.CharField(max_length=64, null=True, blank=True, db_index=True)
     buyer_username = models.CharField(max_length=64)
     item_id = models.IntegerField(db_index=True)
     item_name = models.CharField(max_length=256)

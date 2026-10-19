@@ -5,6 +5,7 @@ import ReportsPanel from "./ReportsPanel";
 import NotificationsPage from "./NotificationsPage";
 
 const adminTabs = ["Dashboard", "Students", "Listings", "Orders", "Categories", "Reports", "Flags", "Reviews", "Notifications"];
+const ADMIN_LISTINGS_PAGE_SIZE = 20;
 
 function AdminDashboard({
   apiUrl,
@@ -25,6 +26,7 @@ function AdminDashboard({
   const [dashboard, setDashboard] = useState(null);
   const [students, setStudents] = useState([]);
   const [listings, setListings] = useState([]);
+  const [listingPage, setListingPage] = useState(1);
   const [orders, setOrders] = useState([]);
   const [studentSearch, setStudentSearch] = useState("");
   const [listingSearch, setListingSearch] = useState("");
@@ -59,6 +61,19 @@ function AdminDashboard({
       return true;
     });
   }, [categories]);
+  const listingPageCount = Math.max(1, Math.ceil(listings.length / ADMIN_LISTINGS_PAGE_SIZE));
+  const currentListingPage = Math.min(listingPage, listingPageCount);
+  const listingStart = (currentListingPage - 1) * ADMIN_LISTINGS_PAGE_SIZE;
+  const visibleListings = listings.slice(listingStart, listingStart + ADMIN_LISTINGS_PAGE_SIZE);
+  const listingPageNumbers = [...new Set([1, currentListingPage - 1, currentListingPage, currentListingPage + 1, listingPageCount])]
+    .filter((page) => page >= 1 && page <= listingPageCount)
+    .sort((a, b) => a - b);
+
+  const changeListingPage = (page) => {
+    setListingPage(page);
+    setOpenListingActionId(null);
+    document.getElementById("admin-listings-results")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   const parseResponse = async (response, fallbackMessage) => {
     const responseBody = await response.text();
@@ -103,9 +118,10 @@ function AdminDashboard({
     loadedTabsRef.current.add("Students");
   };
 
-  const loadListings = async () => {
+  const loadListings = async (resetPage = false) => {
     const data = await fetchAdmin(`/admin/listings?search=${encodeURIComponent(listingSearch)}`, "Unable to load listings");
     setListings(data);
+    if (resetPage) setListingPage(1);
     loadedTabsRef.current.add("Listings");
   };
 
@@ -684,19 +700,21 @@ function AdminDashboard({
         )}
 
         {activeTab === "Listings" && (
-          <div className="admin-table-card">
+          <div className="admin-table-card" id="admin-listings-results">
             <div className="admin-section-toolbar">
               <AdminSearch
                 value={listingSearch}
                 onChange={(value) => {
                   loadedTabsRef.current.delete("Listings");
                   setListingSearch(value);
+                  setListingPage(1);
+                  setOpenListingActionId(null);
                 }}
-                onSearch={loadListings}
+                onSearch={() => loadListings(true)}
                 placeholder="Search listing, seller, or category"
               />
               <span className="admin-record-count">
-                {listings.length} {listings.length === 1 ? "listing" : "listings"}
+                {listings.length ? `Showing ${listingStart + 1}–${Math.min(listingStart + ADMIN_LISTINGS_PAGE_SIZE, listings.length)} of ${listings.length} listings` : "0 listings"}
               </span>
             </div>
             <div className="admin-table">
@@ -711,7 +729,7 @@ function AdminDashboard({
                 <span>Actions</span>
               </div>
               {listings.length ? (
-                listings.map((listing) => (
+                visibleListings.map((listing) => (
                   <div className="admin-table-row admin-listing-row listings-grid" key={listing.id}>
                     <div className="admin-listing-name">
                       {listing.photo ? <img src={listing.photo} alt={listing.name} /> : <span>{listing.category?.charAt(0) || "I"}</span>}
@@ -781,6 +799,18 @@ function AdminDashboard({
                 <p className="empty-state">No listings found.</p>
               )}
             </div>
+            {listingPageCount > 1 && (
+              <nav className="inventory-pagination" aria-label="Admin listing pages">
+                <button type="button" className="secondary-button" disabled={currentListingPage === 1} onClick={() => changeListingPage(currentListingPage - 1)}>Previous</button>
+                {listingPageNumbers.map((page, index) => (
+                  <React.Fragment key={page}>
+                    {index > 0 && page - listingPageNumbers[index - 1] > 1 && <span aria-hidden="true">…</span>}
+                    <button type="button" className="secondary-button" aria-label={`Page ${page}`} aria-current={page === currentListingPage ? "page" : undefined} onClick={() => changeListingPage(page)}>{page}</button>
+                  </React.Fragment>
+                ))}
+                <button type="button" className="secondary-button" disabled={currentListingPage === listingPageCount} onClick={() => changeListingPage(currentListingPage + 1)}>Next</button>
+              </nav>
+            )}
           </div>
         )}
 

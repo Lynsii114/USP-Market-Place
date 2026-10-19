@@ -325,11 +325,11 @@ function AuthModal({
           {["authenticator", "authenticator-setup"].includes(authMode) ? (
             <p>Use the current six-digit code from Microsoft Authenticator for this account. During setup, add the QR code or setup key to the app first. If a code is rejected, wait for the next code and check your phone’s automatic time setting.</p>
           ) : ["forgot-password", "verify-reset-code", "reset-password"].includes(authMode) ? (
-            <p>Use your registered email. Check spam for the six-digit reset code, which expires after 10 minutes. After saving your new password, sign in with it and complete authenticator verification.</p>
+            <p>Use your registered email. Check spam for the six-digit reset code, which expires after 10 minutes. After saving your new password, sign in with it. Complete authenticator verification if it is enabled on your account.</p>
           ) : ["signup", "verify-email"].includes(authMode) ? (
-            <p>Enter your email carefully and check spam for the verification message. Use the latest six-digit code within 10 minutes. On the verification screen, Resend code becomes available after the countdown. Authenticator setup follows email verification.</p>
+            <p>Enter your email carefully and check spam for the verification message. Use the latest six-digit code within 10 minutes. On the verification screen, Resend code becomes available after the countdown. You can choose whether to set up an authenticator after email verification.</p>
           ) : (
-            <p>Enter your username or registered email and password, then complete authenticator verification. If you cannot remember your password, choose Forgot password. New users can choose Create an account.</p>
+            <p>Enter your username or registered email and password. If you enabled an authenticator, enter its current code when prompted. If you cannot remember your password, choose Forgot password.</p>
           )}
           <button type="button" className="auth-help-link" disabled={isSubmitting} onClick={() => onOpenHelp(["authenticator", "authenticator-setup", "login"].includes(authMode) ? "authenticator" : ["forgot-password", "verify-reset-code", "reset-password"].includes(authMode) ? "password-reset" : "sign-in")}>View Help & FAQs</button>
         </div>
