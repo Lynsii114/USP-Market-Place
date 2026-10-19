@@ -360,21 +360,21 @@ def admin_students(request):
 def admin_suspend_student(request, student_id):
     if request.method != "POST":
         return method_not_allowed()
-    return run(lambda: (services.set_student_status(get_admin_id(request), student_id, "suspended"), True))
+    return run(lambda: (services.set_student_status(get_admin_id(request), student_id, "suspended", json_body(request)), True))
 
 
 @csrf_exempt
 def admin_reactivate_student(request, student_id):
     if request.method != "POST":
         return method_not_allowed()
-    return run(lambda: (services.set_student_status(get_admin_id(request), student_id, "active"), True))
+    return run(lambda: (services.set_student_status(get_admin_id(request), student_id, "active", json_body(request)), True))
 
 
 @csrf_exempt
 def admin_delete_student(request, student_id):
     if request.method != "DELETE":
         return method_not_allowed()
-    return run(lambda: (services.delete_student(get_admin_id(request), student_id), True))
+    return run(lambda: (services.delete_student(get_admin_id(request), student_id, json_body(request)), True))
 
 
 def admin_listings(request):
@@ -465,3 +465,10 @@ def admin_rating_reviews(request):
     if request.method != "GET":
         return method_not_allowed()
     return run(lambda: (services.list_rating_reviews(get_admin_id(request)), False))
+
+
+@csrf_exempt
+def admin_review_user_report(request, report_id):
+    if request.method != "POST":
+        return method_not_allowed()
+    return run(lambda: (services.review_user_report(get_admin_id(request), report_id, json_body(request)), True))

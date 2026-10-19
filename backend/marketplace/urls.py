@@ -55,6 +55,7 @@ urlpatterns = [
     path("admin/reports", views.admin_reports),
     path("admin/reports/pdf", views.admin_reports_pdf),
     path("admin/user-reports", views.admin_user_reports),
+    path("admin/user-reports/<int:report_id>", views.admin_review_user_report),
     path("admin/ratings", views.admin_rating_reviews),
     path("admin/categories", views.admin_categories),
     path("admin/categories/<int:category_id>", views.admin_category_detail),

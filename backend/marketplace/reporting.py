@@ -7,6 +7,7 @@ from collections import defaultdict
 from .category_catalog import canonical_category_name
 from datetime import datetime, time, timedelta, timezone as dt_timezone
 from io import BytesIO
+from pathlib import Path
 from xml.sax.saxutils import escape
 
 from django.utils import timezone
@@ -105,69 +106,115 @@ def build_report(admin_id, period="daily", date_from="", date_to=""):
 
 
 def build_report_pdf(admin_id, period="daily", date_from="", date_to=""):
-    """Returns (pdf_bytes, filename) for a single-file PDF summary (FR4.4)."""
+    """Build a branded, paginated A4 report using the same server-side totals."""
     from reportlab.lib import colors
+    from reportlab.lib.enums import TA_RIGHT
     from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import mm
+    from reportlab.lib.utils import ImageReader
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     report = build_report(admin_id, period, date_from, date_to)
-    navy = colors.HexColor("#0d2e4d")
-    styles = getSampleStyleSheet()
+    navy = colors.HexColor("#082b45")
+    teal = colors.HexColor("#2ca3ad")
+    muted = colors.HexColor("#526779")
+    border = colors.HexColor("#dce6ed")
+    pale = colors.HexColor("#f2f7fa")
+    width = A4[0] - 36 * mm
+    generated = datetime.fromisoformat(report["generated_at"])
+    generated_local = timezone.localtime(generated, timezone.get_fixed_timezone(720))
+    generated_label = generated_local.strftime("%d %b %Y, %I:%M %p") + " Fiji time"
+    logo = ImageReader(str(Path(__file__).resolve().parent / "assets" / "usp-logo.png"))
+    logo_width, logo_height = logo.getSize()
+    styles = {
+        "body": ParagraphStyle("ReportBody", fontName="Helvetica", fontSize=9, leading=13, textColor=navy, spaceAfter=0),
+        "small": ParagraphStyle("ReportSmall", fontName="Helvetica", fontSize=8, leading=11, textColor=muted),
+        "heading": ParagraphStyle("ReportHeading", fontName="Helvetica-Bold", fontSize=12, leading=16, textColor=navy, spaceBefore=16, spaceAfter=10, keepWithNext=True),
+        "label": ParagraphStyle("ReportLabel", fontName="Helvetica-Bold", fontSize=7.5, leading=11, textColor=muted),
+        "value": ParagraphStyle("ReportValue", fontName="Helvetica-Bold", fontSize=18, leading=24, textColor=navy),
+        "header": ParagraphStyle("ReportTableHeader", fontName="Helvetica-Bold", fontSize=8, leading=11, textColor=colors.white),
+        "header_number": ParagraphStyle("ReportTableHeaderNumber", fontName="Helvetica-Bold", fontSize=8, leading=11, textColor=colors.white, alignment=TA_RIGHT),
+        "number": ParagraphStyle("ReportNumber", fontName="Helvetica", fontSize=9, leading=13, textColor=navy, alignment=TA_RIGHT),
+    }
 
-    def para(text, style="Normal"):
-        return Paragraph(escape(str(text)), styles[style])
+    def para(value, style="body"):
+        return Paragraph(escape(str(value)), styles[style])
 
-    def table(data, widths, align_right_from=1):
-        t = Table(data, colWidths=widths, repeatRows=1)
-        t.setStyle(TableStyle([
+    def data_table(headings, rows, fractions, numeric_from):
+        cells = [[para(text, "header_number" if index >= numeric_from else "header") for index, text in enumerate(headings)]]
+        cells += [[para(value, "number" if index >= numeric_from else "body") for index, value in enumerate(row)] for row in rows]
+        table = Table(cells, colWidths=[width * value for value in fractions], repeatRows=1, hAlign="LEFT")
+        table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), navy),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 9),
-            ("ALIGN", (align_right_from, 0), (-1, -1), "RIGHT"),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f2f6fa")]),
-            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d6e0ea")),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, pale]),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 10),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+            ("TOPPADDING", (0, 0), (-1, -1), 9),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+            ("LINEBELOW", (0, 0), (-1, 0), 2, teal),
+            ("LINEBELOW", (0, 1), (-1, -1), 0.35, border),
         ]))
-        return t
+        return table
 
-    range_text = f"{report['date_from'] or 'start'} to {report['date_to'] or 'today'}"
-    story = [
-        para("USP Buy & Sell - Sales & Order Report", "Title"),
-        para(f"Date range: {range_text}   |   Grouped: {report['period']}"),
-        para(f"Generated: {timezone.now().strftime('%Y-%m-%d %H:%M UTC')} by {report['generated_by']}"),
-        para("Figures are calculated from completed orders only."),
-        Spacer(1, 8 * mm),
-        table(
-            [["Total orders", "Items sold", "Total revenue", "Average order"],
-             [report["total_orders"], report["total_items_sold"], f"${report['total_sales']:,.2f}", f"${report['average_order_value']:,.2f}"]],
-            [42 * mm] * 4, align_right_from=0,
-        ),
-        Spacer(1, 8 * mm),
-        para("Top-selling items", "Heading2"),
-    ]
+    def page_chrome(canvas, document):
+        canvas.saveState()
+        page_width, page_height = A4
+        image_width = 45 * mm
+        image_height = image_width * logo_height / logo_width
+        canvas.drawImage(logo, 18 * mm, page_height - 16 * mm - image_height, width=image_width, height=image_height, mask="auto")
+        canvas.setFillColor(teal)
+        canvas.setFont("Helvetica-Bold", 8)
+        canvas.drawString(76 * mm, page_height - 19 * mm, "USP BUY & SELL  /  ADMINISTRATION")
+        canvas.setFillColor(navy)
+        canvas.setFont("Helvetica-Bold", 19)
+        canvas.drawString(76 * mm, page_height - 29 * mm, "Sales & Order Report")
+        canvas.setFillColor(muted)
+        canvas.setFont("Helvetica", 9)
+        canvas.drawString(76 * mm, page_height - 36 * mm, f"{report['period'].capitalize()} summary | Completed orders")
+        canvas.setStrokeColor(teal)
+        canvas.setLineWidth(1.3)
+        canvas.line(18 * mm, page_height - 44 * mm, page_width - 18 * mm, page_height - 44 * mm)
+        canvas.setStrokeColor(border)
+        canvas.setLineWidth(0.5)
+        canvas.line(18 * mm, 18 * mm, page_width - 18 * mm, 18 * mm)
+        canvas.setFillColor(muted)
+        canvas.setFont("Helvetica", 7.5)
+        canvas.drawString(18 * mm, 12 * mm, "USP Buy & Sell | Administrative report | Currency: FJD")
+        canvas.drawRightString(page_width - 18 * mm, 12 * mm, f"Page {document.page}")
+        canvas.restoreState()
 
-    if report["top_items"]:
-        story.append(table(
-            [["Item", "Category", "Units sold", "Revenue"]]
-            + [[Paragraph(escape(i["item_name"]), styles["Normal"]), i["category"], i["units_sold"], f"${i['revenue']:,.2f}"] for i in report["top_items"]],
-            [75 * mm, 40 * mm, 25 * mm, 30 * mm], align_right_from=2,
-        ))
+    if report["date_from"] or report["date_to"]:
+        range_text = f"{report['date_from'] or 'First recorded order'} to {report['date_to'] or 'Latest recorded order'}"
     else:
-        story.append(para("No completed orders in this date range."))
-
-    story += [Spacer(1, 8 * mm), para(f"Breakdown ({report['period']})", "Heading2")]
+        range_text = "All recorded dates"
+    metadata = Table([
+        [para("REPORTING PERIOD", "label"), para("PREPARED", "label")],
+        [para(range_text), para(generated_label)],
+        [para(f"Grouped {report['period']} | Date filters use UTC", "small"), para(f"Prepared by: {report['generated_by']}", "small")],
+    ], colWidths=[width * 0.52, width * 0.48], hAlign="LEFT")
+    metadata.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 10), ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
+    metrics = [
+        ("TOTAL ORDERS", f"{report['total_orders']:,}"),
+        ("ITEMS SOLD", f"{report['total_items_sold']:,}"),
+        ("REVENUE (FJD)", f"${report['total_sales']:,.2f}"),
+        ("AVERAGE ORDER (FJD)", f"${report['average_order_value']:,.2f}"),
+    ]
+    summary = Table([[ [para(label, "label"), Spacer(1, 5), para(value, "value")] for label, value in metrics ]], colWidths=[width / 4] * 4, hAlign="LEFT")
+    summary.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), pale), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("BOX", (0, 0), (-1, -1), 0.5, border), ("INNERGRID", (0, 0), (-1, -1), 0.5, border), ("TOPPADDING", (0, 0), (-1, -1), 14), ("BOTTOMPADDING", (0, 0), (-1, -1), 14), ("LEFTPADDING", (0, 0), (-1, -1), 10)]))
+    story = [metadata, Spacer(1, 7 * mm), summary, Spacer(1, 4 * mm), para("Completed orders only; pending and cancelled orders are excluded. Average order value is revenue divided by completed orders. All amounts are in Fijian dollars (FJD).", "small"), para("Top-selling items", "heading")]
+    if report["top_items"]:
+        story.append(data_table(["Item", "Category", "Units sold", "Revenue (FJD)"], [[item["item_name"], item["category"], f"{item['units_sold']:,}", f"${item['revenue']:,.2f}"] for item in report["top_items"]], [0.43, 0.23, 0.14, 0.20], 2))
+    else:
+        story.append(para("No completed sales were recorded for this reporting period.", "small"))
+    story.append(para(f"{report['period'].capitalize()} sales breakdown", "heading"))
     if report["rows"]:
-        story.append(table(
-            [["Period", "Orders", "Items sold", "Total sales"]]
-            + [[r["date"], r["orders"], r["items_sold"], f"${r['total_sales']:,.2f}"] for r in report["rows"]],
-            [50 * mm, 30 * mm, 35 * mm, 35 * mm],
-        ))
-
+        story.append(data_table(["Period", "Orders", "Items sold", "Revenue (FJD)"], [[row["date"], f"{row['orders']:,}", f"{row['items_sold']:,}", f"${row['total_sales']:,.2f}"] for row in report["rows"]], [0.34, 0.18, 0.20, 0.28], 1))
+    else:
+        story.append(para("No completed orders are available for this breakdown.", "small"))
     buffer = BytesIO()
-    SimpleDocTemplate(buffer, pagesize=A4, title="USP Buy & Sell Sales Report", leftMargin=18 * mm, rightMargin=18 * mm, topMargin=16 * mm, bottomMargin=16 * mm).build(story)
-    filename = f"usp-sales-report-{timezone.now().strftime('%Y%m%d-%H%M')}.pdf"
+    document = SimpleDocTemplate(buffer, pagesize=A4, title="USP Buy & Sell - Sales & Order Report", author="USP Buy & Sell", subject=f"{report['period'].capitalize()} sales and order summary", leftMargin=18 * mm, rightMargin=18 * mm, topMargin=51 * mm, bottomMargin=24 * mm)
+    document.build(story, onFirstPage=page_chrome, onLaterPages=page_chrome)
+    filename = f"usp-sales-report-{generated_local.strftime('%Y%m%d-%H%M')}.pdf"
     return buffer.getvalue(), filename

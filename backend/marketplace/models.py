@@ -1,4 +1,5 @@
 from django.db import models
+from django.core.serializers.json import DjangoJSONEncoder
 
 
 class User(models.Model):
@@ -9,6 +10,8 @@ class User(models.Model):
     password_hash = models.CharField(max_length=255)
     role = models.CharField(max_length=20, default="student")
     status = models.CharField(max_length=20, default="active")
+    suspension_reason = models.CharField(max_length=1000, default="", blank=True)
+    suspended_until = models.DateTimeField(null=True, blank=True)
     verified = models.BooleanField(default=False)
     confirmation_code = models.CharField(max_length=64, null=True, blank=True)
     authenticator_enabled = models.BooleanField(default=False)
@@ -180,6 +183,13 @@ class UserReport(models.Model):
     target_label = models.CharField(max_length=256)
     reason = models.CharField(max_length=1000)
     status = models.CharField(max_length=32, default="open")
+    listing_id = models.IntegerField(null=True, blank=True, db_index=True)
+    listing_snapshot = models.JSONField(default=dict, encoder=DjangoJSONEncoder, blank=True)
+    review_notes = models.CharField(max_length=1000, default="", blank=True)
+    reviewed_by_id = models.IntegerField(null=True, blank=True)
+    reviewed_by_username = models.CharField(max_length=64, default="", blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    email_status = models.CharField(max_length=16, default="", blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

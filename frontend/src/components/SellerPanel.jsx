@@ -1,3 +1,5 @@
+import SearchInput from "./SearchInput";
+import { searchRecords } from "../utils/search.mjs";
 import ContextHelp from "./ContextHelp";
 import React, { useEffect, useState } from "react";
 import OrderProgressTracker from "./OrderProgressTracker";
@@ -50,9 +52,7 @@ function SellerPanel({
   const [inventoryStatus, setInventoryStatus] = useState("all");
   const [inventoryPage, setInventoryPage] = useState(1);
   const summary = inventorySummary(myListings);
-  const search = inventorySearch.trim().toLowerCase();
-  const matchingListings = myListings.filter((listing) =>
-    (!search || `${listing.name} ${listing.description} ${listing.category}`.toLowerCase().includes(search)) &&
+  const matchingListings = searchRecords(myListings, inventorySearch, (listing) => [listing.name, listing.id, listing.description, listing.category, sellerListingStatus(listing)]).filter((listing) =>
     (inventoryStatus === "all" || sellerListingStatus(listing) === inventoryStatus)
   );
   const pageSize = 10;
@@ -119,7 +119,7 @@ function SellerPanel({
                   <input type="file" accept={LISTING_PHOTO_ACCEPT} onChange={onPhotoChange} aria-describedby="listing-photo-help" />
                 </label>
                 <p className="listing-photo-help" id="listing-photo-help">JPEG, PNG, WebP or AVIF. Max 5 MB.</p>
-                {isProcessingPhoto && <p role="status">Preparing photo preview…</p>}
+                {isProcessingPhoto && <p role="status">Preparing photo previewâ€¦</p>}
               </div>
 
               {listingForm.photo && (
@@ -297,7 +297,7 @@ function SellerPanel({
                 </div>
                 <label className="inventory-search">
                   <span className="sr-only">Search My Listings</span>
-                  <input type="search" placeholder="Search your listings" value={inventorySearch} onChange={(event) => { setInventorySearch(event.target.value); setInventoryPage(1); onCloseMenu(); }} />
+                  <SearchInput label="Search My Listings" placeholder="Listing, ID, category or status" value={inventorySearch} onChange={(value) => { setInventorySearch(value); setInventoryPage(1); onCloseMenu(); }} />
                 </label>
                 {(inventorySearch || inventoryStatus !== "all") && <button type="button" className="inventory-clear" onClick={() => { setInventorySearch(""); setInventoryStatus("all"); setInventoryPage(1); onCloseMenu(); }}>Clear filters</button>}
               </div>
@@ -309,7 +309,7 @@ function SellerPanel({
                 ))}
               </div>
               <p className="inventory-result-count" id="inventory-results" role="status">
-                {matchingListings.length ? `Showing ${pageStart + 1}–${pageStart + visibleListings.length} of ${matchingListings.length} listings` : "Showing 0 listings"}
+                {matchingListings.length ? `Showing ${pageStart + 1}â€“${pageStart + visibleListings.length} of ${matchingListings.length} listings` : "Showing 0 listings"}
                 {(inventorySearch || inventoryStatus !== "all") && ` (${myListings.length} total)`}
               </p>
               {matchingListings.length ? (
@@ -387,7 +387,7 @@ function SellerPanel({
                   <button type="button" className="secondary-button" disabled={currentPage === 1} onClick={() => changeInventoryPage(currentPage - 1)}>Previous</button>
                   {pageNumbers.map((page, index) => (
                     <React.Fragment key={page}>
-                      {index > 0 && page - pageNumbers[index - 1] > 1 && <span aria-hidden="true">…</span>}
+                      {index > 0 && page - pageNumbers[index - 1] > 1 && <span aria-hidden="true">â€¦</span>}
                       <button type="button" className="secondary-button" aria-label={`Page ${page}`} aria-current={page === currentPage ? "page" : undefined} onClick={() => changeInventoryPage(page)}>{page}</button>
                     </React.Fragment>
                   ))}
@@ -395,7 +395,7 @@ function SellerPanel({
                 </nav>
               )}
               <div className="seller-orders-panel">
-                <div className="field-label-row"><h3>Active Order Progress</h3><ContextHelp label="Help with order progress" topic="orders" onOpenHelp={onOpenHelp}>Track payment, preparation and handoff separately. A reservation holds stock while payment is pending. Sold out describes the listing�s remaining stock, rather than the order�s delivery progress.</ContextHelp></div>
+                <div className="field-label-row"><h3>Active Order Progress</h3><ContextHelp label="Help with order progress" topic="orders" onOpenHelp={onOpenHelp}>Track payment, preparation and handoff separately. A reservation holds stock while payment is pending. Sold out describes the listing’s remaining stock, rather than the order’s delivery progress.</ContextHelp></div>
                 {activeSellerOrders.length ? (
                   <div className="seller-order-list">
                     {activeSellerOrders.map((order) => (

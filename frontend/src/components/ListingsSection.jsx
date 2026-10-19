@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import ProductCard from "./ProductCard";
+import SearchInput from "./SearchInput";
 import PriceRangeFields from "./PriceRangeFields";
 
 function ListingsSection({
@@ -49,7 +50,7 @@ function ListingsSection({
 
       {!preview && <div className="listing-filters">
         <label>Search Items
-          <input type="search" value={searchQuery} placeholder="Item, category or seller" onChange={(event) => onSearchChange(event.target.value)} />
+          <SearchInput value={searchQuery} label="Search items" placeholder="Item, category, seller or ID" onChange={onSearchChange} />
         </label>
         <label>
           Category

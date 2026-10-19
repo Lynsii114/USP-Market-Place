@@ -28,6 +28,7 @@ from django.utils.dateparse import parse_date
 # import jwt
 # from jwt import PyJWKClient
 
+from .account_status import restore_expired_suspension
 from .constants import ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_USERNAME
 from .category_catalog import DEFAULT_CATEGORY_NAMES, canonical_category_name, builtin_category_options
 from .exceptions import ApiError
@@ -55,6 +56,7 @@ def require_active_user(user_id):
     user = User.objects.filter(id=user_id).first()
     if not user:
         raise ApiError("User not found", 404)
+    restore_expired_suspension(user)
     if user.status == "suspended":
         raise ApiError("Account is suspended", 403)
     return user
@@ -127,7 +129,8 @@ def serialize_admin_item(item):
     data = serialize_item(item)
     seller = User.objects.filter(id=item.seller_id).first()
     if seller:
-        data["seller"] = serialize_user(seller)
+        restore_expired_suspension(seller)
+        data["seller"] = serialize_user(seller, include_moderation=True)
     return data
 
 
@@ -639,6 +642,7 @@ def login_user(data):
         raise ApiError("Invalid username or password", 401)
     if user.status == "pending_verification":
         raise ApiError("Please verify your email before logging in", 403)
+    restore_expired_suspension(user)
     if user.status == "suspended":
         raise ApiError("Account is suspended", 403)
     if legacy_match:
@@ -1802,67 +1806,95 @@ def dashboard(admin_id):
 
 def list_students(admin_id, search=""):
     require_admin(admin_id)
+    User.objects.filter(role="student", status="suspended", suspended_until__lte=timezone.now()).update(status="active", updated_at=timezone.now())
     query = User.objects.filter(role="student")
     if search:
         query = query.filter(Q(username__contains=search) | Q(email__contains=search))
-    return [serialize_user(user) for user in query.order_by("-id")]
+    return [serialize_user(user, include_moderation=True) for user in query.order_by("-id")]
 
 
-def set_student_status(admin_id, student_id, status):
-    require_admin(admin_id)
-    student = find_student(student_id)
-    if not student:
-        raise ApiError("Student not found", 404)
-    student.status = status
-    student.save()
+def account_action_reason(data):
+    if not isinstance(data, dict):
+        raise ApiError("Account action details must be a JSON object", 422)
+    raw_reason = data.get("reason", "")
+    if not isinstance(raw_reason, str):
+        raise ApiError("Enter a written reason to continue", 422)
+    reason = raw_reason.strip()
+    if not reason:
+        raise ApiError("A reason is required to continue", 422)
+    if not 10 <= len(reason) <= 500:
+        raise ApiError("Provide a reason between 10 and 500 characters", 422)
+    return reason
 
-    if status == "suspended":
-        subject = "Your USP Marketplace account has been suspended"
-        message = (
-            f"Hello {student.username},\n\n"
-            "Your USP Marketplace account has been suspended by an administrator. "
-            "You will not be able to use marketplace features while your account is suspended.\n\n"
-            "If you believe this was a mistake, please contact the USP Marketplace admin team."
-        )
-        notification = "Suspension email queued for the student."
-    else:
-        subject = "Your USP Marketplace account has been reactivated"
-        message = (
-            f"Hello {student.username},\n\n"
-            "Your USP Marketplace account has been reactivated by an administrator. "
-            "You can now sign in and use marketplace features again.\n\n"
-            "Thank you for using USP Marketplace."
-        )
-        notification = "Reactivation email queued for the student."
 
-    notify_user(
-        student.id,
-        "Account suspended" if status == "suspended" else "Account reactivated",
-        "Your USP Marketplace account has been suspended by an administrator."
-        if status == "suspended"
-        else "Your USP Marketplace account has been reactivated by an administrator.",
-        "administration",
+def send_account_action_email(subject, message, email, action_label="account action"):
+    try:
+        send_email(subject, message, email, "Failed to send account notification")
+        provider = settings.EMAIL_PROVIDER
+        resend = provider == "resend" or (provider == "auto" and not settings.EMAIL_HOST and bool(settings.RESEND_API_KEY))
+        console = not resend and (provider == "console" or settings.EMAIL_BACKEND == settings.CONSOLE_EMAIL_BACKEND)
+        if console:
+            return {"email_status": "console", "message": "Email was printed to the backend terminal only; it was not delivered to the student."}
+        return {"email_status": "sent", "message": "Notification email accepted by the email provider. Inbox delivery is not guaranteed."}
+    except Exception as exc:
+        email_logger.warning("Account notification email failed: %s", describe_email_exception(exc))
+        return {"email_status": "failed", "message": f"The {action_label} succeeded, but the notification email failed. Contact the student separately and check the backend email settings."}
+
+
+def set_student_status(admin_id, student_id, status, data=None):
+    admin = require_admin(admin_id)
+    if status not in {"active", "suspended"}:
+        raise ApiError("Invalid account status", 422)
+    reason = account_action_reason(data)
+    hours = whole_number(data.get("duration_hours"), "Suspension duration", minimum=1) if status == "suspended" else None
+    if hours and hours > 8760:
+        raise ApiError("Suspension duration must be between 1 hour and 365 days", 422)
+    deadline = timezone.now() + timedelta(hours=hours) if hours else None
+    deadline_text = timezone.localtime(deadline, timezone.get_fixed_timezone(720)).strftime("%d %b %Y at %I:%M %p Fiji time (UTC+12)") if deadline else ""
+    with transaction.atomic():
+        student = User.objects.select_for_update().filter(id=student_id, role="student").first()
+        if not student:
+            raise ApiError("Student not found", 404)
+        if status == "active" and student.status != "suspended":
+            raise ApiError("Only suspended accounts can be reactivated", 409)
+        student.status = status
+        student.suspension_reason = reason if status == "suspended" else ""
+        student.suspended_until = deadline
+        student.save(update_fields=["status", "suspension_reason", "suspended_until", "updated_at"])
+        if status == "suspended":
+            title = "Account suspended"
+            details = f"Reason: {reason}\nDuration: {hours} hours. Suspension ends {deadline_text}. You can sign in again after that time using your password and authenticator."
+        else:
+            title = "Account reactivated"
+            details = f"Your suspension has been reconsidered and your account reactivated by an administrator. Reason: {reason}\nYou can now sign in using your password and authenticator."
+        notify_user(student.id, title, details, "administration", admin)
+    result = send_account_action_email(
+        f"USP Marketplace: {title.lower()}",
+        f"Hello {student.username},\n\n{details}\n\nIf you believe this action was a mistake, contact the USP Marketplace admin team.",
+        student.email,
     )
-    send_email_later(subject, message, student.email, "Failed to send account status email")
-    return {
-        "user": serialize_user(student),
-        "message": notification,
-        "email_queued": True,
-    }
+    notify_admin(title, f"{student.username}: {details} Email status: {result['email_status']}.", "administration", admin)
+    return {"user": serialize_user(student, include_moderation=True), **result}
 
 
-def delete_student(admin_id, student_id):
-    require_admin(admin_id)
-    student = find_student(student_id)
-    if not student:
-        raise ApiError("Student not found", 404)
-
-    username = student.username
-    email = student.email
-    Item.objects.filter(seller_id=student.id).delete()
-    PendingRegistration.objects.filter(email__iexact=email).delete()
-    student.delete()
-    return {"message": f"{username} was permanently deleted."}
+def delete_student(admin_id, student_id, data=None):
+    admin = require_admin(admin_id)
+    reason = account_action_reason(data)
+    with transaction.atomic():
+        student = User.objects.select_for_update().filter(id=student_id, role="student").first()
+        if not student:
+            raise ApiError("Student not found", 404)
+        username, email = student.username, student.email
+        Item.objects.filter(seller_id=student.id).delete()
+        PendingRegistration.objects.filter(email__iexact=email).delete()
+        student.delete()
+    result = send_account_action_email(
+        "Your USP Marketplace account has been deleted",
+        f"Hello {username},\n\nYour USP Marketplace account and its listings were permanently deleted by an administrator.\n\nReason: {reason}\n\nYou can no longer sign in to this account. If you believe this was a mistake, contact the USP Marketplace admin team.",
+        email,
+    )
+    notify_admin("Student account deleted", f"{username} ({email}). Reason: {reason}. Email status: {result['email_status']}.", "administration", admin)
+    return {**result, "message": f"{username} was permanently deleted. {result['message']}"}
 
 
 def list_admin_notifications(admin_id):
@@ -1926,11 +1958,12 @@ def submit_user_report(data):
 
     if target_type not in {"listing", "user"}:
         raise ApiError("Report target must be listing or user", 422)
-    if len(reason) < 8:
-        raise ApiError("Report reason must be at least 8 characters long", 422)
+    if not 8 <= len(reason) <= 1000:
+        raise ApiError("Report reason must be between 8 and 1,000 characters", 422)
 
-    target_id = data.get("target_id")
+    target_id = whole_number(data.get("target_id"), "Report target ID", minimum=1)
     target_label = str(data.get("target_label", "")).strip()
+    item = None
     if target_type == "listing":
         item = Item.objects.filter(id=target_id).first()
         if not item:
@@ -1939,8 +1972,14 @@ def submit_user_report(data):
         target_id = item.id
     elif target_id:
         target_user = User.objects.filter(id=target_id).first()
-        if target_user:
-            target_label = target_user.username
+        if not target_user:
+            raise ApiError("Reported user not found", 404)
+        target_label = target_user.username
+        target_id = target_user.id
+        if data.get("listing_id"):
+            item = Item.objects.filter(id=data["listing_id"]).first()
+            if not item or item.seller_id != target_user.id:
+                raise ApiError("The reported listing must belong to the reported seller", 422)
 
     if not target_label:
         raise ApiError("Report target is required", 422)
@@ -1952,6 +1991,8 @@ def submit_user_report(data):
         target_id=target_id or None,
         target_label=target_label,
         reason=reason,
+        listing_id=item.id if item else None,
+        listing_snapshot=serialize_item(item) if item else {},
     )
     notify_admin(
         "New user report",
@@ -2037,25 +2078,91 @@ def list_seller_reviews(seller_id):
 
 def list_user_reports(admin_id):
     require_admin(admin_id)
+    records = list(UserReport.objects.exclude(reporter_username__startswith="__test_").order_by("-id"))
+    listing_ids = {record.listing_id or record.target_id for record in records if record.listing_id or record.target_type == "listing"}
+    items = Item.objects.in_bulk(listing_ids)
+    user_ids = {record.reporter_id for record in records}
+    user_ids.update(record.target_id for record in records if record.target_type == "user" and record.target_id)
+    user_ids.update(item.seller_id for item in items.values())
+    user_ids.update((record.listing_snapshot or {}).get("seller_id") for record in records if (record.listing_snapshot or {}).get("seller_id"))
+    users = User.objects.in_bulk(user_ids)
     reports = []
-    for report_record in UserReport.objects.exclude(reporter_username__startswith="__test_").order_by("-id"):
-        serialized_report = serialize_user_report(report_record)
-        if report_record.target_type == "listing" and report_record.target_id:
-            item = Item.objects.filter(id=report_record.target_id).first()
-            if item:
-                serialized_report["target_item"] = serialize_admin_item(item)
-                seller = User.objects.filter(id=item.seller_id).first()
-                if seller:
-                    serialized_report["seller"] = serialize_user(seller)
-        elif report_record.target_type == "user" and report_record.target_id:
-            seller = User.objects.filter(id=report_record.target_id).first()
-            if seller:
-                serialized_report["seller"] = serialize_user(seller)
-        reporter = User.objects.filter(id=report_record.reporter_id).first()
-        if reporter:
-            serialized_report["reporter"] = serialize_user(reporter)
-        reports.append(serialized_report)
+    for record in records:
+        data = serialize_user_report(record)
+        listing_id = record.listing_id or (record.target_id if record.target_type == "listing" else None)
+        item = items.get(listing_id)
+        seller_id = item.seller_id if item else (record.target_id if record.target_type == "user" else (record.listing_snapshot or {}).get("seller_id"))
+        seller = users.get(seller_id)
+        data["listing_id"] = listing_id
+        data["target_item"] = serialize_item(item) if item else None
+        data["listing_available"] = item is not None
+        data["seller"] = serialize_user(seller, include_moderation=True) if seller else None
+        if data["target_item"] and seller:
+            data["target_item"]["seller"] = data["seller"]
+        reporter = users.get(record.reporter_id)
+        data["reporter"] = serialize_user(reporter, include_moderation=True) if reporter else None
+        reports.append(data)
     return reports
+
+
+def review_user_report(admin_id, report_id, data):
+    admin = require_admin(admin_id)
+    if not isinstance(data, dict):
+        raise ApiError("Action details must be a JSON object", 422)
+    action = str(data.get("action", "")).strip().lower()
+    if action not in {"warning", "delete"}:
+        raise ApiError("Choose Send warning or Delete listing", 422)
+    reason = account_action_reason(data)
+    with transaction.atomic():
+        record = UserReport.objects.select_for_update().filter(id=report_id).first()
+        if not record:
+            raise ApiError("Report not found", 404)
+        if data.get("expected_status") is not None and data["expected_status"] != record.status:
+            raise ApiError("This report has changed. Refresh the flags before taking action.", 409)
+        if record.status == "deleted" or (action == "warning" and record.status == "warned"):
+            raise ApiError("This action has already been completed for this report", 409)
+        if record.email_status == "pending":
+            raise ApiError("An email action is still processing for this report. Refresh before taking another action.", 409)
+        listing_id = record.listing_id or (record.target_id if record.target_type == "listing" else None)
+        item = Item.objects.select_for_update().filter(id=listing_id).first() if listing_id else None
+        snapshot = record.listing_snapshot or {}
+        seller_id = item.seller_id if item else (record.target_id if record.target_type == "user" else snapshot.get("seller_id"))
+        seller = User.objects.filter(id=seller_id).first()
+        if not seller or not seller.email:
+            raise ApiError("The seller account is unavailable. An email action cannot be performed.", 409)
+        listing_name = snapshot.get("name") or (item.name if item else record.target_label)
+        if action == "delete":
+            if not item or item.status == "removed":
+                raise ApiError("This listing is already deleted or is no longer available", 409)
+            # Keep the item record for existing orders and report evidence.
+            # Removed listings cannot be viewed publicly or restored by sellers.
+            item.status = "removed"
+            item.removed_reason = reason[:255]
+            item.save(update_fields=["status", "removed_reason"])
+            title = "Listing deleted"
+            details = f"An administrator deleted your listing '{listing_name}' (listing #{listing_id}) from the marketplace. Reason: {reason}"
+        else:
+            title = "Marketplace warning"
+            details = f"An administrator has issued a warning about '{listing_name}'{f' (listing #{listing_id})' if listing_id else ''}. Reason: {reason}. Please review your listing and follow marketplace rules."
+        record.status = "deleted" if action == "delete" else "warned"
+        record.review_notes = reason
+        record.reviewed_by_id = admin.id
+        record.reviewed_by_username = admin.username
+        record.reviewed_at = timezone.now()
+        record.email_status = "pending"
+        record.save(update_fields=["status", "review_notes", "reviewed_by_id", "reviewed_by_username", "reviewed_at", "email_status"])
+        notify_user(seller.id, title, details[:1000], "administration", admin)
+        notify_user(record.reporter_id, "Your report has been reviewed", f"An administrator reviewed report #{record.id} about {record.target_label} and {'deleted the listing' if action == 'delete' else 'issued a warning to the seller'}.", "administration", admin)
+    email_result = send_account_action_email(
+        f"USP Marketplace: {title}",
+        f"Hello {seller.username},\n\n{details}\n\nIf you believe this action was a mistake, contact the USP Marketplace admin team.",
+        seller.email,
+        action_label="listing action",
+    )
+    record.email_status = email_result["email_status"]
+    record.save(update_fields=["email_status"])
+    notify_admin(title, f"Report #{record.id}. {details} Email status: {record.email_status}."[:1000], "report", admin)
+    return {"report": serialize_user_report(record), "listing": serialize_item(item) if item else None, **email_result}
 
 
 def list_rating_reviews(admin_id):

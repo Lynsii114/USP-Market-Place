@@ -1,4 +1,5 @@
 import React from "react";
+import SearchInput from "./SearchInput";
 
 function HeroSection({ searchQuery, suggestions, suggestionCount, onSearchChange, onSearchSubmit, onSuggestionSelect, onViewAllResults }) {
   return (
@@ -7,14 +8,7 @@ function HeroSection({ searchQuery, suggestions, suggestionCount, onSearchChange
       <p>A simple marketplace for USP students to buy and sell items within the university community.</p>
 
       <form className="search-bar" onSubmit={onSearchSubmit}>
-        <input
-          id="marketplace-search"
-          type="text"
-          value={searchQuery}
-          onChange={(event) => onSearchChange(event.target.value)}
-          placeholder="Search for books, electronics, clothing..."
-          aria-label="Search listings"
-        />
+        <SearchInput id="marketplace-search" value={searchQuery} onChange={onSearchChange} label="Search listings" placeholder="Item, category, seller or listing ID" />
         <button type="submit">Search</button>
       </form>
 

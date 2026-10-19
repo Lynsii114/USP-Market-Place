@@ -21,24 +21,44 @@ function AdminDashboard({
   onOpenMessages,
   unreadMessageCount = 0,
   showToast,
+  initialListing = null,
 }) {
-  const [activeTab, setActiveTab] = useState("Dashboard");
+  const [activeTab, setActiveTab] = useState(initialListing ? "Listings" : "Dashboard");
   const [dashboard, setDashboard] = useState(null);
   const [students, setStudents] = useState([]);
   const [listings, setListings] = useState([]);
   const [listingPage, setListingPage] = useState(1);
   const [orders, setOrders] = useState([]);
   const [studentSearch, setStudentSearch] = useState("");
+  const [studentStatusFilter, setStudentStatusFilter] = useState("all");
   const [listingSearch, setListingSearch] = useState("");
   const [orderSearch, setOrderSearch] = useState("");
+  const [categorySearch, setCategorySearch] = useState("");
+  const [reviewSearch, setReviewSearch] = useState("");
   const [orderDate, setOrderDate] = useState("");
   const [userReports, setUserReports] = useState([]);
   const [ratingReviews, setRatingReviews] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [selectedNotification, setSelectedNotification] = useState(null);
-  const [selectedAdminListing, setSelectedAdminListing] = useState(null);
+  const [notificationToRemove, setNotificationToRemove] = useState(null);
+  const notificationBellRef = useRef(null);
+
+  const closeNotifications = () => {
+    setNotificationToRemove(null);
+    setSelectedNotification(null);
+    setIsNotificationPanelOpen(false);
+    notificationBellRef.current?.focus();
+  };
+
+  const requestNotificationRemoval = (notification) => {
+    setNotificationToRemove(notification);
+    setSelectedNotification(null);
+    setIsNotificationPanelOpen(false);
+  };
+  const [selectedAdminListing, setSelectedAdminListing] = useState(initialListing);
   const [selectedStudent, setSelectedStudent] = useState(null);
+  const [studentAction, setStudentAction] = useState(null);
   const [openStudentActionId, setOpenStudentActionId] = useState(null);
   const [openListingActionId, setOpenListingActionId] = useState(null);
   const [openCategoryActionId, setOpenCategoryActionId] = useState(null);
@@ -49,6 +69,10 @@ function AdminDashboard({
   const prefetchStartedRef = useRef(false);
 
   const isAdmin = currentUser?.role === "admin";
+  const filteredStudents = searchRecords(students, studentSearch, (student) => [student.username, student.name, student.student_id, student.id, student.email, student.status]).filter((student) => studentStatusFilter === "all" || student.status === studentStatusFilter);
+  const filteredAdminListings = searchRecords(listings, listingSearch, (listing) => [listing.name, listing.id, listing.seller_username, listing.category, listing.description, listing.status]);
+  const filteredOrders = searchRecords(orders, orderSearch, (order) => [order.id, order.item_name, order.buyer_username, order.seller_username, order.category, order.payment_method, order.payment_status, order.order_stage, order.status]).filter((order) => !orderDate || String(order.purchased_at || "").slice(0, 10) === orderDate);
+  const filteredReviews = searchRecords(ratingReviews, reviewSearch, (review) => [review.item_name, review.reviewer_username, review.seller_username, review.review, review.rating, review.id]);
   const adminId = currentUser?.id;
   const uniqueCategories = useMemo(() => {
     const seenCategories = new Set();
@@ -74,6 +98,8 @@ function AdminDashboard({
     setOpenListingActionId(null);
     document.getElementById("admin-listings-results")?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
+
+  const filteredCategories = searchRecords(uniqueCategories, categorySearch, (category) => [category.name, category.id]);
 
   const parseResponse = async (response, fallbackMessage) => {
     const responseBody = await response.text();
@@ -113,7 +139,7 @@ function AdminDashboard({
   };
 
   const loadStudents = async () => {
-    const data = await fetchAdmin(`/admin/students?search=${encodeURIComponent(studentSearch)}`, "Unable to load students");
+    const data = await fetchAdmin("/admin/students", "Unable to load students");
     setStudents(data);
     loadedTabsRef.current.add("Students");
   };
@@ -126,11 +152,7 @@ function AdminDashboard({
   };
 
   const loadOrders = async () => {
-    const params = new URLSearchParams({
-      search: orderSearch,
-      order_date: orderDate,
-    });
-    const data = await fetchAdmin(`/admin/orders?${params.toString()}`, "Unable to load orders");
+    const data = await fetchAdmin("/admin/orders", "Unable to load orders");
     setOrders(data);
     loadedTabsRef.current.add("Orders");
   };
@@ -270,6 +292,13 @@ function AdminDashboard({
     }
   };
 
+  const runSearch = async (load) => {
+    setIsLoading(true);
+    try { await load(); }
+    catch (error) { showToast(error instanceof Error ? error.message : "Unable to refresh search results."); }
+    finally { setIsLoading(false); }
+  };
+
   const refreshActiveTab = async () => {
     if (!isAdmin) {
       return;
@@ -387,7 +416,7 @@ function AdminDashboard({
       const updatedNotification = await fetchAdmin(`/admin/notifications/${notification.id}/view`, "Unable to mark notification as viewed", {
         method: "POST",
       });
-      setSelectedNotification(updatedNotification);
+      setSelectedNotification((current) => current?.id === updatedNotification.id ? updatedNotification : current);
       setNotifications((currentNotifications) =>
         currentNotifications.map((currentNotification) =>
           currentNotification.id === updatedNotification.id ? updatedNotification : currentNotification
@@ -409,38 +438,16 @@ function AdminDashboard({
       if (selectedNotification?.id === notificationId) {
         setSelectedNotification(null);
       }
+      return true;
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to remove notification");
+      return false;
     }
   };
 
-  const updateStudentStatus = async (student, action) => {
-    const verb = action === "suspend" ? "suspend" : "reactivate";
-    if (!window.confirm(`Are you sure you want to ${verb} ${student.username}?`)) {
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      const data = await fetchAdmin(`/admin/students/${student.id}/${action}`, `Unable to ${verb} student`, { method: "POST" });
-      const notificationMessage =
-        data?.message || `${student.username} was ${action === "suspend" ? "suspended" : "reactivated"}.`;
-      if (data?.user) {
-        setStudents((currentStudents) =>
-          currentStudents.map((currentStudent) => (currentStudent.id === student.id ? data.user : currentStudent))
-        );
-        if (selectedStudent?.id === student.id) {
-          setSelectedStudent(data.user);
-        }
-      }
-      setOpenStudentActionId(null);
-      loadNotifications().catch(() => {});
-      showToast(`${student.username} ${action === "suspend" ? "suspended" : "reactivated"}. ${notificationMessage}`);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : `Unable to ${verb} student`);
-    } finally {
-      setIsLoading(false);
-    }
+  const updateStudentStatus = (student, action) => {
+    setStudentAction({ student, action });
+    setOpenStudentActionId(null);
   };
 
   const moderateListing = async (listing, action) => {
@@ -461,6 +468,7 @@ function AdminDashboard({
       await loadNotifications();
       setOpenListingActionId(null);
       showToast(action === "hide" ? "Listing hidden from the marketplace." : "Listing removed from student view.");
+      setSelectedAdminListing(null);
     } catch (error) {
       showToast(error instanceof Error ? error.message : `Unable to ${action} listing`);
     } finally {
@@ -480,6 +488,7 @@ function AdminDashboard({
       await loadNotifications();
       setOpenListingActionId(null);
       showToast("Listing restored successfully.");
+      setSelectedAdminListing(null);
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to restore listing");
     } finally {
@@ -487,29 +496,29 @@ function AdminDashboard({
     }
   };
 
-  const deleteStudentPermanently = async (student) => {
-    const confirmed = window.confirm(
-      `Permanently delete ${student.username}? This removes the student account and all listings created by this student.`
-    );
-    if (!confirmed) {
-      return;
-    }
+  const deleteStudentPermanently = (student) => {
+    setStudentAction({ student, action: "delete" });
+    setOpenStudentActionId(null);
+  };
 
-    setIsLoading(true);
-    try {
-      const data = await fetchAdmin(`/admin/students/${student.id}`, "Unable to delete student", { method: "DELETE" });
-      setStudents((currentStudents) => currentStudents.filter((currentStudent) => currentStudent.id !== student.id));
-      if (selectedStudent?.id === student.id) {
-        setSelectedStudent(null);
-      }
-      setOpenStudentActionId(null);
-      loadNotifications().catch(() => {});
-      showToast(data.message || "Student permanently deleted.");
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : "Unable to delete student");
-    } finally {
-      setIsLoading(false);
+  const confirmStudentAction = async (details) => {
+    const { student, action } = studentAction;
+    const deleting = action === "delete";
+    const data = await fetchAdmin(`/admin/students/${student.id}${deleting ? "" : `/${action}`}`, `Unable to ${action} student`, {
+      method: deleting ? "DELETE" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(details),
+    });
+    setStudents((current) => deleting ? current.filter((row) => row.id !== student.id) : current.map((row) => row.id === student.id ? data.user : row));
+    setSelectedStudent((current) => current?.id === student.id ? (deleting ? null : data.user) : current);
+    if (data.user) {
+      const updateSeller = (listing) => listing?.seller_id === student.id ? { ...listing, seller: data.user } : listing;
+      setListings((current) => current.map(updateSeller));
+      setSelectedAdminListing((current) => updateSeller(current));
+      setUserReports((current) => current.map((report) => ({ ...report, ...(report.seller?.id === student.id ? { seller: data.user } : {}), ...(report.reporter?.id === student.id ? { reporter: data.user } : {}) })));
     }
+    loadNotifications().catch(() => {});
+    return data;
   };
 
   const goBack = () => {
@@ -628,14 +637,16 @@ function AdminDashboard({
 
         {activeTab === "Students" && (
           <div className="admin-table-card">
+            <div className="admin-section-toolbar"><label className="student-status-filter">Account status<select value={studentStatusFilter} onChange={(event) => setStudentStatusFilter(event.target.value)}><option value="all">All accounts</option><option value="active">Active</option><option value="suspended">Suspended</option></select></label></div>
             <AdminSearch
               value={studentSearch}
               onChange={(value) => {
                 loadedTabsRef.current.delete("Students");
                 setStudentSearch(value);
               }}
-              onSearch={loadStudents}
-              placeholder="Search name or email"
+              onSearch={() => runSearch(loadStudents)}
+              placeholder="Name, student ID or email"
+              resultCount={filteredStudents.length}
             />
             <div className="admin-table">
               <div className="admin-table-head students-grid">
@@ -646,15 +657,17 @@ function AdminDashboard({
                 <span>Registered</span>
                 <span>Actions</span>
               </div>
-              {students.map((student) => (
-                <div className="admin-table-row students-grid" key={student.id}>
-                  <span>{student.id}</span>
+              {filteredStudents.map((student) => (
+                <div className={`admin-table-row students-grid${student.status === "suspended" ? " suspended-student-row" : ""}`} key={student.id}>
+                  <span>{student.student_id || "Not provided"}</span>
                   <button type="button" className="profile-name-button" onClick={() => openUserProfile(student)}>
                     {student.username}
                   </button>
                   <span>{student.email}</span>
-                  <span className={`status-pill ${student.status}`}>{student.status}</span>
+                  <div className="student-account-status"><span className={`status-pill ${student.status}`}>{student.status === "suspended" ? "Suspended" : student.status === "active" ? "Active" : student.status}</span>{student.status === "suspended" && <small>{student.suspended_until ? `Until ${formatDate(student.suspended_until)}` : "Until admin review"}</small>}</div>
                   <span>{formatDate(student.created_at)}</span>
+                  <div className="student-row-actions">
+                  {student.status === "suspended" && <button type="button" className="secondary-button reactivate-account-button" onClick={() => updateStudentStatus(student, "reactivate")} aria-label={`Reactivate ${student.username} after reconsideration`}>Reactivate</button>}
                   <div className="admin-action-dropdown">
                     <button
                       type="button"
@@ -677,11 +690,7 @@ function AdminDashboard({
                         >
                           View
                         </button>
-                        {student.status === "suspended" ? (
-                          <button type="button" onClick={() => updateStudentStatus(student, "reactivate")}>
-                            Reactivate
-                          </button>
-                        ) : (
+                        {student.status !== "suspended" && (
                           <button type="button" onClick={() => updateStudentStatus(student, "suspend")}>
                             Suspend
                           </button>
@@ -693,8 +702,10 @@ function AdminDashboard({
                       </div>
                     )}
                   </div>
+                  </div>
                 </div>
               ))}
+              {!filteredStudents.length && <p className="empty-state">{studentStatusFilter === "suspended" ? "No suspended accounts match your search." : "No student accounts match your filters."}</p>}
             </div>
           </div>
         )}
@@ -743,6 +754,7 @@ function AdminDashboard({
                         {listing.seller_username}
                       </button>
                       <small>{listing.contact || "No contact listed"}</small>
+                      {listing.seller?.status === "suspended" && <><span className="status-pill suspended">Account suspended</span><button type="button" className="secondary-button reactivate-account-button" onClick={() => updateStudentStatus(listing.seller, "reactivate")}>Reactivate account</button></>}
                     </div>
                     <span className="admin-category-pill">{listing.category}</span>
                     <strong className="admin-money">${Number(listing.price).toFixed(2)}</strong>
@@ -817,14 +829,7 @@ function AdminDashboard({
         {activeTab === "Orders" && (
           <div className="admin-table-card">
             <div className="admin-filters">
-              <input
-                value={orderSearch}
-                onChange={(event) => {
-                  loadedTabsRef.current.delete("Orders");
-                  setOrderSearch(event.target.value);
-                }}
-                placeholder="Order ID, buyer, seller, or item"
-              />
+              <SearchInput value={orderSearch} onChange={setOrderSearch} label="Search orders" placeholder="Order ID, buyer, seller, item or payment status" onSearch={() => runSearch(loadOrders)} />
               <input
                 type="date"
                 value={orderDate}
@@ -833,11 +838,12 @@ function AdminDashboard({
                   setOrderDate(event.target.value);
                 }}
               />
-              <button type="button" className="auth-submit" onClick={loadOrders}>
+              <button type="button" className="auth-submit" onClick={() => runSearch(loadOrders)}>
                 Search
               </button>
             </div>
-            <AdminOrdersTable orders={orders} formatDate={formatDate} onViewProfile={openUserProfile} />
+            <p className="search-result-count" role="status">{filteredOrders.length} matching orders</p>
+            <AdminOrdersTable orders={filteredOrders} formatDate={formatDate} onViewProfile={openUserProfile} />
           </div>
         )}
 
@@ -847,15 +853,17 @@ function AdminDashboard({
               <h2>Marketplace Categories</h2>
               <div className="admin-section-actions">
                 <span className="admin-record-count">
-                  {uniqueCategories.length} {uniqueCategories.length === 1 ? "category" : "categories"}
+                  {filteredCategories.length} {filteredCategories.length === 1 ? "category" : "categories"}
                 </span>
                 <button type="button" className="auth-submit" onClick={() => setActiveTab("Add Category")}>
                   Add Category
                 </button>
               </div>
             </div>
+            <AdminSearch value={categorySearch} onChange={setCategorySearch} placeholder="Search categories by name or ID" />
+            {!filteredCategories.length && <p className="empty-state">No categories match your search.</p>}
             <div className="admin-category-grid">
-              {uniqueCategories.map((category) => (
+              {filteredCategories.map((category) => (
                 <div className="admin-category-card" key={`${category.created_at ? "stored" : "default"}-${category.name}-${category.id}`}>
                   {category.created_at && !category.built_in && <div className="admin-category-card-actions">
                     <button
@@ -936,72 +944,30 @@ function AdminDashboard({
 
         {activeTab === "Reports" && <ReportsPanel apiUrl={apiUrl} adminId={adminId} showToast={showToast} />}
 
-        {activeTab === "Flags" && (
-          <div className="admin-table-card">
-            <div className="admin-section-toolbar">
-              <h2>Flags</h2>
-              <span className="admin-record-count">
-                {userReports.length} {userReports.length === 1 ? "report" : "reports"}
-              </span>
-            </div>
-            <div className="admin-table">
-              <div className="admin-table-head user-reports-grid">
-                <span>Reporter</span>
-                <span>Target</span>
-                <span>Seller</span>
-                <span>Reason</span>
-                <span>Status</span>
-                <span>Date</span>
-              </div>
-              {userReports.length ? (
-                userReports.map((reportRecord) => (
-                  <div className="admin-table-row user-reports-grid" key={reportRecord.id}>
-                    <button type="button" className="profile-name-button" onClick={() => openUserProfile(reportRecord.reporter)}>
-                      {reportRecord.reporter_username}
-                    </button>
-                    <div className="flag-target">
-                      <strong>{reportRecord.target_label}</strong>
-                      {reportRecord.target_item ? (
-                        <button type="button" onClick={() => setSelectedAdminListing(reportRecord.target_item)}>
-                          View item
-                        </button>
-                      ) : (
-                        <span>{reportRecord.target_type}</span>
-                      )}
-                    </div>
-                    <div className="flag-target">
-                      {reportRecord.seller ? (
-                        <button
-                          type="button"
-                          className="profile-name-button"
-                          onClick={() => openUserProfile(reportRecord.seller)}
-                        >
-                          {reportRecord.seller.username}
-                        </button>
-                      ) : (
-                        <span>Not available</span>
-                      )}
-                    </div>
-                    <span>{reportRecord.reason}</span>
-                    <span className={`status-pill ${reportRecord.status}`}>{reportRecord.status}</span>
-                    <span>{formatDate(reportRecord.created_at)}</span>
-                  </div>
-                ))
-              ) : (
-                <p className="empty-state">No user reports submitted.</p>
-              )}
-            </div>
-          </div>
-        )}
+        {activeTab === "Flags" && <FlagReviewPanel
+          reports={userReports}
+          onRefresh={loadUserReports}
+          onViewUser={openUserProfile}
+          onSave={async (report, details) => {
+            const result = await fetchAdmin(`/admin/user-reports/${report.id}`, "Unable to save report review", {
+              method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(details),
+            });
+            setUserReports((current) => current.map((row) => row.id === report.id ? { ...row, ...result.report, target_item: result.listing } : row));
+            loadNotifications().catch(() => {});
+            loadListings().catch(() => {});
+            return result;
+          }}
+        />}
 
         {activeTab === "Reviews" && (
           <div className="admin-table-card">
             <div className="admin-section-toolbar">
               <h2>Reviews</h2>
               <span className="admin-record-count">
-                {ratingReviews.length} {ratingReviews.length === 1 ? "review" : "reviews"}
+                {filteredReviews.length} {filteredReviews.length === 1 ? "review" : "reviews"}
               </span>
             </div>
+            <AdminSearch value={reviewSearch} onChange={setReviewSearch} placeholder="Listing, reviewer, seller, rating or review text" />
             <div className="admin-table">
               <div className="admin-table-head ratings-grid">
                 <span>Reviewer</span>
@@ -1011,8 +977,8 @@ function AdminDashboard({
                 <span>Review</span>
                 <span>Date</span>
               </div>
-              {ratingReviews.length ? (
-                ratingReviews.map((reviewRecord) => (
+              {filteredReviews.length ? (
+                filteredReviews.map((reviewRecord) => (
                   <div className="admin-table-row ratings-grid" key={reviewRecord.id}>
                     <button type="button" className="profile-name-button" onClick={() => openUserProfile(reviewRecord.reviewer)}>
                       {reviewRecord.reviewer_username}
@@ -1027,7 +993,7 @@ function AdminDashboard({
                   </div>
                 ))
               ) : (
-                <p className="empty-state">No ratings or reviews submitted.</p>
+                <p className="empty-state">No reviews match your search.</p>
               )}
             </div>
           </div>
@@ -1044,8 +1010,8 @@ function AdminDashboard({
                 </span>
                 <h3>{selectedNotification.title}</h3>
               </div>
-              <button type="button" className="close-button" onClick={() => setSelectedNotification(null)} aria-label="Close">
-                x
+              <button type="button" className="secondary-button" onClick={closeNotifications} aria-label="Close notification">
+                Close
               </button>
             </div>
             <p>{selectedNotification.message}</p>
@@ -1064,13 +1030,16 @@ function AdminDashboard({
               <span>{formatDate(selectedNotification.created_at)}</span>
             </div>
             <div className="admin-detail-actions">
-              <button type="button" className="danger-outline-button" onClick={() => removeNotification(selectedNotification.id)}>
+              <button type="button" className="danger-outline-button" onClick={() => requestNotificationRemoval(selectedNotification)}>
+                <NotificationTrashIcon />
                 Remove Notification
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {notificationToRemove && <NotificationDismissDialog notification={notificationToRemove} onConfirm={removeNotification} onClose={closeNotifications} />}
 
       {selectedAdminListing && (
         <div className="auth-modal-backdrop" onClick={() => setSelectedAdminListing(null)}>
@@ -1116,9 +1085,19 @@ function AdminDashboard({
                 <p>{selectedAdminListing.removed_reason}</p>
               </div>
             ) : null}
+            <div className="admin-detail-actions">
+              {selectedAdminListing.status === "hidden" || selectedAdminListing.status === "removed" ? (
+                <button type="button" className="secondary-button" disabled={isLoading} onClick={() => restoreListing(selectedAdminListing)}>Restore listing</button>
+              ) : (
+                <button type="button" className="secondary-button" disabled={isLoading} onClick={() => moderateListing(selectedAdminListing, "hide")}>Hide listing</button>
+              )}
+              {selectedAdminListing.status !== "removed" && <button type="button" className="danger-outline-button" disabled={isLoading} onClick={() => moderateListing(selectedAdminListing, "remove")}>Remove listing</button>}
+            </div>
           </div>
         </div>
       )}
+
+      {studentAction && <StudentActionDialog student={studentAction.student} action={studentAction.action} onConfirm={confirmStudentAction} onClose={() => setStudentAction(null)} />}
 
       {selectedStudent && (
         <div className="auth-modal-backdrop" onClick={() => setSelectedStudent(null)}>
@@ -1134,20 +1113,24 @@ function AdminDashboard({
             </div>
             <div className="admin-listing-detail-grid">
               <span>Student ID</span>
-              <strong>{selectedStudent.student_id || selectedStudent.id}</strong>
+              <strong>{selectedStudent.student_id || "Not provided"}</strong>
               <span>Email</span>
               <strong>{selectedStudent.email}</strong>
               <span>Role</span>
               <strong>{selectedStudent.role}</strong>
               <span>Status</span>
               <strong>{selectedStudent.status}</strong>
+              {selectedStudent.status === "suspended" && <>
+                <span>Suspension reason</span><strong>{selectedStudent.suspension_reason || "No reason recorded (legacy suspension)"}</strong>
+                <span>Suspended until</span><strong>{selectedStudent.suspended_until ? `${formatDate(selectedStudent.suspended_until)} (your local time)` : "Manual reactivation required (legacy suspension)"}</strong>
+              </>}
               <span>Registered</span>
               <strong>{formatDate(selectedStudent.created_at)}</strong>
             </div>
             <div className="admin-detail-actions">
               {selectedStudent.status === "suspended" ? (
                 <button type="button" className="secondary-button" onClick={() => updateStudentStatus(selectedStudent, "reactivate")}>
-                  Reactivate
+                  Reactivate after reconsideration
                 </button>
               ) : (
                 <button type="button" className="danger-outline-button" onClick={() => updateStudentStatus(selectedStudent, "suspend")}>
@@ -1165,13 +1148,12 @@ function AdminDashboard({
   );
 }
 
-function AdminSearch({ value, onChange, onSearch, placeholder }) {
+function AdminSearch({ value, onChange, onSearch, placeholder, resultCount }) {
   return (
     <div className="admin-filters">
-      <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
-      <button type="button" className="auth-submit" onClick={onSearch}>
-        Search
-      </button>
+      <SearchInput value={value} onChange={onChange} onSearch={onSearch} label={placeholder || "Search records"} placeholder={placeholder} />
+      {onSearch && <button type="button" className="auth-submit" onClick={onSearch}>Search</button>}
+      {resultCount !== undefined && <span className="search-result-count" role="status">{resultCount} results</span>}
     </div>
   );
 }
