@@ -23,6 +23,22 @@ DATABASE_URL=mysql+pymysql://user:password@localhost:3306/usp_marketplace
 
 The app will create tables automatically on startup.
 
+Local report load demo:
+
+From the repository root, seed showcase listings first, then add 1,000 completed
+purchase records for testing the daily, weekly and monthly reports:
+
+```powershell
+backend/.venv/Scripts/python.exe backend/manage.py seed_inventory_demo --settings=usp_backend.local_settings --count 1000
+backend/.venv/Scripts/python.exe backend/manage.py seed_report_demo --settings=usp_backend.local_settings
+```
+
+These commands use only `backend/inventory-demo.db` and refuse production
+settings. The report orders span the preceding 365 days, cover the seeded
+categories, and vary in price and quantity. Repeating the report command does
+not duplicate its 1,000 tagged orders or change listing stock. Existing orders
+are preserved, so the total shown in Reports can exceed 1,000.
+
 Email verification:
 
 For local development (`DEBUG=1`), the backend sends verification emails through SMTP when `EMAIL_HOST`, `EMAIL_HOST_USER`, and `EMAIL_HOST_PASSWORD` are configured. If the SMTP username or password is missing, verification codes are printed in the backend terminal instead. Configure `EMAIL_HOST=smtp.gmail.com`, `EMAIL_PORT=587`, `EMAIL_USE_TLS=1`, `EMAIL_USE_SSL=0`, `EMAIL_HOST_USER` as your Gmail address, `EMAIL_HOST_PASSWORD` as your current Google App Password, and `DEFAULT_FROM_EMAIL` as the same address. Remove spaces from the app password if Google displays it in groups. If Gmail closes the connection using port 587, try its implicit-SSL endpoint instead: set `EMAIL_PORT=465`, `EMAIL_USE_TLS=0`, and `EMAIL_USE_SSL=1`. Do not set both TLS and SSL to `1`.
@@ -56,9 +72,31 @@ Successful simulated digital payments create an order and update listing stock i
 
 Listing payment details:
 
-Sellers can select Cash, MyCash, or M-PAiSA for a listing. MyCash and M-PAiSA require a valid phone number; Cash does not. The API never includes the receiving number in public listing responses. It is included only for the listing's seller or the buyer while that listing is actively reserved for them. This listing preference is informational and does not change the simulated checkout method or authorize a real transfer. The access check follows the API's existing caller-supplied user-ID convention; because requests are not authenticated, it does not prevent a client from forging another user's ID.
+Sellers can select Cash, MyCash, or M-PAiSA for a listing. MyCash and M-PAiSA require a valid phone number; Cash does not. The API never includes the receiving number in public listing responses. It is included only for the listing's seller or the buyer while that listing is actively reserved for them. This listing preference is informational and does not change the simulated checkout method or authorize a real transfer. Protected requests use signed access tokens, and the server checks acting user IDs against the signed-in account.
 
 Password reset:
 
 
-Users can select `Forgot password?` on the login page. The backend sends a six-digit reset code to the registered email. The code expires after 10 minutes, allows at most five attempts, and can only be used once. After resetting the password, Microsoft Authenticator is still required at login.
+Users can select `Forgot password?` on the login page. The backend sends a six-digit reset code to the registered email. The code expires after 10 minutes, allows at most five attempts, and can only be used once. After resetting the password, authenticator verification is required only for accounts that have enabled it.
+
+
+### Existing databases and multiple-unit listings
+
+The listing form stores the multiple-unit choice in `items.multiple_units`, so a
+listing remains a multiple-unit listing when its remaining stock reaches one.
+For an existing database with automatic schema upgrades disabled, run this once
+using the appropriate settings before starting the updated backend:
+
+```powershell
+# Isolated local demo database
+.\.venv\Scripts\python.exe manage.py upgrade_listing_quantities --settings=usp_backend.local_settings
+```
+
+For a deployed database, run `python manage.py upgrade_listing_quantities` in its
+configured environment during deployment. The command adds the missing column
+and marks existing listings with multiple stock or recorded paid units as
+multiple-unit listings. Repeating it does not overwrite seller choices.
+
+Unpaid orders hold their requested quantities. Seller-created reservations hold
+one unit. Remaining units can be purchased by other buyers. Fully reserved
+listings are visible only to their seller and buyers holding a reservation.

@@ -1,14 +1,11 @@
+import Breadcrumbs from "./Breadcrumbs";
 import { apiFetch as fetch } from "../config/request";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReportsPanel from "./ReportsPanel";
-import SearchInput from "./SearchInput";
-import { searchRecords } from "../utils/search.mjs";
-import FlagReviewPanel from "./FlagReviewPanel";
-import StudentActionDialog from "./StudentActionDialog";
-import WorkspaceSwitcher from "./WorkspaceSwitcher";
-import NotificationDismissDialog, { NotificationTrashIcon } from "./NotificationDismissDialog";
+import NotificationsPage from "./NotificationsPage";
 
-const adminTabs = ["Dashboard", "Students", "Listings", "Orders", "Categories", "Reports", "Flags", "Reviews"];
+const adminTabs = ["Dashboard", "Students", "Listings", "Orders", "Categories", "Reports", "Flags", "Reviews", "Notifications"];
+const ADMIN_LISTINGS_PAGE_SIZE = 20;
 
 function AdminDashboard({
   apiUrl,
@@ -21,6 +18,8 @@ function AdminDashboard({
   onLogin,
   onLogout,
   onMarketplace,
+  onOpenMessages,
+  unreadMessageCount = 0,
   showToast,
   initialListing = null,
 }) {
@@ -28,6 +27,7 @@ function AdminDashboard({
   const [dashboard, setDashboard] = useState(null);
   const [students, setStudents] = useState([]);
   const [listings, setListings] = useState([]);
+  const [listingPage, setListingPage] = useState(1);
   const [orders, setOrders] = useState([]);
   const [studentSearch, setStudentSearch] = useState("");
   const [studentStatusFilter, setStudentStatusFilter] = useState("all");
@@ -40,7 +40,6 @@ function AdminDashboard({
   const [ratingReviews, setRatingReviews] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [notifications, setNotifications] = useState([]);
-  const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
   const [selectedNotification, setSelectedNotification] = useState(null);
   const [notificationToRemove, setNotificationToRemove] = useState(null);
   const notificationBellRef = useRef(null);
@@ -86,6 +85,19 @@ function AdminDashboard({
       return true;
     });
   }, [categories]);
+  const listingPageCount = Math.max(1, Math.ceil(listings.length / ADMIN_LISTINGS_PAGE_SIZE));
+  const currentListingPage = Math.min(listingPage, listingPageCount);
+  const listingStart = (currentListingPage - 1) * ADMIN_LISTINGS_PAGE_SIZE;
+  const visibleListings = listings.slice(listingStart, listingStart + ADMIN_LISTINGS_PAGE_SIZE);
+  const listingPageNumbers = [...new Set([1, currentListingPage - 1, currentListingPage, currentListingPage + 1, listingPageCount])]
+    .filter((page) => page >= 1 && page <= listingPageCount)
+    .sort((a, b) => a - b);
+
+  const changeListingPage = (page) => {
+    setListingPage(page);
+    setOpenListingActionId(null);
+    document.getElementById("admin-listings-results")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   const filteredCategories = searchRecords(uniqueCategories, categorySearch, (category) => [category.name, category.id]);
 
@@ -132,9 +144,10 @@ function AdminDashboard({
     loadedTabsRef.current.add("Students");
   };
 
-  const loadListings = async () => {
-    const data = await fetchAdmin("/admin/listings", "Unable to load listings");
+  const loadListings = async (resetPage = false) => {
+    const data = await fetchAdmin(`/admin/listings?search=${encodeURIComponent(listingSearch)}`, "Unable to load listings");
     setListings(data);
+    if (resetPage) setListingPage(1);
     loadedTabsRef.current.add("Listings");
   };
 
@@ -529,13 +542,13 @@ function AdminDashboard({
         <section className="admin-access-panel">
           <img src={logo} alt="USP logo" />
           <h1>Admin Access Required</h1>
-          <p>Only active USP Buy & Sell administrators can open this dashboard.</p>
+          <p>Only active USP Marketplace administrators can open this dashboard.</p>
           <div className="admin-access-actions">
             <button type="button" className="auth-submit" onClick={onLogin}>
               Admin Login
             </button>
             <button type="button" className="secondary-button" onClick={onMarketplace}>
-              Back to USP Buy & Sell
+              Back to USP Marketplace
             </button>
           </div>
         </section>
@@ -549,7 +562,7 @@ function AdminDashboard({
         <div className="admin-brand">
           <img src={logo} alt="USP logo" />
           <div>
-            <strong>USP Buy & Sell</strong>
+            <strong>USP Marketplace</strong>
             <span>Administrator</span>
           </div>
         </div>
@@ -571,6 +584,7 @@ function AdminDashboard({
       </aside>
 
       <section className="admin-content">
+        <Breadcrumbs items={[{ label: "Home", onClick: onMarketplace }, { label: "Administration", onClick: () => setActiveTab("Dashboard") }, { label: activeTab }]} />
         <div className="admin-topbar">
           <button
             type="button"
@@ -582,80 +596,27 @@ function AdminDashboard({
             <span aria-hidden="true">‹</span>
           </button>
           <div className="admin-page-title">
-            {activeTab !== "Categories" && <h1>{activeTab === "Students" ? "Student accounts" : activeTab}</h1>}
+            {activeTab !== "Categories" && activeTab !== "Notifications" && <h1>{activeTab}</h1>}
           </div>
           <div className="admin-topbar-actions">
-            <div className="notification-popover-anchor">
-              <button
-                type="button"
-                className="icon-nav-button notification-icon-button"
-                ref={notificationBellRef}
-                onClick={() => setIsNotificationPanelOpen((isOpen) => !isOpen)}
-                aria-label="Notifications"
-                aria-expanded={isNotificationPanelOpen}
-              >
-                <span aria-hidden="true">&#128276;</span>
-                {unreadNotifications.length > 0 && <span className="notification-count" aria-label={`${unreadNotifications.length} unread notifications`} title={`${unreadNotifications.length} unread notifications`}>{unreadNotifications.length > 10 ? "10+" : unreadNotifications.length}</span>}
-              </button>
-              {isNotificationPanelOpen && (
-                <div className="notification-center-modal">
-                  <div className="notification-center-header">
-                    <div>
-                      <h3>Notifications</h3>
-                    </div>
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => setIsNotificationPanelOpen(false)}
-                      aria-label="Close notifications"
-                    >
-                      Close
-                    </button>
-                  </div>
-                  <div className="notification-center-summary">
-                    <span>{notifications.length} total</span>
-                    <span>{unreadNotifications.length} unread</span>
-                  </div>
-                  <div className="notification-center-list">
-                    {notifications.length ? (
-                      notifications.map((notification) => (
-                        <div className={notification.is_read ? "notification-row viewed" : "notification-row unread"} key={notification.id}>
-                          <button
-                            type="button"
-                            className="notification-item"
-                            onClick={() => {
-                              setIsNotificationPanelOpen(false);
-                              openNotification(notification);
-                            }}
-                          >
-                            <span>{notification.title}</span>
-                            <small>{notification.is_read ? "Viewed" : "New"}</small>
-                            <p>{notification.message}</p>
-                            <time dateTime={notification.created_at}>{formatDate(notification.created_at)}</time>
-                          </button>
-                          <button
-                            type="button"
-                            className="notification-remove-button"
-                            onClick={() => requestNotificationRemoval(notification)}
-                            aria-label={`Remove notification: ${notification.title}`}
-                            title="Remove notification"
-                          >
-                            <NotificationTrashIcon />
-                          </button>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="empty-state">No admin notifications yet.</p>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-            <WorkspaceSwitcher active="admin" onMarketplace={onMarketplace} />
+            <button type="button" className="secondary-button" onClick={onOpenMessages}>
+              Messages{unreadMessageCount > 0 ? ` (${unreadMessageCount} unread)` : ""}
+            </button>
+            <button type="button" className={activeTab === "Notifications" ? "icon-nav-button notification-icon-button active" : "icon-nav-button notification-icon-button"} onClick={() => setActiveTab("Notifications")} aria-label="Notifications" aria-current={activeTab === "Notifications" ? "page" : undefined}>
+              <span aria-hidden="true">&#128276;</span>
+              {unreadNotifications.length > 0 && <span className="notification-count">{unreadNotifications.length}</span>}
+            </button>
+            <button type="button" className="secondary-button" onClick={onMarketplace}>
+              USP Marketplace
+            </button>
           </div>
         </div>
 
         {isLoading && <p className="admin-loading">Loading admin data...</p>}
+
+        {activeTab === "Notifications" && (
+          <NotificationsPage notifications={notifications} onBack={() => setActiveTab("Dashboard")} onOpen={openNotification} onRemove={removeNotification} />
+        )}
 
         {activeTab === "Dashboard" && (
           <>
@@ -750,19 +711,21 @@ function AdminDashboard({
         )}
 
         {activeTab === "Listings" && (
-          <div className="admin-table-card">
+          <div className="admin-table-card" id="admin-listings-results">
             <div className="admin-section-toolbar">
               <AdminSearch
                 value={listingSearch}
                 onChange={(value) => {
                   loadedTabsRef.current.delete("Listings");
                   setListingSearch(value);
+                  setListingPage(1);
+                  setOpenListingActionId(null);
                 }}
-                onSearch={() => runSearch(loadListings)}
-                placeholder="Listing, ID, seller or category"
+                onSearch={() => loadListings(true)}
+                placeholder="Search listing, seller, or category"
               />
               <span className="admin-record-count">
-                {filteredAdminListings.length} {filteredAdminListings.length === 1 ? "listing" : "listings"}
+                {listings.length ? `Showing ${listingStart + 1}–${Math.min(listingStart + ADMIN_LISTINGS_PAGE_SIZE, listings.length)} of ${listings.length} listings` : "0 listings"}
               </span>
             </div>
             <div className="admin-table">
@@ -776,8 +739,8 @@ function AdminDashboard({
                 <span>Date</span>
                 <span>Actions</span>
               </div>
-              {filteredAdminListings.length ? (
-                filteredAdminListings.map((listing) => (
+              {listings.length ? (
+                visibleListings.map((listing) => (
                   <div className="admin-table-row admin-listing-row listings-grid" key={listing.id}>
                     <div className="admin-listing-name">
                       {listing.photo ? <img src={listing.photo} alt={listing.name} /> : <span>{listing.category?.charAt(0) || "I"}</span>}
@@ -848,6 +811,18 @@ function AdminDashboard({
                 <p className="empty-state">No listings found.</p>
               )}
             </div>
+            {listingPageCount > 1 && (
+              <nav className="inventory-pagination" aria-label="Admin listing pages">
+                <button type="button" className="secondary-button" disabled={currentListingPage === 1} onClick={() => changeListingPage(currentListingPage - 1)}>Previous</button>
+                {listingPageNumbers.map((page, index) => (
+                  <React.Fragment key={page}>
+                    {index > 0 && page - listingPageNumbers[index - 1] > 1 && <span aria-hidden="true">…</span>}
+                    <button type="button" className="secondary-button" aria-label={`Page ${page}`} aria-current={page === currentListingPage ? "page" : undefined} onClick={() => changeListingPage(page)}>{page}</button>
+                  </React.Fragment>
+                ))}
+                <button type="button" className="secondary-button" disabled={currentListingPage === listingPageCount} onClick={() => changeListingPage(currentListingPage + 1)}>Next</button>
+              </nav>
+            )}
           </div>
         )}
 

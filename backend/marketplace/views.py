@@ -1,7 +1,8 @@
+import logging
+import uuid
+
 from django.db import DatabaseError, connection
 from django.http import HttpResponse
-import logging
-
 from django.views.decorators.csrf import csrf_exempt
 
 from . import reporting, services
@@ -109,6 +110,7 @@ def login(request):
 
 
 @csrf_exempt
+@csrf_exempt
 def verify_authenticator(request):
     if request.method != "POST":
         return method_not_allowed()
@@ -173,6 +175,7 @@ def purchase_item(request, item_id):
     data = {
         "payment_method": "cash",
         "delivery_method": "self_pickup",
+        "checkout_id": uuid.uuid4().hex,
         **body,
         "items": [{
             "item_id": item_id,

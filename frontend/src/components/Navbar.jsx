@@ -16,6 +16,7 @@ function Navbar({
   onOpenCart,
   onOpenAccountPage,
   onOpenAuth,
+  onOpenHelp,
   onLogout,
   onNotificationView,
   onNotificationRemove,
@@ -88,7 +89,7 @@ function Navbar({
     <header className={isNavHidden ? "navbar navbar-hidden" : "navbar"}>
       <div className="brand">
         <img src={logo} alt="USP logo" className="usp-logo" />
-        <span>USP Online Marketplace</span>
+        <span>USP Marketplace</span>
       </div>
 
       <nav className="nav-links">
@@ -111,6 +112,9 @@ function Navbar({
               <span>My Activity</span>
             </button>
             <div className="nav-dropdown-menu activity-menu">
+              <button type="button" onClick={() => onOpenAccountPage("dashboard")}>
+                My Dashboard
+              </button>
               <div className="activity-menu-group">
                 <strong>Buying</strong>
                 <button type="button" onClick={onOpenPurchases}>
@@ -129,18 +133,13 @@ function Navbar({
                   My Sales
                 </button>
               </div>
-              <div className="activity-menu-group">
-                <strong>Other</strong>
-                <button type="button" onClick={onOpenPurchases}>
-                  <span aria-hidden="true">★</span>
-                  Reviews & Ratings
-                </button>
-              </div>
+
             </div>
           </div>
         ) : null}
         {!isAdmin && <button type="button" className={`${navClass("messages")} nav-symbol-button nav-badge-button`} onClick={() => onOpenAccountPage("messages")} aria-label="Messages" title="Messages">
           <span aria-hidden="true">✉</span>
+          <span className="nav-label">Messages</span>
           {unreadMessageCount > 0 && <span className="notification-count">{unreadMessageCount}</span>}
         </button>}
         <div className="nav-actions">
@@ -184,12 +183,13 @@ function Navbar({
             <span className="cart-icon" aria-hidden="true">
               &#128722;
             </span>
+            <span className="nav-label">Cart</span>
             {cartCount > 0 && <span className="cart-count">{cartCount}</span>}
           </button>}
           {currentUser ? (
             <div className="nav-dropdown account-dropdown">
               <button type="button" className={activePage === "account" ? "nav-item nav-badge-button nav-symbol-button active" : "nav-item nav-badge-button nav-symbol-button"} aria-label="My account" title="Account">
-                <span aria-hidden="true">&#128100;</span>
+                <span aria-hidden="true">&#128100;</span><span className="nav-label">Account</span>
               </button>
               <div className="nav-dropdown-menu account-menu">
                 {!isAdmin && <><button type="button" onClick={() => onOpenAccountPage("profile")}>
@@ -224,7 +224,3 @@ function Navbar({
 }
 
 export default Navbar;
-
-
-
-

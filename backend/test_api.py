@@ -39,6 +39,8 @@ def cleanup_test_records():
     RatingReview.objects.filter(reviewer_username__startswith="__test_").delete()
     Purchase.objects.filter(item_name__startswith="__test_").delete()
     Item.objects.filter(name__startswith="__test_").delete()
+    Purchase.objects.filter(buyer_username__startswith="__test_").delete()
+    Purchase.objects.filter(seller_username__startswith="__test_").delete()
     User.objects.filter(username__startswith="__test_").delete()
     PendingRegistration.objects.filter(username__startswith="__test_").delete()
     PasswordReset.objects.filter(user__username__startswith="__test_").delete()
@@ -59,10 +61,8 @@ def test_health_check():
     assert response.json() == {"status": "ok"}
 
 
-@override_settings(ALLOW_NON_USP_EMAILS=True)
 def test_signup_login_and_create_hidden_listing():
     payload = unique_student_payload()
-    payload["email"] = f"test{payload['username'].rsplit('_', 1)[-1]}@gmail.com"
     with patch("marketplace.services.send_email") as send_email:
         signup = client.post("/api/users/signup", payload, content_type="application/json")
         verification_message = send_email.call_args.args[1]
@@ -83,8 +83,11 @@ def test_signup_login_and_create_hidden_listing():
         content_type="application/json",
     )
     assert verification.status_code == 200
-    assert verification.json()["authenticator_setup_required"] is True
+    assert verification.json()["authenticator_setup_offer"] is True
     user = User.objects.get(id=verification.json()["user_id"])
+    assert verification.json()["authenticator_qr"].startswith("data:image/png;base64,")
+    assert user.authenticator_secret
+    assert user.authenticator_enabled is False
     assert User.objects.filter(email=payload["email"]).exists()
     assert not PendingRegistration.objects.filter(email=payload["email"]).exists()
 
@@ -95,8 +98,10 @@ def test_signup_login_and_create_hidden_listing():
     )
     assert login.status_code == 200
     login_data = login.json()
-    assert login_data["authenticator_setup_required"] is True
+    assert login_data["authenticator_setup_offer"] is True
+    assert login_data["user"]["id"] == user.id
     assert login_data["authenticator_qr"].startswith("data:image/png;base64,")
+
     authenticator = client.post(
         "/api/users/verify-authenticator",
         {"user_id": login_data["user_id"], "code": __import__("pyotp").TOTP(login_data["authenticator_secret"]).now(), "login_challenge": login_data["login_challenge"]},
@@ -104,6 +109,14 @@ def test_signup_login_and_create_hidden_listing():
     )
     assert authenticator.status_code == 200
     assert authenticator.json()["user"]["id"] == user.id
+
+    mfa_login = client.post(
+        "/api/users/login",
+        {"username": payload["username"], "password": payload["password"]},
+        content_type="application/json",
+    )
+    assert mfa_login.status_code == 200
+    assert mfa_login.json()["authenticator_required"] is True
 
     listing = client.post(
         "/api/items",
@@ -276,11 +289,8 @@ def test_payment_number_is_visible_only_to_seller_or_active_reserved_buyer():
         reserved_for_buyer = client.get(f"/api/items?user_id={buyer.id}")
         still_hidden_from_unrelated = client.get(f"/api/items?user_id={unrelated_user.id}")
         buyer_item = next(listing for listing in reserved_for_buyer.json() if listing["id"] == item.id)
-        unrelated_item = next(
-            listing for listing in still_hidden_from_unrelated.json() if listing["id"] == item.id
-        )
+        assert item.id not in {listing["id"] for listing in still_hidden_from_unrelated.json()}
         assert buyer_item["payment_number"] == item.payment_number
-        assert "payment_number" not in unrelated_item
     finally:
         conversation_ids = Conversation.objects.filter(item_id=item.id).values_list("id", flat=True)
         Message.objects.filter(conversation_id__in=conversation_ids).delete()
@@ -378,6 +388,7 @@ def test_checkout_simulates_success_and_marks_listing_sold(payment_method, payme
         f"/api/checkout?buyer_id={buyer.id}",
         {
             "payment_method": payment_method,
+            "checkout_id": f"checkout-{suffix}",
             "delivery_method": "self_pickup",
             "payment_details": payment_details,
             "items": [{"item_id": item.id, "quantity": 1}],
@@ -407,6 +418,50 @@ def test_checkout_simulates_success_and_marks_listing_sold(payment_method, payme
     assert history.json()[0]["payment_status"] == "approved"
 
 
+def test_checkout_idempotency_reuses_existing_order_without_reducing_stock_twice():
+    suffix = random.randint(10_000_000, 99_999_999)
+    buyer = create_active_test_user("idempotent_buyer", suffix)
+    seller = create_active_test_user("idempotent_seller", suffix + 1)
+    item = create_test_item(seller, suffix, name=f"__test_idempotent_item_{suffix}")
+    item.stock = 3
+    item.save(update_fields=["stock"])
+    checkout_id = f"checkout-{suffix}"
+    payload = {
+        "checkout_id": checkout_id,
+        "payment_method": "visa",
+        "payment_details": {
+            "cardholder_name": "Demo Buyer",
+            "card_number": "4242 4242 4242 4242",
+            "expiry": "12/30",
+            "security_code": "123",
+        },
+        "delivery_method": "self_pickup",
+        "items": [{"item_id": item.id, "quantity": 1}],
+    }
+
+    first_response = client.post(
+        f"/api/checkout?buyer_id={buyer.id}",
+        payload,
+        content_type="application/json",
+    )
+    retry_response = client.post(
+        f"/api/checkout?buyer_id={buyer.id}",
+        payload,
+        content_type="application/json",
+    )
+
+    assert first_response.status_code == retry_response.status_code == 200
+    first_order = first_response.json()["orders"][0]
+    retry_order = retry_response.json()["orders"][0]
+    assert retry_order["id"] == first_order["id"]
+    assert retry_response.json()["payment"]["reference"] == first_response.json()["payment"]["reference"]
+    purchase = Purchase.objects.get(item_id=item.id, buyer_id=buyer.id)
+    assert purchase.checkout_id == checkout_id
+    assert Purchase.objects.filter(item_id=item.id, buyer_id=buyer.id).count() == 1
+    item.refresh_from_db()
+    assert item.stock == 2
+
+
 @pytest.mark.parametrize(("payment_method", "payment_details"), [
     ("mpaisa", {"phone_number": "+679 8111222", "authorization_code": "123456"}),
     ("mycash", {"phone_number": "+679 9000000", "authorization_code": "123456"}),
@@ -430,6 +485,7 @@ def test_forced_payment_failure_does_not_create_order_or_change_stock(payment_me
         f"/api/checkout?buyer_id={buyer.id}",
         {
             "payment_method": payment_method,
+            "checkout_id": f"checkout-{suffix}",
             "payment_details": payment_details,
             "delivery_method": "self_pickup",
             "simulate_failure": True,
@@ -491,6 +547,7 @@ def test_insufficient_funds_failure_preserves_stock_and_creates_no_order(payment
         f"/api/checkout?buyer_id={buyer.id}",
         {
             "payment_method": payment_method,
+            "checkout_id": f"checkout-{suffix}",
             "payment_details": payment_details,
             "delivery_method": "self_pickup",
             "items": [{"item_id": item.id, "quantity": 1}],
@@ -517,6 +574,7 @@ def test_failed_multi_item_payment_does_not_partially_create_orders_or_reduce_st
         f"/api/checkout?buyer_id={buyer.id}",
         {
             "payment_method": "mycash",
+            "checkout_id": f"checkout-{suffix}",
             "payment_details": {"phone_number": "+679 9000000", "authorization_code": "000000"},
             "delivery_method": "delivery",
             "force_failure": False,
@@ -548,6 +606,7 @@ def test_checkout_rejects_quantity_above_current_stock_without_order_or_stock_ch
         f"/api/checkout?buyer_id={buyer.id}",
         {
             "payment_method": "visa",
+            "checkout_id": f"checkout-{suffix}",
             "payment_details": {
                 "cardholder_name": "Demo Buyer",
                 "card_number": "4242 4242 4242 4242",
@@ -579,6 +638,7 @@ def test_cash_checkout_reserves_until_seller_confirms_handoff(delivery_method):
         f"/api/checkout?buyer_id={buyer.id}",
         {
             "payment_method": "cash",
+            "checkout_id": f"checkout-{suffix}",
             "delivery_method": delivery_method,
             "items": [{"item_id": item.id, "quantity": 1}],
         },
@@ -627,6 +687,7 @@ def test_seller_can_release_cash_order_reservation_without_changing_stock():
         f"/api/checkout?buyer_id={buyer.id}",
         {
             "payment_method": "cash",
+            "checkout_id": f"checkout-{suffix}",
             "delivery_method": "delivery",
             "items": [{"item_id": item.id, "quantity": 1}],
         },
@@ -659,6 +720,7 @@ def test_cash_order_requires_seller_confirmation_before_preparing():
         f"/api/checkout?buyer_id={buyer.id}",
         {
             "payment_method": "cash",
+            "checkout_id": f"checkout-{suffix}",
             "delivery_method": "self_pickup",
             "items": [{"item_id": item.id, "quantity": 1}],
         },
@@ -715,6 +777,7 @@ def test_failed_cash_checkout_creates_no_order_and_leaves_listing_available():
         f"/api/checkout?buyer_id={buyer.id}",
         {
             "payment_method": "cash",
+            "checkout_id": f"checkout-{suffix}",
             "delivery_method": "self_pickup",
             "force_failure": True,
             "items": [{"item_id": item.id, "quantity": 2}],
@@ -735,6 +798,7 @@ def test_sold_listing_cannot_be_purchased_twice():
     item = create_test_item(seller, suffix, name=f"__test_cash_duplicate_item_{suffix}")
     payload = {
         "payment_method": "cash",
+        "checkout_id": f"checkout-{suffix}-first",
         "delivery_method": "self_pickup",
         "items": [{"item_id": item.id, "quantity": 1}],
     }
@@ -748,6 +812,7 @@ def test_sold_listing_cannot_be_purchased_twice():
         f"/api/checkout?buyer_id={buyer.id}",
         {
             **payload,
+            "checkout_id": f"checkout-{suffix}-second",
             "payment_method": "mycash",
         },
         content_type="application/json",
@@ -770,6 +835,7 @@ def test_cash_checkout_decrements_only_purchased_quantity():
         f"/api/checkout?buyer_id={buyer.id}",
         {
             "payment_method": "cash",
+            "checkout_id": f"checkout-{suffix}",
             "delivery_method": "self_pickup",
             "items": [{"item_id": item.id, "quantity": 2}],
         },
@@ -996,6 +1062,27 @@ def test_cancel_verification_removes_pending_registration():
     assert not PendingRegistration.objects.filter(email=payload["email"]).exists()
 
 
+def test_seller_can_view_orders_for_their_listings():
+    suffix = random.randint(10_000_000, 99_999_999)
+    seller = create_active_test_user("dashboard_seller", suffix)
+    buyer = create_active_test_user("dashboard_buyer", suffix + 1)
+    item = create_test_item(seller, suffix, name=f"__test_dashboard_item_{suffix}")
+
+    checkout = client.post(
+        f"/api/items/{item.id}/purchase?buyer_id={buyer.id}",
+        {},
+        content_type="application/json",
+    )
+    assert checkout.status_code == 200
+
+    response = client.get(f"/api/users/{seller.id}/orders")
+
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+    assert response.json()[0]["buyer_id"] == buyer.id
+    assert response.json()[0]["seller_id"] == seller.id
+
+
 def test_signup_resumes_existing_database_pending_registration():
     payload = unique_student_payload()
     code = "123456"
@@ -1022,7 +1109,9 @@ def test_signup_resumes_existing_database_pending_registration():
         content_type="application/json",
     )
     assert verification.status_code == 200
-    assert verification.json()["authenticator_setup_required"] is True
+    assert verification.json()["authenticator_setup_offer"] is True
+    assert verification.json()["access_token"]
+    assert verification.json()["login_challenge"]
     assert User.objects.filter(email=payload["email"]).exists()
     assert not PendingRegistration.objects.filter(email=payload["email"]).exists()
 
@@ -1151,8 +1240,7 @@ def test_resend_verification_waits_one_minute():
     assert send_email.call_count == 2
 
 
-@override_settings(ALLOW_NON_USP_EMAILS=True)
-def test_signup_rejects_invalid_email_format():
+def test_signup_rejects_invalid_student_email_format():
     payload = unique_student_payload()
     payload["email"] = "not-an-email"
 
@@ -1165,7 +1253,6 @@ def test_signup_rejects_invalid_email_format():
 @override_settings(ALLOW_NON_USP_EMAILS=True, EMAIL_PROVIDER="smtp", EMAIL_HOST="smtp.gmail.com", EMAIL_HOST_USER="test@example.com", EMAIL_HOST_PASSWORD="1234567890123456")
 def test_signup_returns_json_error_when_smtp_fails():
     payload = unique_student_payload()
-    payload["email"] = "person@gmail.com"
 
     with patch(
         "marketplace.services.send_mail",
@@ -1184,7 +1271,6 @@ def test_signup_returns_json_error_when_smtp_fails():
 @override_settings(ALLOW_NON_USP_EMAILS=True, EMAIL_PROVIDER="smtp", EMAIL_HOST="smtp.gmail.com", EMAIL_HOST_USER="test@example.com", EMAIL_HOST_PASSWORD="1234567890123456")
 def test_signup_identifies_smtp_connection_failures_without_exposing_details():
     payload = unique_student_payload()
-    payload["email"] = "person@gmail.com"
 
     with patch("marketplace.services.send_mail", side_effect=smtplib.SMTPServerDisconnected("closed")):
         response = client.post("/api/users/signup", payload, content_type="application/json")
@@ -1334,3 +1420,43 @@ def test_password_reset_code_must_be_verified_before_password_form():
         content_type="application/json",
     )
     assert accepted.status_code == 200
+
+
+def test_password_reset_allows_login_with_email_case_variants():
+    from django.contrib.auth.hashers import check_password
+    from marketplace.services import hash_password
+
+    payload = unique_student_payload()
+    stored_email = payload["email"].upper()
+    user = User.objects.create(
+        username=payload["username"], email=stored_email,
+        password_hash=hash_password("oldpass"),
+        authenticator_secret="JBSWY3DPEHPK3PXP", authenticator_enabled=True,
+    )
+    with patch("marketplace.services.send_email") as send_email:
+        requested = client.post("/api/users/request-password-reset",
+            {"email": stored_email.lower()}, content_type="application/json")
+        code = re.search(r"\b\d{6}\b", send_email.call_args.args[1]).group()
+    assert requested.status_code == 200
+    verified = client.post("/api/users/verify-password-reset",
+        {"email": stored_email.lower(), "code": code}, content_type="application/json")
+    assert verified.status_code == 200
+    reset = client.post("/api/users/reset-password",
+        {"email": stored_email.lower(), "code": code, "password": "newpass"},
+        content_type="application/json")
+    assert reset.status_code == 200
+    user.refresh_from_db()
+    assert user.email == stored_email
+    assert check_password("newpass", user.password_hash)
+    assert not check_password("oldpass", user.password_hash)
+    for login_email in (stored_email.lower(), stored_email):
+        login = client.post("/api/users/login",
+            {"username": login_email, "password": "newpass"},
+            content_type="application/json")
+        assert login.status_code == 200
+        assert login.json()["authenticator_required"] is True
+        assert login.json()["user_id"] == user.id
+        old_login = client.post("/api/users/login",
+            {"username": login_email, "password": "oldpass"},
+            content_type="application/json")
+        assert old_login.status_code == 401

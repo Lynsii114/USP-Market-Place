@@ -8,12 +8,16 @@ import AuthModal from "./components/AuthModal";
 import CartPage from "./components/CartPage";
 import CategoriesSection from "./components/CategoriesSection";
 import CategoryPage from "./components/CategoryPage";
+import DashboardPage from "./components/DashboardPage";
 import Footer from "./components/Footer";
 import HeroSection from "./components/HeroSection";
 import InfoSection from "./components/InfoSection";
 import ListingsSection from "./components/ListingsSection";
 import LegalPage from "./components/LegalPage";
+import HelpPage from "./components/HelpPage";
+import Breadcrumbs from "./components/Breadcrumbs";
 import Navbar from "./components/Navbar";
+import NotificationsPage from "./components/NotificationsPage";
 import PastPurchasesPage from "./components/PastPurchasesPage";
 import ProductCard from "./components/ProductCard";
 import ProductModal from "./components/ProductModal";
@@ -28,7 +32,7 @@ import { API_URL } from "./config/api";
 import { categories as defaultCategories } from "./data/categories";
 import logo from "../logo.png";
 import { prepareListingPhoto } from "./utils/listingPhoto";
-import { priceRange, matchesPrice } from "./utils/inventory.mjs";
+import { priceRange, matchesPrice, availableStock } from "./utils/inventory.mjs";
 import { mergeCategoryOptions, canonicalCategoryName } from "./utils/categories.mjs";
 
 const PENDING_VERIFICATION_STORAGE_KEY = "usp-marketplace-pending-verification";
@@ -59,6 +63,8 @@ function Home() {
   const [resendAvailableAt, setResendAvailableAt] = useState(0);
   const [resendSecondsRemaining, setResendSecondsRemaining] = useState(0);
   const [authenticatorUserId, setAuthenticatorUserId] = useState(null);
+  const [pendingAuthenticatorUser, setPendingAuthenticatorUser] = useState(null);
+  const [pendingAuthenticatorAccessToken, setPendingAuthenticatorAccessToken] = useState("");
   const [loginChallenge, setLoginChallenge] = useState("");
   const [authenticatorSecret, setAuthenticatorSecret] = useState("");
   const [authenticatorUri, setAuthenticatorUri] = useState("");
@@ -102,7 +108,11 @@ function Home() {
   const [checkoutReviewForm, setCheckoutReviewForm] = useState({ rating: "5", review: "" });
   const [purchaseHistory, setPurchaseHistory] = useState([]);
   const [sellerOrders, setSellerOrders] = useState([]);
+  const [isLoadingUserActivity, setIsLoadingUserActivity] = useState(false);
   const [activeLegalPage, setActiveLegalPage] = useState(null);
+  const [showHelp, setShowHelp] = useState(() => window.location.pathname === "/help");
+  const [helpTopic, setHelpTopic] = useState(() => window.location.hash.slice(1));
+  const helpReturnRoute = useRef(null);
   const [activeAccountPage, setActiveAccountPage] = useState(null);
   const [activeSalesView, setActiveSalesView] = useState("active");
   const [conversations, setConversations] = useState([]);
@@ -123,7 +133,12 @@ function Home() {
   useEffect(() => {
     const applyRouteState = (state = window.history.state || {}) => {
       const pathname = window.location.pathname;
-      const view = state.view || (pathname.startsWith("/admin") ? "admin" : "home");
+      const view = pathname === "/help" ? "help" : state.view || (pathname.startsWith("/admin") ? "admin" : "home");
+      setShowHelp(view === "help");
+      if (view === "help") {
+        setHelpTopic(state.topic || window.location.hash.slice(1));
+        return;
+      }
 
       setShowAdminDashboard(view === "admin");
       setShowSellerPanel(view === "seller");
@@ -141,7 +156,7 @@ function Home() {
     };
 
     if (!window.history.state) {
-      window.history.replaceState({ view: window.location.pathname.startsWith("/admin") ? "admin" : "home" }, "", window.location.pathname);
+      window.history.replaceState({ view: window.location.pathname === "/help" ? "help" : window.location.pathname.startsWith("/admin") ? "admin" : "home" }, "", window.location.pathname + window.location.hash);
     }
 
     const handleRouteChange = () => {
@@ -154,14 +169,20 @@ function Home() {
 
   useEffect(() => {
     if (currentUser) {
-      loadListings();
-      loadSellerListings(currentUser.id);
-      loadPurchaseHistory(currentUser.id);
-      loadSellerOrders(currentUser.id);
-      loadConversations(currentUser.id);
-      loadUnreadMessageCount(currentUser.id);
-      loadUserNotifications(currentUser.id, { silent: true });
+      setIsLoadingUserActivity(true);
+      Promise.all([
+        loadListings(),
+        loadSellerListings(currentUser.id),
+        loadPurchaseHistory(currentUser.id),
+        loadSellerOrders(currentUser.id),
+        loadConversations(currentUser.id),
+        loadUnreadMessageCount(currentUser.id),
+        loadUserNotifications(currentUser.id, { silent: true }),
+      ]).finally(() => {
+        setIsLoadingUserActivity(false);
+      });
     } else {
+      setIsLoadingUserActivity(false);
       setSellerListings([]);
       setPurchaseHistory([]);
       setSellerOrders([]);
@@ -345,6 +366,9 @@ function Home() {
     setFormMessage("");
     setEmailError("");
     setAuthenticatorUserId(null);
+    setPendingAuthenticatorUser(null);
+    setPendingAuthenticatorAccessToken("");
+    setLoginChallenge("");
     setAuthenticatorSecret("");
     setAuthenticatorUri("");
     setAuthenticatorQr("");
@@ -389,6 +413,10 @@ function Home() {
     return isValid;
   };
 
+  const validateSignupEmail = (email) => {
+    return validateEmail(email);
+  };
+
   const validateUsername = (username) => {
     const normalizedUsername = username.trim();
     return normalizedUsername.length >= 3 && /^[a-zA-Z0-9_-]+$/.test(normalizedUsername);
@@ -400,7 +428,96 @@ function Home() {
     setFormMessage("");
 
     if (name === "email" && authMode === "signup") {
-      validateEmail(value);
+      validateSignupEmail(value);
+    }
+  };
+
+  const skipAuthenticatorSetup = () => {
+    if (!pendingAuthenticatorUser || !pendingAuthenticatorAccessToken) {
+      setFormMessage("Unable to complete sign in. Please try again.");
+      return;
+    }
+    setAccessToken(pendingAuthenticatorAccessToken);
+    setCurrentUser(pendingAuthenticatorUser);
+    setPendingAuthenticatorUser(null);
+    setPendingAuthenticatorAccessToken("");
+    setLoginChallenge("");
+    setAuthForm(EMPTY_AUTH_FORM);
+    setAuthMode(null);
+    setVerificationEmail("");
+    setAuthenticatorUserId(null);
+    setAuthenticatorSecret("");
+    setAuthenticatorUri("");
+    setAuthenticatorQr("");
+    showToast("Welcome to USP Marketplace.");
+  };
+
+  const beginAuthenticatorSetup = () => {
+    setAuthForm((previous) => ({ ...previous, authenticator_code: "" }));
+    setAuthMode("authenticator-setup");
+  };
+
+  const handleAuthBack = () => {
+    setFormMessage("");
+    if (authMode === "authenticator-setup") {
+      setAuthForm((previous) => ({ ...previous, authenticator_code: "" }));
+      setAuthMode("authenticator-choice");
+      return;
+    }
+    if (authMode === "authenticator") {
+      setAuthForm((previous) => ({ ...previous, authenticator_code: "" }));
+      setLoginChallenge("");
+      setAuthMode("login");
+      return;
+    }
+    if (authMode === "authenticator-choice") {
+      setPendingAuthenticatorUser(null);
+      setPendingAuthenticatorAccessToken("");
+      setLoginChallenge("");
+      setAuthenticatorUserId(null);
+      setAuthenticatorSecret("");
+      setAuthenticatorUri("");
+      setAuthenticatorQr("");
+      setAuthForm(EMPTY_AUTH_FORM);
+      setAuthMode("login");
+      return;
+    }
+    if (authMode === "verify-email") {
+      const email = verificationEmail;
+      resetAuth();
+      setAuthMode("signup");
+      if (email) {
+        fetch(`${API_URL}/users/cancel-verification`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        }).catch(() => {
+          showToast("Unable to cancel email verification. Please try again.", "error");
+        });
+      }
+      return;
+    }
+    if (authMode === "reset-password") {
+      setAuthForm((previous) => ({ ...previous, reset_code: "", new_password: "", new_password_confirmation: "" }));
+      setAuthMode("forgot-password");
+      return;
+    }
+    if (authMode === "forgot-password") {
+      setAuthMode("login");
+    }
+  };
+
+  const finishAuthNavigation = (user, successMessage) => {
+    if (user?.role === "admin") {
+      hideActivePages();
+      setShowAdminDashboard(true);
+      pushViewState({ view: "admin" }, "/admin/dashboard");
+      showToast(successMessage);
+    } else if (showAdminDashboard || window.location.pathname.startsWith("/admin")) {
+      openMarketplace();
+      showToast("Signed in, but this account does not have administrator access.", "error");
+    } else {
+      showToast(successMessage);
     }
   };
 
@@ -418,7 +535,18 @@ function Home() {
         });
         const data = await parseResponse(response, "Email verification failed");
         window.sessionStorage.removeItem(PENDING_VERIFICATION_STORAGE_KEY);
-        if (data.authenticator_setup_required) {
+        if (data.authenticator_setup_offer) {
+          setAuthenticatorUserId(data.user_id);
+          setPendingAuthenticatorUser(data.user);
+          setPendingAuthenticatorAccessToken(data.access_token || "");
+          setLoginChallenge(data.login_challenge || "");
+          setAuthenticatorSecret(data.authenticator_secret);
+          setAuthenticatorUri(data.authenticator_uri);
+          setAuthenticatorQr(data.authenticator_qr);
+          setAuthForm(EMPTY_AUTH_FORM);
+          setVerificationEmail("");
+          setAuthMode("authenticator-choice");
+        } else if (data.authenticator_setup_required) {
           setAuthenticatorUserId(data.user_id);
           setLoginChallenge(data.login_challenge);
           setAuthenticatorSecret(data.authenticator_secret);
@@ -430,12 +558,14 @@ function Home() {
         } else {
           setAccessToken(data.access_token);
           setCurrentUser(data.user);
+          setPendingAuthenticatorUser(null);
+          setPendingAuthenticatorAccessToken("");
           setAuthForm(EMPTY_AUTH_FORM);
           setAuthMode(null);
           setVerificationEmail("");
           setVerificationToken("");
           setResendAvailableAt(0);
-          showToast(data.message || "Email verified successfully.");
+          finishAuthNavigation(data.user, data.message || "Email verified successfully.");
         }
         return;
       }
@@ -449,6 +579,9 @@ function Home() {
         const data = await parseResponse(response, "Authenticator verification failed");
         setAccessToken(data.access_token);
         setCurrentUser(data.user);
+        setPendingAuthenticatorUser(null);
+        setPendingAuthenticatorAccessToken("");
+        setLoginChallenge("");
         setAuthForm(EMPTY_AUTH_FORM);
         setAuthMode(null);
         setVerificationEmail("");
@@ -457,7 +590,7 @@ function Home() {
         setAuthenticatorSecret("");
         setAuthenticatorUri("");
         setAuthenticatorQr("");
-        showToast(data.message || "Login successful.");
+        finishAuthNavigation(data.user, data.message || "Login successful.");
         return;
       }
 
@@ -522,8 +655,8 @@ function Home() {
         return;
       }
 
-      if (authMode === "signup" && !validateEmail(authForm.email)) {
-        setFormMessage("Please enter a valid email address");
+      if (authMode === "signup" && !validateSignupEmail(authForm.email)) {
+        setFormMessage("Use your USP student email, e.g. S12345678@student.usp.ac.fj");
         return;
       }
 
@@ -553,14 +686,27 @@ function Home() {
       }
       const data = await parseResponse(response, "Authentication failed");
 
-      if (data.authenticator_setup_required || data.authenticator_required) {
+      if (data.authenticator_required) {
         setAuthenticatorUserId(data.user_id);
         setLoginChallenge(data.login_challenge);
         setAuthenticatorSecret(data.authenticator_secret || "");
         setAuthenticatorUri(data.authenticator_uri || "");
         setAuthenticatorQr(data.authenticator_qr || "");
         setAuthForm((previous) => ({ ...previous, authenticator_code: "" }));
-        setAuthMode(data.authenticator_setup_required ? "authenticator-setup" : "authenticator");
+        setAuthMode("authenticator");
+        return;
+      }
+
+      if (data.authenticator_setup_offer) {
+        setAuthenticatorUserId(data.user_id);
+        setPendingAuthenticatorUser(data.user);
+        setPendingAuthenticatorAccessToken(data.access_token || "");
+        setLoginChallenge(data.login_challenge || "");
+        setAuthenticatorSecret(data.authenticator_secret);
+        setAuthenticatorUri(data.authenticator_uri);
+        setAuthenticatorQr(data.authenticator_qr);
+        setAuthForm(EMPTY_AUTH_FORM);
+        setAuthMode("authenticator-choice");
         return;
       }
 
@@ -584,12 +730,7 @@ function Home() {
       setCurrentUser(data.user);
       setAuthForm(EMPTY_AUTH_FORM);
       setAuthMode(null);
-      if (data.user?.role === "admin") {
-        hideActivePages();
-        setShowAdminDashboard(true);
-        pushViewState({ view: "admin" }, "/admin/dashboard");
-      }
-      showToast(authMode === "signup" ? "Registration successful. Welcome to USP Marketplace!" : data.message || "Login successful!");
+      finishAuthNavigation(data.user, authMode === "signup" ? "Registration successful. Welcome to USP Marketplace!" : data.message || "Login successful!");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Something went wrong";
       setFormMessage(message);
@@ -618,6 +759,16 @@ function Home() {
   };
 
   const openAuth = (mode) => {
+    if (isSubmitting) return;
+    if (mode === "login") {
+      setAuthForm(EMPTY_AUTH_FORM);
+      setLoginChallenge("");
+      setAuthenticatorUserId(null);
+      setAuthenticatorSecret("");
+      setAuthenticatorUri("");
+      setAuthenticatorQr("");
+      setVerificationEmail("");
+    }
     setAuthMode(mode);
     setFormMessage("");
     setEmailError("");
@@ -651,6 +802,7 @@ function Home() {
   const handleLogout = () => {
     setAccessToken(null);
     setLoginChallenge("");
+    setPendingAuthenticatorAccessToken("");
     setCurrentUser(null);
     setAuthMode("login");
     hideActivePages();
@@ -691,6 +843,7 @@ function Home() {
         isSubmitting={isSubmitting}
         verificationEmail={verificationEmail}
         resendSecondsRemaining={resendSecondsRemaining}
+        onOpenHelp={openHelp}
         onClose={resetAuth}
         onSubmit={handleAuthSubmit}
         onFieldChange={handleAuthFieldChange}
@@ -701,6 +854,9 @@ function Home() {
         authenticatorSecret={authenticatorSecret}
         authenticatorUri={authenticatorUri}
         authenticatorQr={authenticatorQr}
+        onEnableAuthenticator={beginAuthenticatorSetup}
+        onSkipAuthenticator={skipAuthenticatorSetup}
+        onBack={handleAuthBack}
       />
     );
   }
@@ -708,6 +864,9 @@ function Home() {
   const handleListingFieldChange = (event) => {
     const { name, value } = event.target;
     setListingForm((previous) => {
+      if (name === "multiple_units") {
+        return { ...previous, multiple_units: event.target.checked, stock: "1" };
+      }
       if (name === "payment_method") {
         const usesMobilePayment = value === "mpaisa" || value === "mycash";
         return {
@@ -833,6 +992,7 @@ function Home() {
       name: listing.name,
       price: String(listing.price),
       stock: String(listing.stock ?? 1),
+      multiple_units: listing.multiple_units ?? Number(listing.stock) > 1,
       description: listing.description,
       contact: listing.contact,
       category: listing.category,
@@ -1108,15 +1268,23 @@ function Home() {
   const searchSuggestions = normalizedSearch
     ? searchRecords(listings, searchQuery, (listing) => [listing.name, listing.category, listing.seller_username, listing.description, listing.id]).slice(0, 5)
     : [];
+  const searchSuggestions = matchingSuggestions.slice(0, 4);
   const cartTotal = cartItems.reduce((total, item) => total + Number(item.price) * Number(item.quantity || 1), 0);
   const cartQuantityCount = cartItems.reduce((total, item) => total + Number(item.quantity || 1), 0);
 
-  const handleSearchSubmit = (event) => {
-    event.preventDefault();
+  const openSearchResults = () => {
     hideActivePages();
+    setSelectedCategory("All");
+    setMinimumPrice("");
+    setMaximumPrice("");
     setShowShopPage(true);
     pushViewState({ view: "shop" });
     window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const handleSearchSubmit = (event) => {
+    event.preventDefault();
+    openSearchResults();
   };
 
   const chooseCategory = (categoryName) => {
@@ -1233,7 +1401,7 @@ function Home() {
       return;
     }
 
-    if (listing.status === "reserved" && listing.reserved_buyer_id !== currentUser.id) {
+    if (availableStock(listing, currentUser.id) <= 0) {
       setSelectedListing(null);
       showToast("This item is reserved for another buyer.", "error");
       return;
@@ -1260,7 +1428,7 @@ function Home() {
           return item;
         }
 
-        const stock = Math.max(1, Number(item.stock) || 1);
+        const stock = Math.max(1, availableStock(item, currentUser?.id));
         const quantity = Math.min(stock, Math.max(1, Number(nextQuantity) || 1));
         return { ...item, quantity };
       })
@@ -1302,8 +1470,7 @@ function Home() {
     const availableItems = cartItems.filter(
       (item) =>
         item.status !== "sold" &&
-        Number(item.stock) > 0 &&
-        (item.status !== "reserved" || item.reserved_buyer_id === currentUser.id)
+        availableStock(item, currentUser.id) > 0
     );
     if (!availableItems.length) {
       showToast("No available items to checkout.", "error");
@@ -1319,6 +1486,7 @@ function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           payment_method: paymentMethod,
+          checkout_id: checkoutId,
           delivery_method: deliveryMethod,
           payment_details: paymentDetails,
           simulate_failure: forceFailure,
@@ -1698,10 +1866,7 @@ function Home() {
 
   const handleSuggestionSelect = (listing) => {
     setSearchQuery(listing.name);
-    hideActivePages();
-    setShowShopPage(true);
-    pushViewState({ view: "shop" });
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    openSearchResults();
   };
 
   const clearFilters = () => {
@@ -1736,6 +1901,13 @@ function Home() {
       setActiveSalesView(salesView);
       loadSellerOrders(currentUser.id);
       loadSellerListings(currentUser.id);
+    }
+    if (page === "messages") {
+      loadConversations(currentUser.id);
+      loadUnreadMessageCount(currentUser.id);
+    }
+    if (page === "notifications") {
+      loadUserNotifications(currentUser.id);
     }
 
     setShowAdminDashboard(false);
@@ -1780,6 +1952,21 @@ function Home() {
     }
   };
 
+  const breadcrumbItems = [{ label: "Home", onClick: openMarketplace }];
+  if (activeCategoryPage) breadcrumbItems.push({ label: "Shop", onClick: handleBrowse }, { label: activeCategoryPage });
+  else if (showShopPage) breadcrumbItems.push({ label: "Shop" });
+  else if (showCartPanel) breadcrumbItems.push({ label: "Cart" });
+  else if (showPurchasesPage) breadcrumbItems.push({ label: "My Activity" }, { label: "My Purchases" });
+  else if (showSellerPanel) {
+    if (activeSellerTab === "my-listings") breadcrumbItems.push({ label: "My Activity" }, { label: "My Listings" });
+    else breadcrumbItems.push({ label: editingListingId ? "Edit Listing" : "Sell Item" });
+  } else if (activeAccountPage) {
+    if (activeAccountPage === "sales") breadcrumbItems.push({ label: "My Activity" }, { label: "My Sales" });
+    else if (activeAccountPage === "messages") breadcrumbItems.push({ label: "Messages" });
+    else if (activeAccountPage === "notifications") breadcrumbItems.push({ label: "Notifications" });
+    else breadcrumbItems.push({ label: "Account" }, { label: activeAccountPage === "profile" ? "My Profile" : "Settings" });
+  } else if (activeLegalPage) breadcrumbItems.push({ label: activeLegalPage === "privacy" ? "Privacy Policy" : "Terms of Use" });
+
   const activeNavPage = showCartPanel
     ? "cart"
     : showPurchasesPage || (showSellerPanel && activeSellerTab === "my-listings") || activeAccountPage === "sales"
@@ -1788,6 +1975,8 @@ function Home() {
         ? "sell"
         : activeAccountPage === "messages"
           ? "messages"
+          : activeAccountPage === "notifications"
+            ? "notifications"
           : activeAccountPage
             ? "account"
             : activeCategoryPage
@@ -1809,11 +1998,18 @@ function Home() {
             isSubmitting={isSubmitting}
             verificationEmail={verificationEmail}
             resendSecondsRemaining={resendSecondsRemaining}
-            onClose={resetAuth}
+            onOpenHelp={openHelp}
+        onClose={resetAuth}
             onSubmit={handleAuthSubmit}
             onFieldChange={handleAuthFieldChange}
             onResendVerification={resendVerification}
             onCancelVerification={cancelVerification}
+            authenticatorSecret={authenticatorSecret}
+            authenticatorUri={authenticatorUri}
+            authenticatorQr={authenticatorQr}
+            onEnableAuthenticator={beginAuthenticatorSetup}
+            onSkipAuthenticator={skipAuthenticatorSetup}
+            onBack={handleAuthBack}
           />
           <AdminDashboard
             apiUrl={API_URL}
@@ -1833,6 +2029,7 @@ function Home() {
       ) : (
         <>
       <Navbar
+        onOpenHelp={() => openHelp()}
         logo={logo}
         currentUser={currentUser}
         cartCount={cartQuantityCount}
@@ -1864,11 +2061,18 @@ function Home() {
         isSubmitting={isSubmitting}
         verificationEmail={verificationEmail}
         resendSecondsRemaining={resendSecondsRemaining}
+        onOpenHelp={openHelp}
         onClose={resetAuth}
         onSubmit={handleAuthSubmit}
         onFieldChange={handleAuthFieldChange}
         onResendVerification={resendVerification}
         onCancelVerification={cancelVerification}
+        authenticatorSecret={authenticatorSecret}
+        authenticatorUri={authenticatorUri}
+        authenticatorQr={authenticatorQr}
+        onEnableAuthenticator={beginAuthenticatorSetup}
+        onSkipAuthenticator={skipAuthenticatorSetup}
+        onBack={handleAuthBack}
       />
 
       <CategoryPage
@@ -1882,6 +2086,7 @@ function Home() {
 
       {showCartPanel && (
         <CartPage
+          onOpenHelp={openHelp}
           cartItems={cartItems}
           cartTotal={cartTotal}
           currentUser={currentUser}
@@ -1910,7 +2115,7 @@ function Home() {
       )}
 
       <AccountPage
-        page={activeAccountPage}
+        page={["notifications", "dashboard"].includes(activeAccountPage) ? null : activeAccountPage}
         currentUser={currentUser}
         myListings={myListings}
         purchaseHistory={purchaseHistory}
@@ -1923,8 +2128,35 @@ function Home() {
         onViewConversationListing={(listing) => listing && setSelectedListing(listing)}
         onMessageDraftChange={setMessageDraft}
         onSendMessage={sendConversationMessage}
-        onBack={hideActivePages}
+        onBack={() => {
+          hideActivePages();
+          if (currentUser?.role === "admin" && activeAccountPage === "messages") {
+            setShowAdminDashboard(true);
+            pushViewState({ view: "admin" }, "/admin/dashboard");
+          }
+        }}
       />
+
+      {activeAccountPage === "notifications" && (
+        <NotificationsPage
+          notifications={userNotifications}
+          onBack={hideActivePages}
+          onOpen={openUserNotification}
+          onRemove={removeUserNotification}
+        />
+      )}
+
+      {activeAccountPage === "dashboard" && (
+        <DashboardPage
+          currentUser={currentUser}
+          myListings={myListings}
+          purchases={purchaseHistory}
+          sellerOrders={sellerOrders}
+          isLoading={isLoadingUserActivity || isLoadingListings}
+          onBack={hideActivePages}
+          onManageListings={() => openSellerTab("my-listings")}
+        />
+      )}
 
       <LegalPage page={activeLegalPage} onBack={hideActivePages} />
 
@@ -1950,6 +2182,7 @@ function Home() {
 
       {showSellerPanel && !showShopPage && !activeCategoryPage && !showCartPanel && !showPurchasesPage && !activeLegalPage && !activeAccountPage && (
         <SellerPanel
+          onOpenHelp={openHelp}
           isProcessingPhoto={isProcessingPhoto}
           activeSellerTab={activeSellerTab}
           categories={marketplaceCategories}
@@ -1990,8 +2223,10 @@ function Home() {
           <HeroSection
             searchQuery={searchQuery}
             suggestions={searchSuggestions}
+            suggestionCount={matchingSuggestions.length}
             onSearchChange={setSearchQuery}
             onSearchSubmit={handleSearchSubmit}
+            onViewAllResults={openSearchResults}
             onSuggestionSelect={handleSuggestionSelect}
           />
 
@@ -2163,7 +2398,7 @@ function Home() {
         </div>
       )}
 
-      <Footer logo={logo} onLegalNavigate={openLegalPage} />
+      <Footer logo={logo} onLegalNavigate={openLegalPage} onHelp={() => openHelp()} />
         </>
       )}
     </div>

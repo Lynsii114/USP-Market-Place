@@ -14,6 +14,7 @@ TABLE_COLUMNS = {
         "payment_number": "VARCHAR(32) NOT NULL DEFAULT ''",
         "photo": "TEXT NULL",
         "stock": "INTEGER NOT NULL DEFAULT 1",
+        "multiple_units": "BOOLEAN NOT NULL DEFAULT 0",
         "status": "VARCHAR(32) NOT NULL DEFAULT 'available'",
         "seller_id": "INTEGER NOT NULL DEFAULT 0",
         "seller_username": "VARCHAR(64) NOT NULL DEFAULT 'Unknown'",
@@ -124,6 +125,35 @@ USER_COLUMN_ORDER = [
 logger = logging.getLogger(__name__)
 
 
+def ensure_item_quantity_field():
+    if "items" not in connection.introspection.table_names():
+        return
+    with connection.cursor() as cursor:
+        columns = {column.name for column in connection.introspection.get_table_description(cursor, "items")}
+    if "multiple_units" in columns:
+        return
+    with connection.schema_editor() as editor:
+        editor.add_field(Item, Item._meta.get_field("multiple_units"))
+    from django.db.models import Sum
+    paid = dict(Purchase.objects.filter(payment_status__in=["paid", "approved"]).exclude(
+        status__in=["cancelled", "canceled"],
+    ).values("item_id").annotate(units=Sum("quantity")).values_list("item_id", "units"))
+    for item in Item.objects.all().iterator():
+        if item.stock + (paid.get(item.id) or 0) > 1:
+            Item.objects.filter(pk=item.id).update(multiple_units=True)
+
+
+def ensure_purchase_checkout_id_field():
+    if "purchases" not in connection.introspection.table_names():
+        return
+    with connection.cursor() as cursor:
+        columns = {column.name for column in connection.introspection.get_table_description(cursor, "purchases")}
+    if "checkout_id" in columns:
+        return
+    with connection.schema_editor() as editor:
+        editor.add_field(Purchase, Purchase._meta.get_field("checkout_id"))
+
+
 def ensure_schema():
     models = [User, EmailVerification, PasswordReset, PendingRegistration, Item, Category, Purchase, AdminNotification, UserNotification, Conversation, Message, UserReport, RatingReview]
 
@@ -137,6 +167,9 @@ def ensure_schema():
             logger.warning("Could not create database table %s: %s", model._meta.db_table, exc)
             connection.close()
             return
+
+    ensure_item_quantity_field()
+    ensure_purchase_checkout_id_field()
 
     # Local demo/test databases are created directly from the current models;
     # the following legacy ALTER/UPDATE statements are specifically MySQL SQL.

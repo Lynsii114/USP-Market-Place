@@ -71,6 +71,7 @@ class Item(models.Model):
     payment_number = models.CharField(max_length=32, default="", blank=True)
     photo = models.TextField(null=True, blank=True)
     stock = models.IntegerField(default=1)
+    multiple_units = models.BooleanField(default=False)
     status = models.CharField(max_length=32, default="available")
     seller_id = models.IntegerField(db_index=True)
     seller_username = models.CharField(max_length=64)
@@ -95,6 +96,7 @@ class Category(models.Model):
 
 class Purchase(models.Model):
     buyer_id = models.IntegerField(db_index=True)
+    checkout_id = models.CharField(max_length=64, null=True, blank=True, db_index=True)
     buyer_username = models.CharField(max_length=64)
     item_id = models.IntegerField(db_index=True)
     item_name = models.CharField(max_length=256)

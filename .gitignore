@@ -1,10 +1,11 @@
 backend/.env
 backend/*.db
 backend/**/__pycache__/
-backend/.pytest_cache/
+.pytest_cache/
 pytest-cache-files-*/
 backend/venv/
 backend/.venv/
+.venv/
 
 frontend/node_modules/
 frontend/dist/
