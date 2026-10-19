@@ -47,6 +47,9 @@ return (
               <span>My Activity</span>
             </button>
             <div className="nav-dropdown-menu activity-menu">
+              <button type="button" onClick={() => onOpenAccountPage("dashboard")}>
+                My Dashboard
+              </button>
               <div className="activity-menu-group">
                 <strong>Buying</strong>
                 <button type="button" onClick={onOpenPurchases}>

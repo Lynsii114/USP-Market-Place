@@ -129,8 +129,6 @@ def db_options(ssl_mode, ca_path=None):
     if ssl_options:
         options.update(ssl_options)
     return options
-
-
 def database_config():
     db_host = os.getenv("DB_HOST")
     if db_host:

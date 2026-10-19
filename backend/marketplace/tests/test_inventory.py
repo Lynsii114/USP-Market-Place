@@ -1,5 +1,6 @@
 from unittest.mock import patch
 import hashlib
+import uuid
 from datetime import datetime, timezone as datetime_timezone
 
 import pyotp
@@ -90,6 +91,7 @@ class InventoryTests(TestCase):
     def checkout(self, item=None, buyer=None, **updates):
         return services.checkout_cart((buyer or self.buyer).id, {
             "payment_method": "cash", "delivery_method": "self_pickup",
+            "checkout_id": uuid.uuid4().hex,
             "items": [{"item_id": (item or self.item).id, "quantity": 1}], **updates,
         })
 
@@ -243,7 +245,7 @@ class InventoryTests(TestCase):
         self.assertEqual(Client().get(f"/api/users/{self.seller.id}/items").json(), [])
         self.assertEqual(self.client_for(self.seller).get(f"/api/items/{self.item.id}").status_code, 200)
         for route in ("/api/checkout", f"/api/items/{self.item.id}/purchase"):
-            response = self.client_for(self.buyer).post(route, {"payment_method": "cash", "delivery_method": "self_pickup", "items": [{"item_id": self.item.id, "quantity": 1}]}, content_type="application/json")
+            response = self.client_for(self.buyer).post(route, {"payment_method": "cash", "delivery_method": "self_pickup", "checkout_id": uuid.uuid4().hex, "items": [{"item_id": self.item.id, "quantity": 1}]}, content_type="application/json")
             self.assertEqual(response.status_code, 404, response.content)
         self.assertFalse(Purchase.objects.exists())
         self.item.refresh_from_db()

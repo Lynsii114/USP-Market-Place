@@ -39,6 +39,8 @@ def cleanup_test_records():
     RatingReview.objects.filter(reviewer_username__startswith="__test_").delete()
     Purchase.objects.filter(item_name__startswith="__test_").delete()
     Item.objects.filter(name__startswith="__test_").delete()
+    Purchase.objects.filter(buyer_username__startswith="__test_").delete()
+    Purchase.objects.filter(seller_username__startswith="__test_").delete()
     User.objects.filter(username__startswith="__test_").delete()
     PendingRegistration.objects.filter(username__startswith="__test_").delete()
     PasswordReset.objects.filter(user__username__startswith="__test_").delete()
@@ -59,10 +61,8 @@ def test_health_check():
     assert response.json() == {"status": "ok"}
 
 
-@override_settings(ALLOW_NON_USP_EMAILS=True)
 def test_signup_login_and_create_hidden_listing():
     payload = unique_student_payload()
-    payload["email"] = f"test{payload['username'].rsplit('_', 1)[-1]}@gmail.com"
     with patch("marketplace.services.send_email") as send_email:
         signup = client.post("/api/users/signup", payload, content_type="application/json")
         verification_message = send_email.call_args.args[1]
@@ -83,8 +83,11 @@ def test_signup_login_and_create_hidden_listing():
         content_type="application/json",
     )
     assert verification.status_code == 200
-    assert verification.json()["authenticator_setup_required"] is True
+    assert verification.json()["authenticator_setup_offer"] is True
     user = User.objects.get(id=verification.json()["user_id"])
+    assert verification.json()["authenticator_qr"].startswith("data:image/png;base64,")
+    assert user.authenticator_secret
+    assert user.authenticator_enabled is False
     assert User.objects.filter(email=payload["email"]).exists()
     assert not PendingRegistration.objects.filter(email=payload["email"]).exists()
 
@@ -95,8 +98,10 @@ def test_signup_login_and_create_hidden_listing():
     )
     assert login.status_code == 200
     login_data = login.json()
-    assert login_data["authenticator_setup_required"] is True
+    assert login_data["authenticator_setup_offer"] is True
+    assert login_data["user"]["id"] == user.id
     assert login_data["authenticator_qr"].startswith("data:image/png;base64,")
+
     authenticator = client.post(
         "/api/users/verify-authenticator",
         {"user_id": login_data["user_id"], "code": __import__("pyotp").TOTP(login_data["authenticator_secret"]).now(), "login_challenge": login_data["login_challenge"]},
@@ -104,6 +109,14 @@ def test_signup_login_and_create_hidden_listing():
     )
     assert authenticator.status_code == 200
     assert authenticator.json()["user"]["id"] == user.id
+
+    mfa_login = client.post(
+        "/api/users/login",
+        {"username": payload["username"], "password": payload["password"]},
+        content_type="application/json",
+    )
+    assert mfa_login.status_code == 200
+    assert mfa_login.json()["authenticator_required"] is True
 
     listing = client.post(
         "/api/items",
@@ -1049,6 +1062,27 @@ def test_cancel_verification_removes_pending_registration():
     assert not PendingRegistration.objects.filter(email=payload["email"]).exists()
 
 
+def test_seller_can_view_orders_for_their_listings():
+    suffix = random.randint(10_000_000, 99_999_999)
+    seller = create_active_test_user("dashboard_seller", suffix)
+    buyer = create_active_test_user("dashboard_buyer", suffix + 1)
+    item = create_test_item(seller, suffix, name=f"__test_dashboard_item_{suffix}")
+
+    checkout = client.post(
+        f"/api/items/{item.id}/purchase?buyer_id={buyer.id}",
+        {},
+        content_type="application/json",
+    )
+    assert checkout.status_code == 200
+
+    response = client.get(f"/api/users/{seller.id}/orders")
+
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+    assert response.json()[0]["buyer_id"] == buyer.id
+    assert response.json()[0]["seller_id"] == seller.id
+
+
 def test_signup_resumes_existing_database_pending_registration():
     payload = unique_student_payload()
     code = "123456"
@@ -1075,7 +1109,9 @@ def test_signup_resumes_existing_database_pending_registration():
         content_type="application/json",
     )
     assert verification.status_code == 200
-    assert verification.json()["authenticator_setup_required"] is True
+    assert verification.json()["authenticator_setup_offer"] is True
+    assert verification.json()["access_token"]
+    assert verification.json()["login_challenge"]
     assert User.objects.filter(email=payload["email"]).exists()
     assert not PendingRegistration.objects.filter(email=payload["email"]).exists()
 
@@ -1204,8 +1240,7 @@ def test_resend_verification_waits_one_minute():
     assert send_email.call_count == 2
 
 
-@override_settings(ALLOW_NON_USP_EMAILS=True)
-def test_signup_rejects_invalid_email_format():
+def test_signup_rejects_invalid_student_email_format():
     payload = unique_student_payload()
     payload["email"] = "not-an-email"
 
@@ -1218,7 +1253,6 @@ def test_signup_rejects_invalid_email_format():
 @override_settings(ALLOW_NON_USP_EMAILS=True, EMAIL_PROVIDER="smtp", EMAIL_HOST="smtp.gmail.com", EMAIL_HOST_USER="test@example.com", EMAIL_HOST_PASSWORD="1234567890123456")
 def test_signup_returns_json_error_when_smtp_fails():
     payload = unique_student_payload()
-    payload["email"] = "person@gmail.com"
 
     with patch(
         "marketplace.services.send_mail",
@@ -1237,7 +1271,6 @@ def test_signup_returns_json_error_when_smtp_fails():
 @override_settings(ALLOW_NON_USP_EMAILS=True, EMAIL_PROVIDER="smtp", EMAIL_HOST="smtp.gmail.com", EMAIL_HOST_USER="test@example.com", EMAIL_HOST_PASSWORD="1234567890123456")
 def test_signup_identifies_smtp_connection_failures_without_exposing_details():
     payload = unique_student_payload()
-    payload["email"] = "person@gmail.com"
 
     with patch("marketplace.services.send_mail", side_effect=smtplib.SMTPServerDisconnected("closed")):
         response = client.post("/api/users/signup", payload, content_type="application/json")
