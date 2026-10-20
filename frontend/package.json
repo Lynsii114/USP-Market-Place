@@ -3,9 +3,9 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "dev": "vite --host localhost",
+    "dev": "vite --host localhost --port 5173 --strictPort",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview --host localhost --port 5173 --strictPort"
   },
   "dependencies": {
     "@azure/msal-browser": "^5.22.0",

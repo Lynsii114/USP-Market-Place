@@ -1,4 +1,5 @@
 backend/.env
+.local-backups/
 backend/*.db
 backend/**/__pycache__/
 .pytest_cache/

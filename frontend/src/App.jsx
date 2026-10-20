@@ -281,8 +281,8 @@ function Home() {
 
     if (!response.ok) {
       const detail = data?.detail || data?.message || fallbackMessage;
-      if (response.status === 503 || /database unavailable/i.test(detail)) {
-        throw new Error(detail || "Marketplace service is temporarily unavailable. Please try again shortly.");
+      if (/database.*unavailable/i.test(detail)) {
+        throw new Error("Marketplace database is unavailable. Check the backend database connection, then try again.");
       }
       const error = new Error(detail);
       error.status = response.status;
@@ -711,7 +711,7 @@ function Home() {
           body: JSON.stringify(payload),
         });
       } catch (error) {
-        throw new Error(`Cannot reach the marketplace API at ${API_URL}. Check the backend deployment, VITE_API_URL, and CORS settings.`);
+        throw new Error(`Cannot reach the local marketplace API at ${API_URL}. Start the backend and try again.`);
       }
       const data = await parseResponse(response, "Authentication failed");
 

@@ -1,36 +1,24 @@
 import os
-import tempfile
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
 
 import certifi
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
-DEBUG = os.getenv("DEBUG", "1") == "1"
+DEBUG = True
 
 
-def env_list(name, default=""):
-    return [value.strip() for value in os.getenv(name, default).split(",") if value.strip()]
-
-
-ALLOWED_HOSTS = env_list(
-    "DJANGO_ALLOWED_HOSTS",
-    "127.0.0.1,localhost,testserver,.vercel.app",
-)
-CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS")
-CORS_ALLOWED_ORIGINS = env_list(
-    "CORS_ALLOWED_ORIGINS",
-    "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174,https://usp-market-place.vercel.app",
-)
-CORS_ALLOWED_ORIGIN_SUFFIXES = env_list("CORS_ALLOWED_ORIGIN_SUFFIXES")
-AUTO_ENSURE_SCHEMA = os.getenv("AUTO_ENSURE_SCHEMA", "1" if DEBUG else "0") == "1"
-LOCAL_DB_SYNC = DEBUG and os.getenv("LOCAL_DB_SYNC", "0") == "1"
-LOCAL_DB_SYNC_ON_START = DEBUG and os.getenv("LOCAL_DB_SYNC_ON_START", "0") == "1"
+ALLOWED_HOSTS = ["127.0.0.1", "localhost", "[::1]", "testserver"]
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173", "http://127.0.0.1:5173",
+    "http://localhost:5174", "http://127.0.0.1:5174",
+]
+CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS.copy()
+AUTO_ENSURE_SCHEMA = os.getenv("AUTO_ENSURE_SCHEMA", "1") == "1"
 
 INSTALLED_APPS = [
     "django.contrib.staticfiles",
@@ -98,81 +86,23 @@ LOGGING = {
 }
 
 
-def db_ssl_ca_path(default_ca):
-    ca_cert = os.getenv("DB_SSL_CA_CERT", "").strip()
-    if ca_cert:
-        ca_path = Path(tempfile.gettempdir()) / "aiven-ca.pem"
-        ca_path.write_text(ca_cert.replace("\\n", "\n"), encoding="utf-8")
-        return str(ca_path)
-    return os.getenv("DB_SSL_CA", default_ca)
-
-
-def db_ssl_options(ssl_mode, ca_path=None):
-    ssl_mode = ssl_mode.upper()
-    if ssl_mode in {"1", "TRUE", "REQUIRED", "REQUIRE"}:
-        return {"ssl": {}}
-    if ssl_mode in {"VERIFY_CA", "VERIFY_IDENTITY"}:
-        ssl_options = {"ca": ca_path or db_ssl_ca_path(certifi.where())}
-        if ssl_mode == "VERIFY_IDENTITY":
-            ssl_options["check_hostname"] = True
-        return {"ssl": ssl_options}
-    return None
-
-
-def db_options(ssl_mode, ca_path=None):
-    options = {
-        "connect_timeout": int(os.getenv("DB_CONNECT_TIMEOUT", "10")),
-        "read_timeout": int(os.getenv("DB_READ_TIMEOUT", "10")),
-        "write_timeout": int(os.getenv("DB_WRITE_TIMEOUT", "10")),
-    }
-    ssl_options = db_ssl_options(ssl_mode, ca_path)
-    if ssl_options:
-        options.update(ssl_options)
-    return options
 def database_config():
-    db_host = os.getenv("DB_HOST")
-    if db_host:
-        required_db_env = ["DB_DATABASE", "DB_USERNAME", "DB_PASSWORD", "DB_SSL"]
-        missing_db_env = [name for name in required_db_env if not os.getenv(name)]
-        if missing_db_env:
-            raise RuntimeError(f"Missing required database environment variables: {', '.join(missing_db_env)}")
-        config = {
-            "default": {
-                "ENGINE": "usp_backend.mysql_backend",
-                "NAME": os.getenv("DB_DATABASE", ""),
-                "USER": os.getenv("DB_USERNAME", ""),
-                "PASSWORD": os.getenv("DB_PASSWORD", ""),
-                "HOST": db_host,
-                "PORT": os.getenv("DB_PORT", "3306"),
-                "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "60")),
-            }
+    """Use only this computer's MySQL server; remote database settings are ignored."""
+    host = os.getenv("LOCAL_DB_HOST", "127.0.0.1")
+    if host not in {"localhost", "127.0.0.1", "::1"}:
+        raise RuntimeError("LOCAL_DB_HOST must be a loopback address for local-only use")
+    return {
+        "default": {
+            "ENGINE": "usp_backend.mysql_backend",
+            "NAME": os.getenv("LOCAL_DB_DATABASE", "usp_marketplace"),
+            "USER": os.getenv("LOCAL_DB_USERNAME", "root"),
+            "PASSWORD": os.getenv("LOCAL_DB_PASSWORD", ""),
+            "HOST": host,
+            "PORT": os.getenv("LOCAL_DB_PORT", "3306"),
+            "CONN_MAX_AGE": 0,
+            "OPTIONS": {"connect_timeout": 5, "read_timeout": 10, "write_timeout": 10},
         }
-        config["default"]["OPTIONS"] = db_options(os.getenv("DB_SSL", ""))
-        return config
-
-    database_url = os.getenv("DATABASE_URL")
-    if not database_url:
-        raise RuntimeError("DATABASE_URL or DB_HOST is required. Set your MySQL database details in backend/.env")
-
-    parsed = urlparse(database_url)
-    if parsed.scheme.startswith("mysql"):
-        config = {
-            "default": {
-                "ENGINE": "usp_backend.mysql_backend",
-                "NAME": parsed.path.lstrip("/"),
-                "USER": parsed.username or "",
-                "PASSWORD": parsed.password or "",
-                "HOST": parsed.hostname or "localhost",
-                "PORT": str(parsed.port or 3306),
-                "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "60")),
-            }
-        }
-        query = parse_qs(parsed.query)
-        ssl_value = query.get("ssl", query.get("sslmode", [""]))[0]
-        config["default"]["OPTIONS"] = db_options(ssl_value, query.get("ssl_ca", [None])[0])
-        return config
-
-    raise RuntimeError("SQLite has been disabled. DATABASE_URL must use mysql+pymysql://")
+    }
 
 
 DATABASES = database_config()

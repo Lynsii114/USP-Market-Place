@@ -53,7 +53,7 @@ cd frontend
 npm.cmd run dev -- --host 127.0.0.1 --port 5173 --strictPort
 ```
 
-Open http://127.0.0.1:5173/. Local settings always use the ignored `backend/inventory-demo.db` SQLite file and disable cloud synchronization and automatic legacy schema upgrades. Production MySQL configuration is unchanged. The demo seed command refuses non-local settings.
+Open http://127.0.0.1:5173/. Local settings always use the ignored `backend/inventory-demo.db` SQLite file and disable automatic legacy schema upgrades. The regular application uses local MySQL. The demo seed command refuses non-local settings.
 
 Local administrator: `Admin@usp.ac.fj` / `Admin12345`. After login choose **Go back**, then **My Activity → My Listings**. Five sample listings belong to this account, including inactive and administrator-hidden examples. Existing demo records are not overwritten when reseeding.
 
@@ -78,7 +78,7 @@ From `frontend`, run `npm.cmd run build`.
 
 Verified locally: 93 tests passed, 53 subtests passed, and two MySQL-only concurrency tests were skipped. Eight frontend tests passed (`node --test src/utils/inventory.test.mjs src/utils/categories.test.mjs` from frontend), along with the production build. Browser verification covered category photos/options, the Other page, photo validation/save, combined buyer filters, seller filters/summary, and action-menu placement/dismissal, in addition to earlier login and listing visibility checks. Daily dashboard sales also have a regression test for the configured timezone near midnight.
 
-SQLite verifies business logic, transactions, API validation, and authentication, but cannot prove MySQL row-lock behavior. Two real concurrency tests are included and explicitly skipped on SQLite. Run `manage.py test marketplace.tests` against a dedicated MySQL test configuration with schema auto-upgrade and cloud synchronization disabled before deploying. Do not point standalone scripts at a shared production database.
+SQLite verifies business logic, transactions, API validation, and authentication, but cannot prove MySQL row-lock behavior. Two real concurrency tests are included and explicitly skipped on SQLite. Run `manage.py test marketplace.tests` against a dedicated MySQL test configuration with schema auto-upgrade disabled. Do not point standalone scripts at a database containing important records.
 
 ## Deployment and remaining limits
 
