@@ -1,7 +1,7 @@
 {
   "private": true,
   "scripts": {
-    "backend": "cd backend && python manage.py runserver localhost:8000 --settings=usp_backend.xampp_settings",
+    "backend": "backend.cmd",
     "frontend": "cd frontend && npm run dev",
     "dev": "concurrently \"npm run backend\" \"npm run frontend\""
   },

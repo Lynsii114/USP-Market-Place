@@ -1,0 +1,119 @@
+﻿b2eae49 | 2026-10-20 | Lyndray Duna | Improve admin moderation, permanent listing deletion, and sidebar navigation.
+0662cf5 | 2026-10-19 | Lynsii114 | Merge pull request #36 from Lynsii114/mobile-responsive-improvements
+3779ed5 | 2026-10-19 | Lynsii114 | Merge pull request #33 from Lynsii114/registration-and-login
+ad268c0 | 2026-10-19 | MisguidedMC | Improve mobile navigation, listing forms and notifications
+5d7eccf | 2026-10-19 | Lyndray Duna | Fix Help navigation, missing admin imports and frontend compile errors
+4832257 | 2026-10-19 | Lynsii114 | Merge pull request #35 from Lynsii114/modify-admin-side
+a4bc043 | 2026-10-19 | Lynsii114 | Merge branch 'main' into modify-admin-side
+5f46798 | 2026-10-19 | Lyndray Duna | Improve admin moderation, notifications and pdf report
+4759d33 | 2026-10-19 | Lynsii114 | Merge branch 'main' into registration-and-login
+e73fca5 | 2026-10-19 | Lynsii114 | Merge pull request #32 from Lynsii114/admin-access-feedback
+9061d9a | 2026-10-19 | Lynsii114 | Merge pull request #34 from Lynsii114/demo-data-seeding
+92add36 | 2026-10-19 | Lynsii114 | Merge pull request #31 from Lynsii114/help-and-navigation-improvements
+c4a4af9 | 2026-10-19 | Aveshal Anand | Quality of life changes
+13d4eec | 2026-10-19 | Lynsii114 | Merge pull request #30 from Lynsii114/inventory-and-account-fixes
+333ed51 | 2026-10-19 | Lynsii114 | Merge pull request #29 from Lynsii114/password-reset-login-fix
+090eef8 | 2026-10-19 | MisguidedMC | Paginate admin listings
+0d0a276 | 2026-10-19 | MisguidedMC | Merge account and activity updates from registration branch
+0a91404 | 2026-10-19 | Aveshal Anand | Merge demo data seeding and marketplace updates
+61ec771 | 2026-10-19 | MisguidedMC | Merge checkout updates from help and navigation branch
+77e18ed | 2026-10-19 | Aveshal Anand | Merge Issues Fixed
+ab9a433 | 2026-10-19 | MisguidedMC | Add repeatable local inventory and report data seeds
+088d604 | 2026-10-19 | Aveshal Anand | Merge origin/main into registration-and-login
+1eca791 | 2026-10-19 | Aveshal Anand | Optional Authenticator and Quality of Life Changes
+80ddf68 | 2026-10-19 | Joshua Dovale | duplicate-cehckout ID
+0863762 | 2026-10-19 | Joshua Dovale | Format VISA payment method
+acc4734 | 2026-10-19 | MisguidedMC | Show full search result count from home suggestions
+f8a1c9b | 2026-10-19 | MisguidedMC | Clarify student sign-in on admin route
+ceeb7b2 | 2026-10-19 | MisguidedMC | Add paginated notification pages
+367ccfd | 2026-10-19 | MisguidedMC | Make seller messages accessible from admin dashboard
+29e2495 | 2026-10-19 | MisguidedMC | Add marketplace help and simplify navigation
+5601c7a | 2026-10-19 | MisguidedMC | Fix multi-unit reservations and simplify listing controls
+9e3622e | 2026-10-18 | MisguidedMC | Fix email login after password reset for mixed-case addresses
+23be87b | 2026-10-18 | Lynsii114 | Merge pull request #28 from Lynsii114/inventory-management-fixes
+db8617c | 2026-10-18 | MisguidedMC | Paginate inventory and Shop views and fill Home rows
+76e70cb | 2026-10-18 | MisguidedMC | Clean up redundant code comments
+7fc3f36 | 2026-10-18 | MisguidedMC | Keep the home preview concise and align product seller rows
+8787903 | 2026-10-18 | MisguidedMC | Seed 75 fictional listings for the local project demo
+d58d561 | 2026-10-18 | MisguidedMC | Place photo format guidance beneath the upload picker
+56b91f9 | 2026-10-18 | MisguidedMC | Expand marketplace categories and add stock photos
+5cc5dec | 2026-10-17 | MisguidedMC | Add inventory photo requirements, filters and seller overview
+bd410c7 | 2026-10-17 | MisguidedMC | Fix selling navigation and support common photo formats
+e6d5fe3 | 2026-10-17 | MisguidedMC | Align inventory prices and sold listing visibility with SAD
+db73218 | 2026-10-17 | MisguidedMC | Fix inventory status badges and action menu spacing
+cdd93f3 | 2026-10-17 | MisguidedMC | Fix inventory validation, listing states, reservations and authenticated access
+a202fe2 | 2026-10-13 | Lynsii114 | Merge pull request #27 from Lynsii114/general-modify
+c82c380 | 2026-10-13 | Lyndray Duna | Fix XAMPP MySQL crash recovery ignores
+c570da6 | 2026-10-12 | Lynsii114 | Merge pull request #26 from Lynsii114/admin-modifications
+67c0521 | 2026-10-12 | Lyndray Duna | Add admin category management updates
+38a85a9 | 2026-10-12 | Lynsii114 | Merge pull request #25 from Lynsii114/fix-database-cloud-connection
+8ff69db | 2026-10-12 | Lyndray Duna | speed up Vercel login database path
+3ac058a | 2026-10-11 | Lynsii114 | Merge pull request #24 from Lynsii114/data-base-connection-to-vercel
+6d2a147 | 2026-10-11 | Lyndray Duna | add database health check endpoint
+2e53bc3 | 2026-10-11 | Lynsii114 | Merge pull request #23 from Lynsii114/data-base-connection-to-vercel
+91d3512 | 2026-10-11 | Lyndray Duna | allow Vercel frontend origins for API CORS
+01b92aa | 2026-10-11 | Lynsii114 | Merge pull request #22 from Lynsii114/data-base-connection-to-vercel
+8724cb5 | 2026-10-11 | Lyndray Duna | Merge branch 'main' of https://github.com/Lynsii114/USP-Market-Place into data-base-connection-to-vercel
+0f25c5c | 2026-10-11 | Lyndray Duna | validate Aiven MySQL deployment config
+fe2e92d | 2026-10-11 | Lynsii114 | Merge pull request #21 from Lynsii114/backend-dployment-fix
+6c4cc6c | 2026-10-11 | Lyndray Duna | configure deployed frontend login API connection
+952ecc2 | 2026-10-11 | Lynsii114 | Merge pull request #20 from Lynsii114/backend-dployment-fix
+7101685 | 2026-10-11 | Lyndray Duna | add backend root route for Vercel
+85a6143 | 2026-10-11 | Lyndray Duna | serve frontend and API routes on Vercel
+de64d18 | 2026-10-11 | Lyndray Duna | add Django WSGI entrypoint for Vercel deployment
+5cabcdc | 2026-10-11 | Lyndray Duna | clean up project structure and add Dockerfile
+94275b4 | 2026-10-07 | Aveshal Anand | Ignore local Python caches and environment
+8172ca2 | 2026-10-07 | Joshua Dovale | Improve simulated checkout and listing payment details
+735509e | 2026-10-07 | Aveshal Anand | Add user activity dashboard
+1cd997e | 2026-10-07 | Aveshal Anand | Make authenticator setup optional
+8f51961 | 2026-10-07 | Lyndray Duna | Merge remote-tracking branch 'origin/registration-and-login'
+d9d970f | 2026-10-07 | Lyndray Duna | update db sync with online db avien
+0a51353 | 2026-10-07 | Aveshal Anand | Fix signup and email verification flows
+f6a2a53 | 2026-10-06 | Lynsii114 | Merge pull request #17 from Lynsii114/fix/reports-duplicate-heading
+b7eabec | 2026-10-05 | Joshua Dovale | Restore simulated payment checkout
+feead6a | 2026-10-05 | Joshua Dovale | Fix signup verification and email TLS
+f4766da | 2026-10-05 | Joshua Dovale | Merge branch 'main' into joshua-listing-improvements
+c685f0a | 2026-09-30 | jisto03 | Remove duplicate Reports heading in ReportsPanel
+76c8eb9 | 2026-09-30 | jisto03 | Merge pull request #16 from Lynsii114/feature/reporting-analytics
+1ec4a79 | 2026-09-30 | jisto03 | Add Reporting & Analytics: date-range report, top items, server-side PDF export
+c02a199 | 2026-09-29 | Lyndray Duna | improve on payments and UI
+fba2946 | 2026-09-29 | Lyndray Duna | update notification and checkout flows
+926fbc9 | 2026-09-28 | Lyndray Duna | Merge branch 'main' of https://github.com/Lynsii114/USP-Market-Place
+a4a0d92 | 2026-09-28 | Lyndray Duna | Fix product visibility across accounts
+8e79e65 | 2026-09-27 | Joshua Dovale | Add simulated payment method selection and failure handling to checkout
+9683390 | 2026-09-27 | Lynsii114 | Merge pull request #12 from Lynsii114/MODIFY-LOGIN
+7bc678b | 2026-09-27 | Lyndray Duna | Updated SMTP config.
+56b4bf1 | 2026-09-27 | Lyndray Duna | Modify login verification flow
+fb4e815 | 2026-09-24 | Lynsii114 | Merge pull request #11 from Lynsii114/improve-shop-tab
+d6e4524 | 2026-09-24 | Lyndray Duna | Refine messaging UI and fix marketplace database schema
+9464294 | 2026-09-24 | Lynsii114 | Merge pull request #10 from Lynsii114/checkout-options
+edfa0c7 | 2026-09-24 | Lyndray Duna | Clean up purchases and order tracking views
+d7e97c0 | 2026-09-24 | Lyndray Duna | Update admin notification popover
+0898509 | 2026-09-24 | Lyndray Duna | Merge remote-tracking branch 'origin/main'
+51b4309 | 2026-09-24 | Lyndray Duna | Update users table structure
+4ef4400 | 2026-09-24 | Lynsii114 | Merge pull request #7 from Lynsii114/Login-improvements
+6d15423 | 2026-09-24 | Lyndray Duna | Update app title and login background
+96aa988 | 2026-09-24 | Lyndray Duna | Merge remote-tracking branch 'origin/main'
+ec399c9 | 2026-09-24 | Lyndray Duna | Improve admin profile links and notification/report actions
+b57e6d9 | 2026-09-24 | Aveshal Anand | Improved the page design
+21d1fb4 | 2026-09-23 | Lyndray Duna | Merge branch 'main' of https://github.com/Lynsii114/USP-Market-Place into modifu
+4561019 | 2026-09-23 | Aveshal Anand | Merge pull request #5 from Lynsii114/registration-and-login
+d0be115 | 2026-09-23 | Aveshal Anand | Removed all Commented Code Reserved for Microsoft Integeration
+7586b3c | 2026-09-23 | Aveshal Anand | Merge pull request #3 from Lynsii114/my-feature
+9c577d3 | 2026-09-23 | Lyndray Duna | improving reports section
+fdbe20a | 2026-09-23 | Aveshal Anand | added my code
+a4adc25 | 2026-09-17 | Lyndray Duna | modifications done
+cfd8d05 | 2026-09-17 | Lyndray Duna | chat improvements
+1e34630 | 2026-09-17 | Lyndray Duna | Messaging chat initial build
+a9f9ad5 | 2026-09-17 | Lyndray Duna | two more categories added
+d946248 | 2026-09-17 | Lyndray Duna | final touch done to backend
+fcdd57f | 2026-09-03 | Lyndray Duna | Merge branch 'Admin-interface'
+fb74da7 | 2026-09-03 | Lyndray Duna | BAsic admin interfaced is implemented
+d6f34f7 | 2026-09-03 | Lyndray Duna | modified navigations bar done
+0d12b4c | 2026-09-03 | Lyndray Duna | Pdf report done
+0765686 | 2026-09-03 | Lyndray Duna | sales report done
+b6a7c94 | 2026-09-03 | Lyndray Duna | Cart feartures implemented
+2d2a756 | 2026-09-02 | Lyndray Duna | All fixes done for categories  listed items
+c7d9b68 | 2026-09-02 | Lyndray Duna | MAnagement and user listings partially done
+63939e2 | 2026-09-02 | Lyndray Duna | Clean up marketplace app and auth flow
+475d09a | 2026-08-30 | Lyndray Duna | Initial commit

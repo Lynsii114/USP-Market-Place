@@ -1,26 +1,13 @@
 # USP Buy & Sell
 
-This project is split into two isolated parts:
+A local marketplace with a React/Vite frontend, Django API, and MySQL/MariaDB database.
 
-- `backend/`: Django Python API
-- `frontend/`: React/Vite web app
+## Local setup
 
-Keep Python files and backend dependencies inside `backend/`. Keep React files and Node dependencies inside `frontend/`.
-
-## Project structure
-
-```text
-usp-marketplace/
-├── frontend/
-├── backend/
-├── Dockerfile
-├── README.md
-├── backend.cmd
-├── backend-demo.cmd
-└── frontend.cmd
-```
-
-## Backend
+1. Start **MySQL** in the XAMPP Control Panel.
+2. Create a database in phpMyAdmin, such as `usp_marketplace`.
+3. Copy `backend/.env.example` to `backend/.env` if no `.env` exists. Set the database name, local username/password, a unique `SECRET_KEY`, and your administrator password. Keep existing credentials when updating an installation.
+4. Install backend dependencies:
 
 For local XAMPP development, start MySQL in XAMPP and run `npm run backend`
 from the repository root (or `backend.cmd`). This uses `usp_backend.xampp_settings`
@@ -33,73 +20,61 @@ The local API runs at `http://localhost:8000` and the frontend at
 ```powershell
 cd backend
 python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-python manage.py runserver 127.0.0.1:8000
+.\venv\Scripts\python.exe -m pip install -r requirements.txt
+cd ..
 ```
 
-API health check: `http://127.0.0.1:8000/api/health`
+5. Install frontend dependencies:
 
-Database health check: `http://127.0.0.1:8000/api/health/database`
+```powershell
+cd frontend
+npm install
+cd ..
+```
 
-### Local showcase demo
+6. Start both servers in separate terminals:
 
-The showcase seed commands use an isolated SQLite database at `backend/inventory-demo.db`; they do not add demo data to MySQL or Vercel. To view that data in the local web app, start the API with the same SQLite settings:
+```powershell
+.\backend.cmd
+```
+
+```powershell
+.\frontend.cmd
+```
+
+Or run `npm run dev` from the repository root after `npm install`.
+
+Open http://localhost:5173/. The backend listens at http://127.0.0.1:8000/.
+
+## Database and administrator login
+
+The backend always uses local MySQL and accepts only loopback database hosts. Configure it with `LOCAL_DB_HOST`, `LOCAL_DB_PORT`, `LOCAL_DB_DATABASE`, `LOCAL_DB_USERNAME`, and `LOCAL_DB_PASSWORD` in `backend/.env`. The schema is prepared automatically when the API starts.
+
+Sign in using the `ADMIN_EMAIL` and `ADMIN_PASSWORD` from `backend/.env`. The default administrator email is `Admin@usp.ac.fj`. The application runs in local development mode.
+
+On the current migrated installation, `LOCAL_DB_DATABASE=usp_marketplace_local`. Existing accounts, listings, and orders were copied there. The pre-switch data backup is stored in the ignored `.local-backups/` directory. The older `usp_marketplace` database was left intact.
+
+Check the API at http://127.0.0.1:8000/api/health and database connectivity at http://127.0.0.1:8000/api/health/database.
+
+## Isolated showcase demo
+
+The optional demo uses a separate SQLite file, `backend/inventory-demo.db`:
 
 ```powershell
 .\backend-demo.cmd
 ```
 
-Then start the frontend with `.\frontend.cmd` and open `http://localhost:5173/`. Re-run the seed commands from the repository root if needed:
+Seed demo data when needed:
 
 ```powershell
 backend\venv\Scripts\python.exe backend\manage.py seed_inventory_demo --settings=usp_backend.local_settings --count 1000
 backend\venv\Scripts\python.exe backend\manage.py seed_report_demo --settings=usp_backend.local_settings --count 1000
 ```
 
-The normal `backend.cmd` continues to use the database configured for the regular backend; it will not show records stored only in the isolated demo database.
+These commands do not modify the regular MySQL database. Start the frontend with `frontend.cmd`.
 
-## Frontend
+## Email and payment demonstrations
 
-```powershell
-cd frontend
-npm install
-npm run dev
-```
+Email verification can use a configured email provider, which requires internet access. Set `EMAIL_PROVIDER=console` to print verification codes in the backend terminal for local demonstrations. Checkout simulates payments and never transfers real money.
 
-App URL: `http://localhost:5173/`
-
-## Vercel environment variables
-
-Frontend project:
-
-```text
-VITE_API_URL=https://usp-market-place-h5f5-gm540cfl3-usp-marketplace.vercel.app/api
-VITE_MICROSOFT_CLIENT_ID=your-entra-application-client-id
-VITE_MICROSOFT_TENANT_ID=your-usp-tenant-id
-```
-
-Backend project:
-
-```text
-DEBUG=0
-SECRET_KEY=your-long-random-django-secret
-DB_HOST=your-aiven-mysql-host
-DB_PORT=your-aiven-mysql-port
-DB_DATABASE=your-aiven-database-name
-DB_USERNAME=your-aiven-username
-DB_PASSWORD=your-aiven-password
-DB_SSL=VERIFY_CA
-DB_SSL_CA_CERT=-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----
-AUTO_ENSURE_SCHEMA=0
-LOCAL_DB_SYNC=0
-LOCAL_DB_SYNC_ON_START=0
-DB_CONNECT_TIMEOUT=10
-DB_READ_TIMEOUT=10
-DB_WRITE_TIMEOUT=10
-DB_CONN_MAX_AGE=60
-DJANGO_ALLOWED_HOSTS=.vercel.app,your-backend-domain.vercel.app
-CORS_ALLOWED_ORIGINS=https://usp-market-place.vercel.app
-CORS_ALLOWED_ORIGIN_SUFFIXES=.vercel.app
-CSRF_TRUSTED_ORIGINS=https://usp-market-place.vercel.app
-```
+See `backend/README.md` for authentication, email, checkout, and inventory behaviour.

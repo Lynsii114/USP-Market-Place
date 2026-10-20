@@ -12,14 +12,22 @@ Open http://127.0.0.1:8000/api/health to check the API.
 
 Database:
 
-The regular backend uses MySQL/phpMyAdmin. The optional showcase demo uses a separate, isolated SQLite database and is not used by production.
+The regular backend uses local XAMPP MySQL/MariaDB. The optional showcase demo uses a separate, isolated SQLite database.
 
-1. Create a MySQL database, for example `usp_marketplace`.
-2. Set `DATABASE_URL` in a `.env` file in the `backend` folder:
+1. Start MySQL in XAMPP and create a database in phpMyAdmin.
+2. Copy `.env.example` to `.env` if needed and set these local connection values:
 
+```dotenv
+LOCAL_DB_HOST=127.0.0.1
+LOCAL_DB_PORT=3306
+LOCAL_DB_DATABASE=usp_marketplace
+LOCAL_DB_USERNAME=root
+LOCAL_DB_PASSWORD=
 ```
-DATABASE_URL=mysql+pymysql://user:password@localhost:3306/usp_marketplace
-```
+
+The current migrated installation uses `usp_marketplace_local`; keep that value to retain its copied data. Only loopback database hosts are accepted. The API runs in development mode, and the frontend always contacts `http://127.0.0.1:8000/api`.
+
+Set a unique `SECRET_KEY` and your `ADMIN_PASSWORD` in `.env`, then log in using `ADMIN_EMAIL` (default `Admin@usp.ac.fj`) and that password. Restart the backend after changing `.env`.
 
 The app will create tables automatically on startup.
 
@@ -34,7 +42,7 @@ backend\venv\Scripts\python.exe backend\manage.py seed_inventory_demo --settings
 backend\venv\Scripts\python.exe backend\manage.py seed_report_demo --settings=usp_backend.local_settings --count 1000
 ```
 
-These commands are repeat-safe: rerunning them does not add duplicate generated listings or orders. The demo records are local only and do not appear in MySQL or the deployed Vercel app.
+These commands are repeat-safe: rerunning them does not add duplicate generated listings or orders. The demo records remain separate from the regular local MySQL database.
 
 Email verification:
 
@@ -87,8 +95,8 @@ using the appropriate settings before starting the updated backend:
 .\.venv\Scripts\python.exe manage.py upgrade_listing_quantities --settings=usp_backend.local_settings
 ```
 
-For a deployed database, run `python manage.py upgrade_listing_quantities` in its
-configured environment during deployment. The command adds the missing column
+For the regular local database, run `python manage.py upgrade_listing_quantities`
+from the backend directory. The command adds the missing column
 and marks existing listings with multiple stock or recorded paid units as
 multiple-unit listings. Repeating it does not overwrite seller choices.
 
