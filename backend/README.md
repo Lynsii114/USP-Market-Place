@@ -208,19 +208,18 @@ These commands are repeat-safe: rerunning them does not add duplicate generated 
 Registration verification, password resets, and existing account notification
 emails reuse the same `send_email()` function and its existing HTTPS request to
 `https://api.resend.com/emails`. No Resend SDK or extra dependency is needed.
-Gmail SMTP is not used when `EMAIL_PROVIDER=resend`, even if old `EMAIL_HOST_*`
-variables remain. The default provider for new environments is `resend`.
-Legacy `auto` now prefers Resend when `RESEND_API_KEY` is present, even if Gmail
-settings remain; without that key it still uses the configured SMTP host.
-Use explicit `EMAIL_PROVIDER=resend` in both environments so missing Resend
-credentials fail clearly without falling back to Gmail. Explicit `smtp` and
-`console` remain available for existing workflows.
+Railway always uses Resend HTTPS, even if stale `EMAIL_PROVIDER=smtp`, `auto`,
+`console`, or `EMAIL_HOST_*` variables remain. Detection uses `DATABASE_MODE=railway`
+or `RAILWAY_ENVIRONMENT_ID`. Missing Resend credentials fail clearly with no SMTP
+fallback. SMTP and console delivery are available only for local development.
+For localhost SMTP, set `EMAIL_PROVIDER=smtp` and your local `EMAIL_HOST_*` values.
+Local `auto` prefers Resend when a key exists, otherwise the configured SMTP host.
 
 Gunicorn starting successfully does not test email delivery. A subsequent
 `SMTP connection stage: host=smtp.gmail.com port=587` log means that worker
 selected SMTP for the email, including registration and account notifications.
-Check the backend service's Railway Variables for `EMAIL_PROVIDER=smtp` or
-legacy `auto`, and make sure the deployed revision includes these changes.
+That log on Railway indicates an old running revision; deploy this revision and
+apply/redeploy Railway variable changes so new workers receive them.
 Railway Variables override `backend/.env`; changing only the local file cannot
 override Railway's provider. Docker excludes `.env`, so configure production
 secrets directly in Railway rather than relying on the local file.
@@ -229,9 +228,9 @@ Configure these variables **before deploying the email changes**:
 
 | Variable | Local `backend/.env` | Railway backend Variables |
 | --- | --- | --- |
-| `EMAIL_PROVIDER` | `resend` | `resend` |
-| `RESEND_API_KEY` | Private Resend sending API key | Private Resend sending API key |
-| `RESEND_FROM_EMAIL` | Sender on your verified domain | Sender on your verified domain |
+| `EMAIL_PROVIDER` | `smtp` (or `resend` for HTTPS testing) | `resend` (enforced) |
+| `RESEND_API_KEY` | Required only for local Resend testing | Private Resend sending API key |
+| `RESEND_FROM_EMAIL` | Required only for local Resend testing | Sender on your verified domain |
 | `FRONTEND_URL` | `http://localhost:5173` | `https://usp-market-place.vercel.app` |
 
 Use a sender such as `USP Marketplace <no-reply@your-verified-domain.example>`,
@@ -248,14 +247,12 @@ codes; clicking a link does not bypass verification or reset a password.
 Production frontend URLs must use HTTPS. No database or authentication settings
 need to change for this email-provider switch.
 
-After adding the real Resend values, change the existing local `.env` provider
-from `auto`/`smtp` to `resend` and restart Django. Change the Railway backend
-provider to `resend` only once its key and sender are configured, then redeploy.
-Old Gmail settings can remain unused; no Gmail password is needed by Resend.
-The local `.env` now selects Resend; its key and sender must be filled privately
-before local registration can deliver email. No credentials are generated or
-copied between environments. `--check-only` reports the effective HTTPS
-transport without displaying secrets or sending email.
+Keep local `.env` set to `smtp` for localhost and restart Django after changes.
+To test Resend locally, select `resend` and supply its key and sender privately.
+Configure Railway's Resend key and sender before deploying. Old Gmail settings
+are ignored online; no Gmail password is needed by Resend. No credentials are
+generated or copied between environments. `--check-only` reports the effective
+HTTPS transport without displaying secrets or sending email.
 
 From `backend`, check configuration without sending mail or accessing a database:
 

@@ -242,7 +242,9 @@ def require_resend_settings(failure_prefix="Failed to send email"):
 
 def email_provider():
     return resolve_email_provider(
-        settings.EMAIL_PROVIDER, settings.EMAIL_HOST, settings.RESEND_API_KEY
+        settings.EMAIL_PROVIDER, settings.EMAIL_HOST, settings.RESEND_API_KEY,
+        is_deployed=(getattr(settings, "IS_HOSTED_DEPLOYMENT", False)
+                     or settings.DATABASE_MODE == "railway"),
     )
 
 

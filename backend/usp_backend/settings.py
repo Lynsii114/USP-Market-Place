@@ -101,14 +101,20 @@ if (
     or (DATABASE_MODE == "railway" and frontend_url.scheme != "https")
 ):
     raise ImproperlyConfigured("FRONTEND_URL must be an absolute frontend URL (HTTPS on Railway), without credentials, query, or fragment.")
-EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "resend").strip().lower()
+IS_HOSTED_DEPLOYMENT = DATABASE_MODE == "railway" or bool(os.getenv("RAILWAY_ENVIRONMENT_ID"))
+EMAIL_PROVIDER = (
+    "resend" if IS_HOSTED_DEPLOYMENT
+    else os.getenv("EMAIL_PROVIDER", "resend").strip().lower()
+)
 if EMAIL_PROVIDER not in {"auto", "smtp", "resend", "console"}:
     raise RuntimeError("EMAIL_PROVIDER must be auto, smtp, resend, or console")
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
 # Never inherit a Gmail sender for the Resend API.
 RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "").strip()
 EMAIL_HOST = os.getenv("EMAIL_HOST", "")
-effective_email_provider = resolve_email_provider(EMAIL_PROVIDER, EMAIL_HOST, RESEND_API_KEY)
+effective_email_provider = resolve_email_provider(
+    EMAIL_PROVIDER, EMAIL_HOST, RESEND_API_KEY, is_deployed=IS_HOSTED_DEPLOYMENT
+)
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "1") == "1"
 EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "0") == "1"

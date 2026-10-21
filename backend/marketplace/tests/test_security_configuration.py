@@ -84,6 +84,23 @@ class SecurityConfigurationTests(unittest.TestCase):
         self.assertEqual(settings["effective_email_provider"], "smtp")
         self.assertEqual(settings["EMAIL_BACKEND"], settings["SMTP_EMAIL_BACKEND"])
 
+    def test_railway_requires_https_even_with_stale_provider_and_no_key(self):
+        for provider in ("smtp", "auto", "console", "resend"):
+            with self.subTest(provider=provider):
+                settings = self.load_settings(dict(self.railway_environment(),
+                    EMAIL_PROVIDER=provider, EMAIL_HOST="smtp.gmail.com",
+                    EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend",
+                    EMAIL_USE_TLS="1", EMAIL_USE_SSL="1"))
+                self.assertEqual(settings["EMAIL_PROVIDER"], "resend")
+                self.assertEqual(settings["effective_email_provider"], "resend")
+                self.assertEqual(settings["EMAIL_BACKEND"], settings["CONSOLE_EMAIL_BACKEND"])
+
+    def test_railway_marker_disables_smtp_even_with_local_database_mode(self):
+        environment = dict(self.railway_environment(), DATABASE_MODE="local",
+            RAILWAY_ENVIRONMENT_ID="production", EMAIL_PROVIDER="smtp")
+        settings = self.load_settings(environment)
+        self.assertEqual(settings["effective_email_provider"], "resend")
+
     def test_frontend_url_validation_and_railway_override(self):
         environment = self.railway_environment()
         self.assertEqual(self.load_settings(environment)["FRONTEND_URL"], "https://usp-market-place.vercel.app")
