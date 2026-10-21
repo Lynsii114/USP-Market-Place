@@ -56,6 +56,35 @@ class ResendEmailTests(SimpleTestCase):
                 self.assertIn(name, error.exception.detail)
         self.urlopen.assert_not_called()
 
+    @override_settings(EMAIL_PROVIDER="auto")
+    @patch("marketplace.services.send_mail", side_effect=AssertionError("Must not use Gmail"))
+    def test_auto_prefers_resend_for_verification_and_notifications(self, send_mail):
+        services.send_verification_code({"email": "student@example.com", "pending_token": "pending"})
+        result = services.send_account_action_email("Notice", "Body", "student@example.com")
+        self.assertEqual(self.urlopen.call_count, 2)
+        self.assertEqual(result["email_status"], "sent")
+        send_mail.assert_not_called()
+
+    @override_settings(EMAIL_PROVIDER="auto", RESEND_FROM_EMAIL="")
+    @patch("marketplace.services.send_mail")
+    def test_auto_with_key_and_missing_sender_never_falls_back_to_gmail(self, send_mail):
+        with self.assertRaises(ApiError) as error:
+            services.send_email("Subject", "Body", "student@example.com")
+        self.assertIn("RESEND_FROM_EMAIL", error.exception.detail)
+        send_mail.assert_not_called()
+        self.urlopen.assert_not_called()
+
+    @override_settings(
+        EMAIL_PROVIDER="smtp", EMAIL_HOST_USER="operator@example.com",
+        EMAIL_HOST_PASSWORD="a" * 16, DEFAULT_FROM_EMAIL="operator@example.com",
+        EMAIL_USE_TLS=True, EMAIL_USE_SSL=False,
+    )
+    @patch("marketplace.services.send_mail", return_value=1)
+    def test_explicit_smtp_remains_supported(self, send_mail):
+        services.send_email("Subject", "Body", "student@example.com")
+        send_mail.assert_called_once()
+        self.urlopen.assert_not_called()
+
     def test_provider_rejection_redacts_key(self):
         body = json.dumps({"message": f"Rejected {self.key}"}).encode()
         self.urlopen.side_effect = HTTPError("https://api.resend.com/emails", 403, "Forbidden", {}, BytesIO(body))
@@ -124,4 +153,12 @@ class ResendEmailTests(SimpleTestCase):
     def test_delivery_command_rejects_invalid_recipient(self):
         with self.assertRaises(CommandError):
             call_command("test_email_delivery", to="invalid", stdout=StringIO())
+        self.urlopen.assert_not_called()
+
+    @override_settings(EMAIL_PROVIDER="auto")
+    def test_check_command_reports_effective_https_transport(self):
+        output = StringIO()
+        call_command("test_email_delivery", check_only=True, stdout=output)
+        self.assertIn("Gmail SMTP settings are ignored", output.getvalue())
+        self.assertNotIn(self.key, output.getvalue())
         self.urlopen.assert_not_called()

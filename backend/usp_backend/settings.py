@@ -6,6 +6,8 @@ import certifi
 from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
+from usp_backend.email_configuration import resolve_email_provider
+
 # Local .env values never override variables supplied by Railway.
 load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=False)
 os.environ.setdefault("SSL_CERT_FILE", certifi.where())
@@ -102,13 +104,15 @@ if (
 EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "resend").strip().lower()
 if EMAIL_PROVIDER not in {"auto", "smtp", "resend", "console"}:
     raise RuntimeError("EMAIL_PROVIDER must be auto, smtp, resend, or console")
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
+# Never inherit a Gmail sender for the Resend API.
+RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "").strip()
 EMAIL_HOST = os.getenv("EMAIL_HOST", "")
+effective_email_provider = resolve_email_provider(EMAIL_PROVIDER, EMAIL_HOST, RESEND_API_KEY)
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "1") == "1"
 EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "0") == "1"
-if EMAIL_USE_TLS and EMAIL_USE_SSL and (
-    EMAIL_PROVIDER == "smtp" or (EMAIL_PROVIDER == "auto" and EMAIL_HOST)
-):
+if EMAIL_USE_TLS and EMAIL_USE_SSL and effective_email_provider == "smtp":
     raise RuntimeError("Set only one of EMAIL_USE_TLS or EMAIL_USE_SSL to 1")
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "").replace(" ", "")
@@ -120,15 +124,12 @@ EMAIL_BACKEND = os.getenv(
     "EMAIL_BACKEND",
     SMTP_EMAIL_BACKEND if EMAIL_HOST else CONSOLE_EMAIL_BACKEND,
 )
-if EMAIL_PROVIDER == "smtp":
+if effective_email_provider == "smtp":
     EMAIL_BACKEND = SMTP_EMAIL_BACKEND
-elif EMAIL_PROVIDER in {"console", "resend"}:
+elif effective_email_provider in {"console", "resend"}:
     EMAIL_BACKEND = CONSOLE_EMAIL_BACKEND
 elif DEBUG and EMAIL_HOST and not (EMAIL_HOST_USER and EMAIL_HOST_PASSWORD) and EMAIL_BACKEND == SMTP_EMAIL_BACKEND:
     EMAIL_BACKEND = CONSOLE_EMAIL_BACKEND
-RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
-# A Resend sender must be configured explicitly, rather than inheriting Gmail.
-RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "").strip()
 MICROSOFT_CLIENT_ID = os.getenv("MICROSOFT_CLIENT_ID", "")
 MICROSOFT_TENANT_ID = os.getenv("MICROSOFT_TENANT_ID", "")
 ALLOW_NON_USP_EMAILS = os.getenv("ALLOW_NON_USP_EMAILS", "1") == "1"

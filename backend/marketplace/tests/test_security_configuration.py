@@ -65,6 +65,25 @@ class SecurityConfigurationTests(unittest.TestCase):
         })
         self.assertEqual(settings["EMAIL_PROVIDER"], "resend")
 
+    def test_resend_overrides_stale_gmail_backend_in_local_and_railway(self):
+        for base in ({"SECRET_KEY": secrets.token_urlsafe(64)}, self.railway_environment()):
+            for provider in ("resend", "auto"):
+                with self.subTest(mode=base.get("DATABASE_MODE", "local"), provider=provider):
+                    settings = self.load_settings(dict(base, EMAIL_PROVIDER=provider,
+                        EMAIL_HOST="smtp.gmail.com", EMAIL_PORT="587",
+                        EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend",
+                        EMAIL_USE_TLS="1", EMAIL_USE_SSL="1",
+                        RESEND_API_KEY=secrets.token_urlsafe(32),
+                        RESEND_FROM_EMAIL="Marketplace <no-reply@example.com>"))
+                    self.assertEqual(settings["EMAIL_BACKEND"], settings["CONSOLE_EMAIL_BACKEND"])
+                    self.assertEqual(settings["effective_email_provider"], "resend")
+
+    def test_auto_without_resend_key_preserves_legacy_smtp(self):
+        settings = self.load_settings({"SECRET_KEY": secrets.token_urlsafe(64),
+            "EMAIL_PROVIDER": "auto", "EMAIL_HOST": "smtp.gmail.com"})
+        self.assertEqual(settings["effective_email_provider"], "smtp")
+        self.assertEqual(settings["EMAIL_BACKEND"], settings["SMTP_EMAIL_BACKEND"])
+
     def test_frontend_url_validation_and_railway_override(self):
         environment = self.railway_environment()
         self.assertEqual(self.load_settings(environment)["FRONTEND_URL"], "https://usp-market-place.vercel.app")

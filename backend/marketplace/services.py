@@ -24,6 +24,7 @@ from django.db import DatabaseError, OperationalError, connection, transaction
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_date
+from usp_backend.email_configuration import resolve_email_provider
 # FUTURE MICROSOFT ENTRA INTEGRATION:
 # import jwt
 # from jwt import PyJWKClient
@@ -239,11 +240,15 @@ def require_resend_settings(failure_prefix="Failed to send email"):
         raise ApiError(f"{failure_prefix}: Set {', '.join(missing)} in the environment for Resend HTTPS delivery.", 500)
 
 
-def send_email(subject, message, recipient, failure_prefix="Failed to send email"):
-    use_smtp = settings.EMAIL_PROVIDER == "smtp" or (
-        settings.EMAIL_PROVIDER == "auto" and bool(settings.EMAIL_HOST)
+def email_provider():
+    return resolve_email_provider(
+        settings.EMAIL_PROVIDER, settings.EMAIL_HOST, settings.RESEND_API_KEY
     )
-    if use_smtp:
+
+
+def send_email(subject, message, recipient, failure_prefix="Failed to send email"):
+    provider = email_provider()
+    if provider == "smtp":
         if not settings.EMAIL_HOST:
             raise ApiError(f"{failure_prefix}: EMAIL_PROVIDER=smtp requires EMAIL_HOST in backend/.env", 500)
         require_smtp_settings(failure_prefix)
@@ -274,10 +279,7 @@ def send_email(subject, message, recipient, failure_prefix="Failed to send email
         email_logger.info("[email-debug] Email sent successfully to %s", recipient)
         return
 
-    use_resend = settings.EMAIL_PROVIDER == "resend" or (
-        settings.EMAIL_PROVIDER == "auto" and bool(settings.RESEND_API_KEY)
-    )
-    if use_resend:
+    if provider == "resend":
         require_resend_settings(failure_prefix)
         request = Request(
             "https://api.resend.com/emails",
@@ -316,7 +318,7 @@ def send_email(subject, message, recipient, failure_prefix="Failed to send email
         email_logger.info("[email-debug] Email sent successfully to %s", recipient)
         return
 
-    if settings.EMAIL_PROVIDER == "console" or settings.EMAIL_BACKEND == settings.CONSOLE_EMAIL_BACKEND:
+    if provider == "console" or settings.EMAIL_BACKEND == settings.CONSOLE_EMAIL_BACKEND:
         try:
             send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [recipient])
         except (smtplib.SMTPException, OSError) as exc:
@@ -1850,9 +1852,8 @@ def account_action_reason(data):
 def send_account_action_email(subject, message, email, action_label="account action"):
     try:
         send_email(subject, message, email, "Failed to send account notification")
-        provider = settings.EMAIL_PROVIDER
-        resend = provider == "resend" or (provider == "auto" and not settings.EMAIL_HOST and bool(settings.RESEND_API_KEY))
-        console = not resend and (provider == "console" or settings.EMAIL_BACKEND == settings.CONSOLE_EMAIL_BACKEND)
+        provider = email_provider()
+        console = provider != "resend" and (provider == "console" or settings.EMAIL_BACKEND == settings.CONSOLE_EMAIL_BACKEND)
         if console:
             return {"email_status": "console", "message": "Email was printed to the backend terminal only; it was not delivered to the student."}
         return {"email_status": "sent", "message": "Notification email accepted by the email provider. Inbox delivery is not guaranteed."}

@@ -209,8 +209,21 @@ Registration verification, password resets, and existing account notification
 emails reuse the same `send_email()` function and its existing HTTPS request to
 `https://api.resend.com/emails`. No Resend SDK or extra dependency is needed.
 Gmail SMTP is not used when `EMAIL_PROVIDER=resend`, even if old `EMAIL_HOST_*`
-variables remain. Do not select `auto`: that legacy mode prioritizes configured
-SMTP. The default provider for new environments is now `resend`.
+variables remain. The default provider for new environments is `resend`.
+Legacy `auto` now prefers Resend when `RESEND_API_KEY` is present, even if Gmail
+settings remain; without that key it still uses the configured SMTP host.
+Use explicit `EMAIL_PROVIDER=resend` in both environments so missing Resend
+credentials fail clearly without falling back to Gmail. Explicit `smtp` and
+`console` remain available for existing workflows.
+
+Gunicorn starting successfully does not test email delivery. A subsequent
+`SMTP connection stage: host=smtp.gmail.com port=587` log means that worker
+selected SMTP for the email, including registration and account notifications.
+Check the backend service's Railway Variables for `EMAIL_PROVIDER=smtp` or
+legacy `auto`, and make sure the deployed revision includes these changes.
+Railway Variables override `backend/.env`; changing only the local file cannot
+override Railway's provider. Docker excludes `.env`, so configure production
+secrets directly in Railway rather than relying on the local file.
 
 Configure these variables **before deploying the email changes**:
 
@@ -239,6 +252,10 @@ After adding the real Resend values, change the existing local `.env` provider
 from `auto`/`smtp` to `resend` and restart Django. Change the Railway backend
 provider to `resend` only once its key and sender are configured, then redeploy.
 Old Gmail settings can remain unused; no Gmail password is needed by Resend.
+The local `.env` now selects Resend; its key and sender must be filled privately
+before local registration can deliver email. No credentials are generated or
+copied between environments. `--check-only` reports the effective HTTPS
+transport without displaying secrets or sending email.
 
 From `backend`, check configuration without sending mail or accessing a database:
 
