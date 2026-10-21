@@ -203,17 +203,82 @@ backend\venv\Scripts\python.exe backend\manage.py seed_report_demo --settings=us
 
 These commands are repeat-safe: rerunning them does not add duplicate generated listings or orders. The demo records remain separate from the regular local MySQL database.
 
-Email verification:
+## Email delivery through Resend HTTPS
 
-For local development (`DEBUG=1`), the backend sends verification emails through SMTP when `EMAIL_HOST`, `EMAIL_HOST_USER`, and `EMAIL_HOST_PASSWORD` are configured. If the SMTP username or password is missing, verification codes are printed in the backend terminal instead. Configure `EMAIL_HOST=smtp.gmail.com`, `EMAIL_PORT=587`, `EMAIL_USE_TLS=1`, `EMAIL_USE_SSL=0`, `EMAIL_HOST_USER` as your Gmail address, `EMAIL_HOST_PASSWORD` as your current Google App Password, and `DEFAULT_FROM_EMAIL` as the same address. Remove spaces from the app password if Google displays it in groups. If Gmail closes the connection using port 587, try its implicit-SSL endpoint instead: set `EMAIL_PORT=465`, `EMAIL_USE_TLS=0`, and `EMAIL_USE_SSL=1`. Do not set both TLS and SSL to `1`.
+Registration verification, password resets, and existing account notification
+emails reuse the same `send_email()` function and its existing HTTPS request to
+`https://api.resend.com/emails`. No Resend SDK or extra dependency is needed.
+Gmail SMTP is not used when `EMAIL_PROVIDER=resend`, even if old `EMAIL_HOST_*`
+variables remain. Do not select `auto`: that legacy mode prioritizes configured
+SMTP. The default provider for new environments is now `resend`.
 
-Resend is also supported. Set `EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, and `RESEND_FROM_EMAIL` in `.env`; the Resend sender must be verified in your Resend account. Choosing `EMAIL_PROVIDER=resend` uses its HTTPS API even if Gmail SMTP settings are also present. With `EMAIL_PROVIDER=auto` (the default), configured SMTP takes precedence; Resend is selected automatically only when SMTP is not configured.
+Configure these variables **before deploying the email changes**:
 
-Resend SMTP is supported as well. Set `EMAIL_HOST=smtp.resend.com`, `EMAIL_PORT=587`, `EMAIL_USE_TLS=1`, `EMAIL_HOST_USER=resend`, `EMAIL_HOST_PASSWORD` to your Resend API key, and `DEFAULT_FROM_EMAIL` to a verified sender. SMTP takes priority when `EMAIL_HOST` is configured.
+| Variable | Local `backend/.env` | Railway backend Variables |
+| --- | --- | --- |
+| `EMAIL_PROVIDER` | `resend` | `resend` |
+| `RESEND_API_KEY` | Private Resend sending API key | Private Resend sending API key |
+| `RESEND_FROM_EMAIL` | Sender on your verified domain | Sender on your verified domain |
+| `FRONTEND_URL` | `http://localhost:5173` | `https://usp-market-place.vercel.app` |
+
+Use a sender such as `USP Marketplace <no-reply@your-verified-domain.example>`,
+replacing the example domain with one verified in your Resend account. A Gmail
+address or an unverified domain cannot substitute for a verified Resend sender.
+Use separate API keys per environment when possible. Keep keys in ignored `.env`
+files or Railway Variables; never put them in Git, Vercel `VITE_*` variables,
+terminal arguments, or chat. Resend's onboarding/test sender has recipient
+restrictions and is not suitable for sending to arbitrary student addresses.
+
+The app still uses six-digit codes with the existing expiry and verification
+logic. Email return links open the configured frontend so users can enter their
+codes; clicking a link does not bypass verification or reset a password.
+Production frontend URLs must use HTTPS. No database or authentication settings
+need to change for this email-provider switch.
+
+After adding the real Resend values, change the existing local `.env` provider
+from `auto`/`smtp` to `resend` and restart Django. Change the Railway backend
+provider to `resend` only once its key and sender are configured, then redeploy.
+Old Gmail settings can remain unused; no Gmail password is needed by Resend.
+
+From `backend`, check configuration without sending mail or accessing a database:
+
+```powershell
+python manage.py check
+python manage.py test_email_delivery --check-only
+python -m pytest marketplace/tests/test_resend_email.py marketplace/tests/test_security_configuration.py marketplace/tests/test_account_moderation.py -q -p no:cacheprovider
+```
+
+To send one explicit email to an address you control (replace the example):
+
+```powershell
+python manage.py test_email_delivery --to your-address@example.com
+```
+
+Run the same command **inside the Railway container** to test production's
+network and variables. `railway run` executes locally and is not a production
+network test. With CLI SSH access configured, use:
+
+```sh
+railway ssh --project disciplined-serenity --environment production --service USP-Market-Place -- python manage.py test_email_delivery --to your-address@example.com
+```
+
+The test command sends directly through the shared email function. It does not
+register users, generate real verification/reset records, or access MySQL.
+`--check-only` checks presence, not API-key validity or domain verification.
+An API acceptance response is not proof of inbox delivery: inspect the recipient
+inbox and Resend delivery logs. No SMTP port access is needed on Railway.
 
 Registration is restricted to USP student email addresses in the `S<number>@student.usp.ac.fj` format (for example, `S12345678@student.usp.ac.fj`). Other email addresses are rejected in all environments.
 
-Verification codes are sent to the exact email address used at registration. For actual delivery, configure SMTP or Resend as described above; without an email provider, codes are printed in the backend terminal.
+Verification codes are sent to the exact email address used at registration.
+There is no fixed test recipient, recipient override, or test-only account mode.
+To test manually, register through the local frontend with an email address you
+control, receive the code there, and enter it in that same local flow. Repeat
+through the production frontend to test Railway. Local and production accounts
+remain in their existing separate databases; this email change does not copy
+accounts between them.
+Resend mode requires both its API key and sender; missing configuration raises
+an email error instead of falling back to SMTP or printing a verification code.
 
 Authenticator security:
 

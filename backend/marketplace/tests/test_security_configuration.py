@@ -52,6 +52,28 @@ class SecurityConfigurationTests(unittest.TestCase):
         settings = self.load_settings({"SECRET_KEY": secrets.token_urlsafe(64)})
         self.assertFalse(settings["DEBUG"])
 
+    def test_resend_and_local_frontend_defaults(self):
+        settings = self.load_settings({"SECRET_KEY": secrets.token_urlsafe(64)})
+        self.assertEqual(settings["EMAIL_PROVIDER"], "resend")
+        self.assertEqual(settings["FRONTEND_URL"], "http://localhost:5173")
+        self.assertEqual(settings["RESEND_FROM_EMAIL"], "")
+
+    def test_resend_ignores_unused_smtp_tls_conflict(self):
+        settings = self.load_settings({
+            "SECRET_KEY": secrets.token_urlsafe(64), "EMAIL_PROVIDER": "resend",
+            "EMAIL_USE_TLS": "1", "EMAIL_USE_SSL": "1",
+        })
+        self.assertEqual(settings["EMAIL_PROVIDER"], "resend")
+
+    def test_frontend_url_validation_and_railway_override(self):
+        environment = self.railway_environment()
+        self.assertEqual(self.load_settings(environment)["FRONTEND_URL"], "https://usp-market-place.vercel.app")
+        environment["FRONTEND_URL"] = "https://shop.example.com/"
+        self.assertEqual(self.load_settings(environment)["FRONTEND_URL"], "https://shop.example.com")
+        for value in ("", "localhost:5173", "http://localhost:5173", "https://user:password@example.com", "https://example.com?token=value"):
+            with self.subTest(value=value), self.assertRaises(ImproperlyConfigured):
+                self.load_settings(dict(environment, FRONTEND_URL=value))
+
     def test_debug_truthy_values(self):
         for value in ("1", "TRUE", " yes ", "On"):
             with self.subTest(value=value):

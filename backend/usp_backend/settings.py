@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import certifi
 from django.core.exceptions import ImproperlyConfigured
@@ -83,11 +84,31 @@ DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
 USE_TZ = True
 TIME_ZONE = "UTC"
 STATIC_URL = "static/"
+FRONTEND_URL = os.getenv(
+    "FRONTEND_URL",
+    "https://usp-market-place.vercel.app" if DATABASE_MODE == "railway" else "http://localhost:5173",
+).strip().rstrip("/")
+frontend_url = urlsplit(FRONTEND_URL)
+if (
+    frontend_url.scheme not in {"http", "https"}
+    or not frontend_url.hostname
+    or frontend_url.username
+    or frontend_url.password
+    or frontend_url.query
+    or frontend_url.fragment
+    or (DATABASE_MODE == "railway" and frontend_url.scheme != "https")
+):
+    raise ImproperlyConfigured("FRONTEND_URL must be an absolute frontend URL (HTTPS on Railway), without credentials, query, or fragment.")
+EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "resend").strip().lower()
+if EMAIL_PROVIDER not in {"auto", "smtp", "resend", "console"}:
+    raise RuntimeError("EMAIL_PROVIDER must be auto, smtp, resend, or console")
 EMAIL_HOST = os.getenv("EMAIL_HOST", "")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "1") == "1"
 EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "0") == "1"
-if EMAIL_USE_TLS and EMAIL_USE_SSL:
+if EMAIL_USE_TLS and EMAIL_USE_SSL and (
+    EMAIL_PROVIDER == "smtp" or (EMAIL_PROVIDER == "auto" and EMAIL_HOST)
+):
     raise RuntimeError("Set only one of EMAIL_USE_TLS or EMAIL_USE_SSL to 1")
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "").replace(" ", "")
@@ -95,9 +116,6 @@ DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "no-repl
 EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "20"))
 SMTP_EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 CONSOLE_EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
-EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "auto").strip().lower()
-if EMAIL_PROVIDER not in {"auto", "smtp", "resend", "console"}:
-    raise RuntimeError("EMAIL_PROVIDER must be auto, smtp, resend, or console")
 EMAIL_BACKEND = os.getenv(
     "EMAIL_BACKEND",
     SMTP_EMAIL_BACKEND if EMAIL_HOST else CONSOLE_EMAIL_BACKEND,
@@ -108,8 +126,9 @@ elif EMAIL_PROVIDER in {"console", "resend"}:
     EMAIL_BACKEND = CONSOLE_EMAIL_BACKEND
 elif DEBUG and EMAIL_HOST and not (EMAIL_HOST_USER and EMAIL_HOST_PASSWORD) and EMAIL_BACKEND == SMTP_EMAIL_BACKEND:
     EMAIL_BACKEND = CONSOLE_EMAIL_BACKEND
-RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
-RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", DEFAULT_FROM_EMAIL)
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
+# A Resend sender must be configured explicitly, rather than inheriting Gmail.
+RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "").strip()
 MICROSOFT_CLIENT_ID = os.getenv("MICROSOFT_CLIENT_ID", "")
 MICROSOFT_TENANT_ID = os.getenv("MICROSOFT_TENANT_ID", "")
 ALLOW_NON_USP_EMAILS = os.getenv("ALLOW_NON_USP_EMAILS", "1") == "1"

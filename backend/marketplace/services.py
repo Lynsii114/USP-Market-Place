@@ -187,6 +187,7 @@ def verification_email_message(code):
         "USP Marketplace received a request to register an account with this email address.\n\n"
         f"Your 6-digit verification code is: {code}\n\n"
         "This code expires in 10 minutes.\n\n"
+        f"Return to USP Marketplace to enter your code: {settings.FRONTEND_URL}\n\n"
         "If you did not request this code, you can ignore this email.\n\n"
         "USP Marketplace System"
     )
@@ -232,6 +233,12 @@ def require_smtp_settings(failure_prefix):
         raise ApiError(f"{failure_prefix}: EMAIL_USE_TLS and EMAIL_USE_SSL cannot both be enabled", 500)
 
 
+def require_resend_settings(failure_prefix="Failed to send email"):
+    missing = [name for name in ("RESEND_API_KEY", "RESEND_FROM_EMAIL") if not getattr(settings, name, "").strip()]
+    if missing:
+        raise ApiError(f"{failure_prefix}: Set {', '.join(missing)} in the environment for Resend HTTPS delivery.", 500)
+
+
 def send_email(subject, message, recipient, failure_prefix="Failed to send email"):
     use_smtp = settings.EMAIL_PROVIDER == "smtp" or (
         settings.EMAIL_PROVIDER == "auto" and bool(settings.EMAIL_HOST)
@@ -271,8 +278,7 @@ def send_email(subject, message, recipient, failure_prefix="Failed to send email
         settings.EMAIL_PROVIDER == "auto" and bool(settings.RESEND_API_KEY)
     )
     if use_resend:
-        if not settings.RESEND_API_KEY:
-            raise ApiError("EMAIL_PROVIDER=resend requires RESEND_API_KEY in backend/.env", 500)
+        require_resend_settings(failure_prefix)
         request = Request(
             "https://api.resend.com/emails",
             data=json.dumps({
@@ -284,12 +290,13 @@ def send_email(subject, message, recipient, failure_prefix="Failed to send email
             headers={
                 "Authorization": f"Bearer {settings.RESEND_API_KEY}",
                 "Content-Type": "application/json",
+                "User-Agent": "USPMarketplace/1.0",
             },
             method="POST",
         )
         try:
             email_logger.info("[email-debug] Resend API sending stage: from=%s recipient=%s", settings.RESEND_FROM_EMAIL, recipient)
-            with urlopen(request, timeout=15) as response:
+            with urlopen(request, timeout=settings.EMAIL_TIMEOUT) as response:
                 if response.status not in range(200, 300):
                     raise ApiError(f"{failure_prefix}: Email provider rejected the message", 502)
         except HTTPError as exc:
@@ -300,7 +307,7 @@ def send_email(subject, message, recipient, failure_prefix="Failed to send email
                 provider_error = error_body.get("message") or error_body.get("name")
             except (ValueError, UnicodeDecodeError):
                 provider_error = raw_error.strip() or None
-            detail = provider_error or f"HTTP {exc.code} from email provider"
+            detail = str(provider_error or f"HTTP {exc.code} from email provider").replace(settings.RESEND_API_KEY, "[redacted]")
             email_logger.exception("[email-debug] Resend/email sending failed for %s: %s", recipient, detail)
             raise ApiError(f"{failure_prefix}: Resend error: {detail}", 502) from exc
         except (URLError, TimeoutError) as exc:
@@ -577,7 +584,8 @@ def request_password_reset(data):
         )
         send_email(
             "Reset your USP Marketplace password",
-            f"Your USP Marketplace password reset code is {code}. It expires in 10 minutes.",
+            f"Your USP Marketplace password reset code is {code}. It expires in 10 minutes.\n\n"
+            f"Return to USP Marketplace to enter your code: {settings.FRONTEND_URL}",
             user.email,
         )
     return {"message": "If that email is registered, a password reset code has been sent."}
