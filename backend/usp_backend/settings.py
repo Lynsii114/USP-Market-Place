@@ -2,17 +2,27 @@ import os
 from pathlib import Path
 
 import certifi
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+# Local .env values never override variables supplied by Railway.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=False)
 os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
-DEBUG = True
+SECRET_KEY = os.getenv("SECRET_KEY", "")
+if not SECRET_KEY.strip() or SECRET_KEY == "dev-secret-key":
+    raise ImproperlyConfigured(
+        "Set SECRET_KEY to a unique secret in the environment or backend/.env."
+    )
+DEBUG = os.getenv("DEBUG", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
-ALLOWED_HOSTS = ["127.0.0.1", "localhost", "[::1]", "testserver"]
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv("ALLOWED_HOSTS", "127.0.0.1,localhost,[::1],testserver").split(",")
+    if host.strip()
+]
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173", "http://127.0.0.1:5173",
     "http://localhost:5174", "http://127.0.0.1:5174",

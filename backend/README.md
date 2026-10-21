@@ -10,6 +10,47 @@ python manage.py runserver 127.0.0.1:8000
 
 Open http://127.0.0.1:8000/api/health to check the API.
 
+## Secret key and Railway environment variables
+
+Before starting locally, copy `.env.example` to `.env` if it does not already
+exist. Replace its `SECRET_KEY` placeholder with a unique random secret and use
+`DEBUG=true` for local development. `backend/.env` is ignored by Git; never commit
+it. To generate a key, run the following locally and store the output privately:
+
+```powershell
+python -c "import secrets; print(secrets.token_urlsafe(64))"
+```
+
+In your Railway backend service's **Variables**, set:
+
+- `SECRET_KEY`: a separately generated random secret.
+- `DEBUG`: `false` (also the default when unset).
+- `ALLOWED_HOSTS`: your backend hostname, for example
+  `your-service.up.railway.app`, with additional hostnames separated by commas.
+  Use hostnames without `https://`, paths, or ports.
+
+Railway environment variables take precedence over `.env` values. A missing,
+empty, whitespace-only key or the retired `dev-secret-key` fallback stops Django
+with a configuration error. Local development also requires a key in `.env` or
+the environment. `DEBUG` accepts `true`, `1`, `yes`, or `on` (case-insensitive);
+other values disable it. If `ALLOWED_HOSTS` is unset, local hosts are allowed.
+
+From `backend`, verify the loaded key without displaying it or accessing the
+database, then run Django's system checks:
+
+```powershell
+python manage.py check_secret_key
+python manage.py check
+python -m unittest discover -s marketplace/tests -p test_security_configuration.py
+```
+
+The first command prints `SECRET_KEY loaded successfully (value hidden).` on
+success. Run `python manage.py check_secret_key` inside the Railway service to
+verify its deployed configuration too. These changes only configure the secret,
+debug mode, and allowed hosts; the existing local-only database configuration
+still needs separate work before a complete Railway deployment can use a remote
+database.
+
 Database:
 
 The regular backend uses local XAMPP MySQL/MariaDB. The optional showcase demo uses a separate, isolated SQLite database.
