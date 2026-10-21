@@ -21,13 +21,19 @@ VALID_PERIODS = {"daily", "weekly", "monthly"}
 TOP_ITEMS_LIMIT = 5
 
 
+def _parse_date(value, label):
+    try:
+        parsed = parse_date(value)
+    except ValueError:
+        parsed = None
+    if not parsed:
+        raise ApiError(f"{label} date must be a real date (YYYY-MM-DD)", 400)
+    return parsed
+
+
 def _parse_range(date_from, date_to):
-    start = parse_date(date_from) if date_from else None
-    end = parse_date(date_to) if date_to else None
-    if date_from and not start:
-        raise ApiError("From date must be YYYY-MM-DD", 400)
-    if date_to and not end:
-        raise ApiError("To date must be YYYY-MM-DD", 400)
+    start = _parse_date(date_from, "From") if date_from else None
+    end = _parse_date(date_to, "To") if date_to else None
     if start and end and start > end:
         raise ApiError("From date cannot be after To date", 400)
     return start, end
