@@ -76,12 +76,20 @@ DB_PASSWORD=<your-existing-Railway-MySQL-password>
 AUTO_ENSURE_SCHEMA=0
 ```
 
-Use Railway's variable reference picker for `DB_PASSWORD` to reference the
-existing MySQL service's `MYSQLPASSWORD`, rather than putting it in source.
+When the backend and database are in the same project/environment, use Railway's
+variable reference picker for `DB_PASSWORD` to reference the existing MySQL
+service's `MYSQLPASSWORD`, rather than putting it in source.
 If the service is named `MySQL`, the reference is `${{MySQL.MYSQLPASSWORD}}`.
 For services in the same Railway project/environment, you can instead reference
 that MySQL service's private `MYSQLHOST` and `MYSQLPORT` together. Do not mix a
 private host with the public proxy port above. No new database is needed.
+
+The current public backend is in project `disciplined-serenity`, while the
+existing MySQL service is in `shimmering-endurance`. This deployment therefore
+uses the public proxy host/port above and stores the existing database password
+privately in the backend's Railway Variables. Same-project `${{MySQL.*}}`
+references do not connect these two projects. Do not move, recreate, or reset
+the existing MySQL service to fix a missing backend variable.
 
 `DATABASE_MODE=railway` uses only `DB_*`; it never falls back to local credentials
 if a required value is missing. Railway's `RAILWAY_ENVIRONMENT_ID` selects this
@@ -96,10 +104,11 @@ empty and remove any old migration/seed commands from service overrides. The
 existing database must already contain the tables and columns the app expects;
 missing schema will need a separately reviewed update, not an automatic fix.
 
-The Railway **Start Command** (Linux shell, from `backend/`) is:
+Leave Railway's custom **Start Command** empty to use the Dockerfile. If an
+override is needed, wrap it in a shell so Railway expands `$PORT`:
 
 ```sh
-gunicorn usp_backend.wsgi:application --bind 0.0.0.0:$PORT
+/bin/sh -c "exec gunicorn usp_backend.wsgi:application --bind 0.0.0.0:$PORT"
 ```
 
 The Dockerfile uses the same command with a local Docker port fallback of 8000
@@ -131,6 +140,13 @@ VITE_API_URL=https://<your-backend>.up.railway.app/api
 The local frontend still defaults to `http://127.0.0.1:8000/api`. Never put
 database passwords, backend secrets, or other private values in `VITE_*`
 variables: they are included in browser bundles.
+
+The existing Vercel project is `usp-marketplace/usp-market-place`, with Root
+Directory `frontend`. `.vercelignore` excludes the backend, local environment
+files, virtual environments, and database backups from CLI frontend uploads.
+Local `.vercel` project-link metadata is ignored by Git. Configure `VITE_API_URL`
+for both Production and Preview, and build the updated
+`Railway-deployement-trial` branch when deploying without merging into `main`.
 
 Before publishing, run the configuration tests above. In a configured Railway
 service shell, run these checks (neither command queries or modifies tables):

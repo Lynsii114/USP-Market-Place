@@ -1,0 +1,17 @@
+backend/
+.git/
+.local-backups/
+xampp_*_backup_*/
+output/
+tmp/
+.env
+.env.*
+**/.env
+**/.env.*
+**/node_modules/
+**/dist/
+**/.vite/
+**/__pycache__/
+**/*.db
+**/*.sql
+**/*.log
