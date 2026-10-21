@@ -19,6 +19,7 @@ from .services import require_admin
 
 VALID_PERIODS = {"daily", "weekly", "monthly"}
 TOP_ITEMS_LIMIT = 5
+FIJI_TZ = dt_timezone(timedelta(hours=12))  # Fiji time (UTC+12)
 
 
 def _parse_date(value, label):
@@ -43,14 +44,14 @@ def _completed_orders(start, end):
     """Completed orders only (FR4.3), optionally limited to a date range (FR4.2)."""
     query = visible_purchases().filter(status="completed")
     if start:
-        query = query.filter(purchased_at__gte=datetime.combine(start, time.min, tzinfo=dt_timezone.utc))
+        query = query.filter(purchased_at__gte=datetime.combine(start, time.min, tzinfo=FIJI_TZ))
     if end:
-        query = query.filter(purchased_at__lt=datetime.combine(end + timedelta(days=1), time.min, tzinfo=dt_timezone.utc))
+        query = query.filter(purchased_at__lte=datetime.combine(end, time.max, tzinfo=FIJI_TZ))
     return query.values("item_id", "item_name", "category", "quantity", "total_amount", "price", "purchased_at")
 
 
 def _period_key(purchased_at, period):
-    day = purchased_at.date()
+    day = purchased_at.astimezone(FIJI_TZ).date()
     if period == "monthly":
         return day.strftime("%Y-%m")
     if period == "weekly":
@@ -198,7 +199,7 @@ def build_report_pdf(admin_id, period="daily", date_from="", date_to=""):
     metadata = Table([
         [para("REPORTING PERIOD", "label"), para("PREPARED", "label")],
         [para(range_text), para(generated_label)],
-        [para(f"Grouped {report['period']} | Date filters use UTC", "small"), para(f"Prepared by: {report['generated_by']}", "small")],
+        [para(f"Grouped {report['period']} | Dates use Fiji time", "small"), para(f"Prepared by: {report['generated_by']}", "small")],
     ], colWidths=[width * 0.52, width * 0.48], hAlign="LEFT")
     metadata.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 10), ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
     metrics = [
