@@ -8,7 +8,7 @@ from marketplace.exceptions import ApiError
 from marketplace.models import AdminNotification, Item, Purchase, User, UserNotification
 
 
-@override_settings(EMAIL_PROVIDER="smtp", EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend")
+@override_settings(EMAIL_PROVIDER="resend")
 class ListingModerationTests(TestCase):
     def setUp(self):
         email_patch = patch("marketplace.services.send_email")
@@ -115,7 +115,7 @@ class ListingModerationTests(TestCase):
         self.send.assert_not_called()
 
     def test_email_failure_reports_action_complete_without_claiming_delivery(self):
-        self.send.side_effect = RuntimeError("SMTP unavailable")
+        self.send.side_effect = RuntimeError("Resend unavailable")
         response = self.act("remove")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["email_status"], "failed")

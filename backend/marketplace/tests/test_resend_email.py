@@ -34,72 +34,36 @@ class ResendEmailTests(SimpleTestCase):
     def payload(self):
         return json.loads(self.urlopen.call_args.args[0].data)
 
-    @patch("marketplace.services.send_mail", side_effect=AssertionError("SMTP/console must not be used"))
-    def test_resend_uses_https_despite_old_smtp_settings(self, send_mail):
+    def test_resend_uses_https_despite_old_smtp_settings(self):
         services.send_email("Subject", "Body", "student@example.com")
         request = self.urlopen.call_args.args[0]
         self.assertEqual(request.full_url, "https://api.resend.com/emails")
         self.assertEqual(request.method, "POST")
-        self.assertTrue(request.get_header("Authorization") == f"Bearer {self.key}")
+        self.assertEqual(request.get_header("Authorization"), f"Bearer {self.key}")
         self.assertEqual(self.payload(), {
             "from": "USP Marketplace <no-reply@example.com>",
             "to": ["student@example.com"], "subject": "Subject", "text": "Body",
         })
         self.assertEqual(self.urlopen.call_args.kwargs["timeout"], 20)
-        send_mail.assert_not_called()
 
-    def test_missing_key_or_sender_fails_without_smtp_fallback(self):
-        for name in ("RESEND_API_KEY", "RESEND_FROM_EMAIL"):
-            with self.subTest(name=name), override_settings(**{name: ""}):
-                with self.assertRaises(ApiError) as error:
-                    services.send_email("Subject", "Body", "student@example.com")
-                self.assertIn(name, error.exception.detail)
+    def test_missing_key_or_sender_fails_without_fallback(self):
+        for mode in ("local", "railway"):
+            for name in ("RESEND_API_KEY", "RESEND_FROM_EMAIL"):
+                with self.subTest(mode=mode, missing=name), override_settings(DATABASE_MODE=mode, **{name: ""}):
+                    with self.assertRaises(ApiError) as error:
+                        services.send_email("Subject", "Body", "student@example.com")
+                    self.assertIn(name, error.exception.detail)
         self.urlopen.assert_not_called()
 
-    @override_settings(DATABASE_MODE="railway", EMAIL_PROVIDER="smtp")
-    @patch("marketplace.services.send_mail", side_effect=AssertionError("SMTP is local-only"))
-    def test_railway_ignores_explicit_smtp(self, send_mail):
-        services.send_email("Reset password", "Reset code", "student@example.com")
-        self.assertEqual(self.urlopen.call_args.args[0].full_url, "https://api.resend.com/emails")
-        send_mail.assert_not_called()
-
-    @override_settings(DATABASE_MODE="railway", EMAIL_PROVIDER="auto", RESEND_API_KEY="")
-    @patch("marketplace.services.send_mail", side_effect=AssertionError("SMTP is local-only"))
-    def test_railway_missing_resend_key_fails_without_smtp(self, send_mail):
-        with self.assertRaises(ApiError) as error:
-            services.send_email("Reset password", "Reset code", "student@example.com")
-        self.assertIn("RESEND_API_KEY", error.exception.detail)
-        self.urlopen.assert_not_called()
-        send_mail.assert_not_called()
-
-    @override_settings(EMAIL_PROVIDER="auto")
-    @patch("marketplace.services.send_mail", side_effect=AssertionError("Must not use Gmail"))
-    def test_auto_prefers_resend_for_verification_and_notifications(self, send_mail):
-        services.send_verification_code({"email": "student@example.com", "pending_token": "pending"})
-        result = services.send_account_action_email("Notice", "Body", "student@example.com")
-        self.assertEqual(self.urlopen.call_count, 2)
-        self.assertEqual(result["email_status"], "sent")
-        send_mail.assert_not_called()
-
-    @override_settings(EMAIL_PROVIDER="auto", RESEND_FROM_EMAIL="")
-    @patch("marketplace.services.send_mail")
-    def test_auto_with_key_and_missing_sender_never_falls_back_to_gmail(self, send_mail):
-        with self.assertRaises(ApiError) as error:
-            services.send_email("Subject", "Body", "student@example.com")
-        self.assertIn("RESEND_FROM_EMAIL", error.exception.detail)
-        send_mail.assert_not_called()
-        self.urlopen.assert_not_called()
-
-    @override_settings(
-        EMAIL_PROVIDER="smtp", EMAIL_HOST_USER="operator@example.com",
-        EMAIL_HOST_PASSWORD="a" * 16, DEFAULT_FROM_EMAIL="operator@example.com",
-        EMAIL_USE_TLS=True, EMAIL_USE_SSL=False,
-    )
-    @patch("marketplace.services.send_mail", return_value=1)
-    def test_explicit_smtp_remains_supported(self, send_mail):
-        services.send_email("Subject", "Body", "student@example.com")
-        send_mail.assert_called_once()
-        self.urlopen.assert_not_called()
+    @patch("smtplib.SMTP", side_effect=AssertionError("SMTP must never be contacted"))
+    def test_legacy_provider_values_always_send_https_locally_and_online(self, smtp):
+        for mode in ("local", "railway"):
+            for provider in ("smtp", "auto", "console", "resend"):
+                with self.subTest(mode=mode, provider=provider), override_settings(DATABASE_MODE=mode, EMAIL_PROVIDER=provider):
+                    services.send_email("Reset password", "Reset code", "student@example.com")
+                    self.assertEqual(self.urlopen.call_args.args[0].full_url, "https://api.resend.com/emails")
+        self.assertEqual(self.urlopen.call_count, 8)
+        smtp.assert_not_called()
 
     def test_provider_rejection_redacts_key(self):
         body = json.dumps({"message": f"Rejected {self.key}"}).encode()
@@ -175,6 +139,6 @@ class ResendEmailTests(SimpleTestCase):
     def test_check_command_reports_effective_https_transport(self):
         output = StringIO()
         call_command("test_email_delivery", check_only=True, stdout=output)
-        self.assertIn("Gmail SMTP settings are ignored", output.getvalue())
+        self.assertIn("Resend is the only email transport", output.getvalue())
         self.assertNotIn(self.key, output.getvalue())
         self.urlopen.assert_not_called()

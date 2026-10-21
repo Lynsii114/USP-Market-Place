@@ -11,7 +11,7 @@ from marketplace.exceptions import ApiError
 from marketplace.models import AdminNotification, Item, User, UserNotification
 
 
-@override_settings(PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"], EMAIL_PROVIDER="smtp", EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend")
+@override_settings(PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"], EMAIL_PROVIDER="resend")
 class AccountModerationTests(TestCase):
     def setUp(self):
         self.admin = User.objects.create(username="admin", email="admin@example.com", password_hash="hash", role="admin", verified=True)
@@ -219,7 +219,7 @@ class AccountModerationTests(TestCase):
         self.assertFalse(UserNotification.objects.filter(user_id=self.student.id).exists())
         self.assertTrue(AdminNotification.objects.filter(title="Student account deleted", message__contains=self.reason).exists())
 
-    @patch("marketplace.services.send_email", side_effect=RuntimeError("SMTP unavailable"))
+    @patch("marketplace.services.send_email", side_effect=RuntimeError("Resend unavailable"))
     def test_email_failure_is_reported_without_reversing_action(self, send):
         response = self.suspend()
         self.assertEqual(response.status_code, 200)
@@ -230,8 +230,8 @@ class AccountModerationTests(TestCase):
 
     @override_settings(EMAIL_PROVIDER="console", EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend")
     @patch("marketplace.services.send_email")
-    def test_console_email_is_not_reported_as_delivered(self, send):
-        self.assertEqual(self.suspend().json()["email_status"], "console")
+    def test_legacy_console_setting_does_not_change_provider_acceptance(self, send):
+        self.assertEqual(self.suspend().json()["email_status"], "sent")
 
     @patch("marketplace.services.send_email")
     def test_student_cannot_suspend_or_delete_accounts(self, send):

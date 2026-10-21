@@ -4,7 +4,7 @@ from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
 
 from marketplace.exceptions import ApiError
-from marketplace.services import email_provider, require_resend_settings, send_email
+from marketplace.services import require_resend_settings, send_email
 
 
 class Command(BaseCommand):
@@ -17,13 +17,11 @@ class Command(BaseCommand):
         group.add_argument("--to", help="A recipient you control; sends one test email.")
 
     def handle(self, *args, **options):
-        if email_provider() != "resend":
-            raise CommandError("Set EMAIL_PROVIDER=resend to test Resend HTTPS delivery.")
         try:
             require_resend_settings("Resend configuration incomplete")
             if options["check_only"]:
                 self.stdout.write("Resend HTTPS settings present (API key hidden). Sender verification and delivery are not tested.")
-                self.stdout.write("Transport: HTTPS (https://api.resend.com/emails). Gmail SMTP settings are ignored.")
+                self.stdout.write("Transport: HTTPS (https://api.resend.com/emails). Resend is the only email transport.")
                 self.stdout.write(f"Frontend URL: {settings.FRONTEND_URL}")
                 return
             try:

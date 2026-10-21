@@ -1,7 +1,6 @@
 import hashlib
 import base64
 import logging
-import smtplib
 from io import BytesIO
 import json
 import math
@@ -17,14 +16,12 @@ from urllib.request import Request, urlopen
 from collections import defaultdict
 from datetime import date, timedelta
 
-from django.core.mail import BadHeaderError, send_mail
 from django.contrib.auth.hashers import make_password, check_password
 from django.conf import settings
 from django.db import DatabaseError, OperationalError, connection, transaction
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_date
-from usp_backend.email_configuration import resolve_email_provider
 # FUTURE MICROSOFT ENTRA INTEGRATION:
 # import jwt
 # from jwt import PyJWKClient
@@ -196,42 +193,8 @@ def verification_email_message(code):
 
 def describe_email_exception(exc):
     if isinstance(exc, ssl.SSLCertVerificationError):
-        return "SMTP TLS certificate verification failed. Install or configure a trusted CA certificate bundle and check system date/time."
-    if isinstance(exc, smtplib.SMTPAuthenticationError):
-        smtp_message = exc.smtp_error.decode("utf-8", errors="replace") if isinstance(exc.smtp_error, bytes) else str(exc.smtp_error)
-        return f"SMTP authentication failed ({exc.smtp_code}): {smtp_message}. Check EMAIL_HOST_USER and EMAIL_HOST_PASSWORD. Gmail requires a 16-character App Password with 2-Step Verification enabled."
-    if isinstance(exc, smtplib.SMTPConnectError):
-        return f"SMTP connection failed ({exc.smtp_code}): {exc.smtp_error}. Check EMAIL_HOST, EMAIL_PORT, and network/firewall access."
-    if isinstance(exc, smtplib.SMTPServerDisconnected):
-        if settings.EMAIL_HOST == "smtp.gmail.com":
-            return "Gmail closed the SMTP authentication connection. Check that EMAIL_HOST_USER is an active Gmail/Google Workspace mailbox, 2-Step Verification is enabled, the App Password was generated for that exact mailbox, and Workspace allows App Passwords/SMTP access."
-        return "SMTP server disconnected before accepting the message. Check TLS/SSL settings, host, and port."
-    if isinstance(exc, smtplib.SMTPRecipientsRefused):
-        return "SMTP provider refused the recipient address."
-    if isinstance(exc, smtplib.SMTPSenderRefused):
-        return f"SMTP provider refused DEFAULT_FROM_EMAIL: {exc.sender}. Make sure it matches or is allowed by the SMTP account."
-    if isinstance(exc, smtplib.SMTPException):
-        return f"SMTP error: {exc}"
-    if isinstance(exc, BadHeaderError):
-        return "Email subject or body contains an invalid header."
-    if isinstance(exc, TimeoutError):
-        return "SMTP connection timed out. Check host, port, TLS/SSL, and network access."
-    if isinstance(exc, OSError):
-        return f"Network error while contacting SMTP server: {exc}"
+        return "Resend HTTPS certificate verification failed. Check the trusted CA certificates and system date/time."
     return str(exc) or exc.__class__.__name__
-
-
-def require_smtp_settings(failure_prefix):
-    if not settings.EMAIL_HOST_USER:
-        raise ApiError(f"{failure_prefix}: EMAIL_HOST_USER is not configured", 500)
-    if not settings.EMAIL_HOST_PASSWORD:
-        raise ApiError(f"{failure_prefix}: EMAIL_HOST_PASSWORD is not configured", 500)
-    if settings.EMAIL_HOST == "smtp.gmail.com" and len(settings.EMAIL_HOST_PASSWORD) != 16:
-        raise ApiError(f"{failure_prefix}: EMAIL_HOST_PASSWORD must be a 16-character Gmail App Password for smtp.gmail.com", 500)
-    if not settings.DEFAULT_FROM_EMAIL:
-        raise ApiError(f"{failure_prefix}: DEFAULT_FROM_EMAIL is not configured", 500)
-    if settings.EMAIL_USE_TLS and settings.EMAIL_USE_SSL:
-        raise ApiError(f"{failure_prefix}: EMAIL_USE_TLS and EMAIL_USE_SSL cannot both be enabled", 500)
 
 
 def require_resend_settings(failure_prefix="Failed to send email"):
@@ -240,98 +203,44 @@ def require_resend_settings(failure_prefix="Failed to send email"):
         raise ApiError(f"{failure_prefix}: Set {', '.join(missing)} in the environment for Resend HTTPS delivery.", 500)
 
 
-def email_provider():
-    return resolve_email_provider(
-        settings.EMAIL_PROVIDER, settings.EMAIL_HOST, settings.RESEND_API_KEY,
-        is_deployed=(getattr(settings, "IS_HOSTED_DEPLOYMENT", False)
-                     or settings.DATABASE_MODE == "railway"),
-    )
-
-
 def send_email(subject, message, recipient, failure_prefix="Failed to send email"):
-    provider = email_provider()
-    if provider == "smtp":
-        if not settings.EMAIL_HOST:
-            raise ApiError(f"{failure_prefix}: EMAIL_PROVIDER=smtp requires EMAIL_HOST in backend/.env", 500)
-        require_smtp_settings(failure_prefix)
-        email_logger.info(
-            "[email-debug] SMTP connection stage: host=%s port=%s tls=%s ssl=%s user=%s from=%s recipient=%s",
-            settings.EMAIL_HOST,
-            settings.EMAIL_PORT,
-            settings.EMAIL_USE_TLS,
-            settings.EMAIL_USE_SSL,
-            settings.EMAIL_HOST_USER,
-            settings.DEFAULT_FROM_EMAIL,
-            recipient,
-        )
+    require_resend_settings(failure_prefix)
+    request = Request(
+        "https://api.resend.com/emails",
+        data=json.dumps({
+            "from": settings.RESEND_FROM_EMAIL,
+            "to": [recipient],
+            "subject": subject,
+            "text": message,
+        }).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {settings.RESEND_API_KEY}",
+            "Content-Type": "application/json",
+            "User-Agent": "USPMarketplace/1.0",
+        },
+        method="POST",
+    )
+    try:
+        email_logger.info("[email-debug] Resend API sending stage: from=%s recipient=%s", settings.RESEND_FROM_EMAIL, recipient)
+        with urlopen(request, timeout=settings.EMAIL_TIMEOUT) as response:
+            if response.status not in range(200, 300):
+                raise ApiError(f"{failure_prefix}: Email provider rejected the message", 502)
+    except HTTPError as exc:
+        raw_error = ""
         try:
-            sent_count = send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [recipient], fail_silently=False)
-        except Exception as exc:
-            detail = describe_email_exception(exc)
-            email_logger.exception("[email-debug] SMTP/email sending failed for %s: %s", recipient, detail)
-            if isinstance(exc, smtplib.SMTPAuthenticationError) and settings.EMAIL_HOST == "smtp.gmail.com":
-                public_detail = "Gmail rejected the SMTP login. Check EMAIL_HOST_USER and use a current 16-character Google App Password for EMAIL_HOST_PASSWORD."
-            else:
-                public_detail = f"SMTP email delivery failed ({type(exc).__name__}). Check the backend terminal for details."
-            raise ApiError(public_detail, 502) from exc
-        if sent_count != 1:
-            detail = "SMTP backend did not report a sent message. Check provider logs and sender verification."
-            email_logger.error("[email-debug] SMTP/email sending failed for %s: %s", recipient, detail)
-            raise ApiError(f"{failure_prefix}: {detail}", 502)
-        email_logger.info("[email-debug] Email sent successfully to %s", recipient)
-        return
-
-    if provider == "resend":
-        require_resend_settings(failure_prefix)
-        request = Request(
-            "https://api.resend.com/emails",
-            data=json.dumps({
-                "from": settings.RESEND_FROM_EMAIL,
-                "to": [recipient],
-                "subject": subject,
-                "text": message,
-            }).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {settings.RESEND_API_KEY}",
-                "Content-Type": "application/json",
-                "User-Agent": "USPMarketplace/1.0",
-            },
-            method="POST",
-        )
-        try:
-            email_logger.info("[email-debug] Resend API sending stage: from=%s recipient=%s", settings.RESEND_FROM_EMAIL, recipient)
-            with urlopen(request, timeout=settings.EMAIL_TIMEOUT) as response:
-                if response.status not in range(200, 300):
-                    raise ApiError(f"{failure_prefix}: Email provider rejected the message", 502)
-        except HTTPError as exc:
-            raw_error = ""
-            try:
-                raw_error = exc.read().decode("utf-8")
-                error_body = json.loads(raw_error)
-                provider_error = error_body.get("message") or error_body.get("name")
-            except (ValueError, UnicodeDecodeError):
-                provider_error = raw_error.strip() or None
-            detail = str(provider_error or f"HTTP {exc.code} from email provider").replace(settings.RESEND_API_KEY, "[redacted]")
-            email_logger.exception("[email-debug] Resend/email sending failed for %s: %s", recipient, detail)
-            raise ApiError(f"{failure_prefix}: Resend error: {detail}", 502) from exc
-        except (URLError, TimeoutError) as exc:
-            email_logger.exception("[email-debug] Resend/email sending failed for %s", recipient)
-            raise ApiError(f"{failure_prefix}: Unable to connect to Resend. Check your network connection.", 502) from exc
-        email_logger.info("[email-debug] Email sent successfully to %s", recipient)
-        return
-
-    if provider == "console" or settings.EMAIL_BACKEND == settings.CONSOLE_EMAIL_BACKEND:
-        try:
-            send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [recipient])
-        except (smtplib.SMTPException, OSError) as exc:
-            raise ApiError(
-                f"{failure_prefix}: Unable to send email. Check the email settings in backend/.env.",
-                502,
-            ) from exc
-        return
-
-    email_logger.error("[email-debug] No SMTP provider configured for %s", recipient)
-    raise ApiError(f"{failure_prefix}: Email is not configured. Set EMAIL_PROVIDER=smtp with SMTP settings, EMAIL_PROVIDER=resend with RESEND_API_KEY, or EMAIL_PROVIDER=console for local testing.", 500)
+            raw_error = exc.read().decode("utf-8")
+            error_body = json.loads(raw_error)
+            provider_error = error_body.get("message") or error_body.get("name")
+        except (ValueError, UnicodeDecodeError):
+            provider_error = raw_error.strip() or None
+        detail = str(provider_error or f"HTTP {exc.code} from email provider").replace(settings.RESEND_API_KEY, "[redacted]")
+        email_logger.exception("[email-debug] Resend/email sending failed for %s: %s", recipient, detail)
+        raise ApiError(f"{failure_prefix}: Resend error: {detail}", 502) from exc
+    except (URLError, OSError) as exc:
+        email_logger.exception("[email-debug] Resend/email sending failed for %s", recipient)
+        raise ApiError(f"{failure_prefix}: Unable to connect to Resend. Check your network connection.", 502) from exc
+    email_logger.info("[email-debug] Email sent successfully to %s", recipient)
+    return
 
 
 def send_email_later(subject, message, recipient, failure_prefix="Failed to send email"):
@@ -1854,10 +1763,6 @@ def account_action_reason(data):
 def send_account_action_email(subject, message, email, action_label="account action"):
     try:
         send_email(subject, message, email, "Failed to send account notification")
-        provider = email_provider()
-        console = provider != "resend" and (provider == "console" or settings.EMAIL_BACKEND == settings.CONSOLE_EMAIL_BACKEND)
-        if console:
-            return {"email_status": "console", "message": "Email was printed to the backend terminal only; it was not delivered to the student."}
         return {"email_status": "sent", "message": "Notification email accepted by the email provider. Inbox delivery is not guaranteed."}
     except Exception as exc:
         email_logger.warning("Account notification email failed: %s", describe_email_exception(exc))
