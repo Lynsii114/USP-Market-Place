@@ -10,6 +10,12 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=False)
 os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+DATABASE_MODE = os.getenv(
+    "DATABASE_MODE", "railway" if os.getenv("RAILWAY_ENVIRONMENT_ID") else "local"
+).strip().lower()
+if DATABASE_MODE not in {"local", "railway"}:
+    raise ImproperlyConfigured("DATABASE_MODE must be local or railway.")
+
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 if not SECRET_KEY.strip() or SECRET_KEY == "dev-secret-key":
     raise ImproperlyConfigured(
@@ -23,12 +29,39 @@ ALLOWED_HOSTS = [
     for host in os.getenv("ALLOWED_HOSTS", "127.0.0.1,localhost,[::1],testserver").split(",")
     if host.strip()
 ]
+if DATABASE_MODE == "railway" and not os.getenv("ALLOWED_HOSTS", "").strip():
+    raise ImproperlyConfigured("Set ALLOWED_HOSTS to the Railway backend hostname.")
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173", "http://127.0.0.1:5173",
-    "http://localhost:5174", "http://127.0.0.1:5174",
+    origin.strip().rstrip("/")
+    for origin in os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "" if DATABASE_MODE == "railway" else
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174",
+    ).split(",")
+    if origin.strip()
 ]
-CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS.copy()
-AUTO_ENSURE_SCHEMA = os.getenv("AUTO_ENSURE_SCHEMA", "1") == "1"
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv("CSRF_TRUSTED_ORIGINS", ",".join(CORS_ALLOWED_ORIGINS)).split(",")
+    if origin.strip()
+]
+# Never create/alter existing Railway tables during WSGI startup.
+AUTO_ENSURE_SCHEMA = DATABASE_MODE == "local" and os.getenv("AUTO_ENSURE_SCHEMA", "1") == "1"
+
+# Railway terminates HTTPS at its trusted reverse proxy.
+SECURE_PROXY_SSL_HEADER = (
+    ("HTTP_X_FORWARDED_PROTO", "https") if DATABASE_MODE == "railway" else None
+)
+SECURE_SSL_REDIRECT = not DEBUG and DATABASE_MODE == "railway"
+# Railway's internal HTTP probe must receive 200, not an HTTPS redirect.
+SECURE_REDIRECT_EXEMPT = [r"^api/health$"]
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_HSTS_SECONDS = 3600 if not DEBUG and DATABASE_MODE == "railway" else 0
+SECURE_HSTS_INCLUDE_SUBDOMAINS = False
+SECURE_HSTS_PRELOAD = False
+X_FRAME_OPTIONS = "DENY"
 
 INSTALLED_APPS = [
     "django.contrib.staticfiles",
@@ -36,8 +69,11 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "django.middleware.security.SecurityMiddleware",
     "usp_backend.middleware.JsonCorsMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "marketplace.authentication.ApiIdentityMiddleware",
 ]
 
@@ -97,7 +133,31 @@ LOGGING = {
 
 
 def database_config():
-    """Use only this computer's MySQL server; remote database settings are ignored."""
+    """Select Railway explicitly; keep local XAMPP settings separate."""
+    if DATABASE_MODE == "railway":
+        required = ("DB_HOST", "DB_PORT", "DB_USER", "DB_DATABASE", "DB_PASSWORD")
+        missing = [name for name in required if not os.getenv(name, "").strip()]
+        if missing:
+            raise ImproperlyConfigured("Set required Railway variables: " + ", ".join(missing))
+        try:
+            port = int(os.environ["DB_PORT"])
+        except ValueError:
+            raise ImproperlyConfigured("DB_PORT must be an integer.") from None
+        if not 1 <= port <= 65535:
+            raise ImproperlyConfigured("DB_PORT must be between 1 and 65535.")
+        return {
+            "default": {
+                "ENGINE": "usp_backend.mysql_backend",
+                "NAME": os.environ["DB_DATABASE"],
+                "USER": os.environ["DB_USER"],
+                "PASSWORD": os.environ["DB_PASSWORD"],
+                "HOST": os.environ["DB_HOST"],
+                "PORT": str(port),
+                "CONN_MAX_AGE": 60,
+                "CONN_HEALTH_CHECKS": True,
+                "OPTIONS": {"connect_timeout": 5, "read_timeout": 10, "write_timeout": 10},
+            }
+        }
     host = os.getenv("LOCAL_DB_HOST", "127.0.0.1")
     if host not in {"localhost", "127.0.0.1", "::1"}:
         raise RuntimeError("LOCAL_DB_HOST must be a loopback address for local-only use")

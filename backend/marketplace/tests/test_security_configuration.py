@@ -57,3 +57,74 @@ class SecurityConfigurationTests(unittest.TestCase):
             with self.subTest(value=value):
                 settings = self.load_settings({"SECRET_KEY": secrets.token_urlsafe(64), "DEBUG": value})
                 self.assertTrue(settings["DEBUG"])
+
+    def railway_environment(self):
+        return {
+            "DATABASE_MODE": "railway",
+            "SECRET_KEY": secrets.token_urlsafe(64),
+            "ALLOWED_HOSTS": "api.example.com",
+            "DB_HOST": "mysql.example.com",
+            "DB_PORT": "39149",
+            "DB_USER": "root",
+            "DB_DATABASE": "railway",
+            "DB_PASSWORD": secrets.token_urlsafe(32),
+        }
+
+    def test_railway_database_and_security_without_connecting(self):
+        environment = self.railway_environment()
+        environment.update({
+            "AUTO_ENSURE_SCHEMA": "1",
+            "CORS_ALLOWED_ORIGINS": "https://shop.vercel.app/, https://shop.example.com",
+        })
+        settings = self.load_settings(environment)
+        database = settings["DATABASES"]["default"]
+        self.assertEqual(database["ENGINE"], "usp_backend.mysql_backend")
+        self.assertEqual(database["HOST"], environment["DB_HOST"])
+        self.assertEqual(database["PORT"], "39149")
+        self.assertEqual(database["NAME"], "railway")
+        self.assertTrue(database["PASSWORD"] == environment["DB_PASSWORD"])
+        self.assertFalse(settings["AUTO_ENSURE_SCHEMA"])
+        self.assertTrue(settings["SECURE_SSL_REDIRECT"])
+        self.assertTrue(settings["CSRF_COOKIE_SECURE"])
+        self.assertEqual(settings["SECURE_PROXY_SSL_HEADER"], ("HTTP_X_FORWARDED_PROTO", "https"))
+        self.assertEqual(settings["CORS_ALLOWED_ORIGINS"], ["https://shop.vercel.app", "https://shop.example.com"])
+        self.assertEqual(settings["CSRF_TRUSTED_ORIGINS"], settings["CORS_ALLOWED_ORIGINS"])
+
+    def test_railway_missing_variables_never_fall_back_to_local_database(self):
+        for name in ("DB_HOST", "DB_PORT", "DB_USER", "DB_DATABASE", "DB_PASSWORD", "ALLOWED_HOSTS"):
+            with self.subTest(name=name):
+                environment = self.railway_environment()
+                del environment[name]
+                with self.assertRaises(ImproperlyConfigured) as error:
+                    self.load_settings(environment)
+                self.assertIn(name, str(error.exception))
+
+    def test_railway_detection(self):
+        environment = self.railway_environment()
+        del environment["DATABASE_MODE"]
+        environment["RAILWAY_ENVIRONMENT_ID"] = "test-environment"
+        settings = self.load_settings(environment)
+        self.assertEqual(settings["DATABASE_MODE"], "railway")
+        self.assertFalse(settings["AUTO_ENSURE_SCHEMA"])
+
+    def test_local_database_is_preserved_despite_remote_variables(self):
+        environment = self.railway_environment()
+        environment.update({"DATABASE_MODE": "local", "DEBUG": "true", "LOCAL_DB_DATABASE": "xampp_test"})
+        settings = self.load_settings(environment)
+        database = settings["DATABASES"]["default"]
+        self.assertEqual(database["HOST"], "127.0.0.1")
+        self.assertEqual(database["PORT"], "3306")
+        self.assertEqual(database["NAME"], "xampp_test")
+        self.assertTrue(settings["AUTO_ENSURE_SCHEMA"])
+        self.assertFalse(settings["SECURE_SSL_REDIRECT"])
+
+    def test_invalid_database_mode_and_port_are_rejected(self):
+        environment = self.railway_environment()
+        environment["DATABASE_MODE"] = "typo"
+        with self.assertRaises(ImproperlyConfigured):
+            self.load_settings(environment)
+        for value in ("invalid", "0", "65536"):
+            environment = self.railway_environment()
+            environment["DB_PORT"] = value
+            with self.subTest(port=value), self.assertRaises(ImproperlyConfigured):
+                self.load_settings(environment)

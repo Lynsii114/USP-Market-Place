@@ -1,5 +1,6 @@
 Django
-pymysql
+pymysql[rsa]
+gunicorn
 python-dotenv
 certifi
 pytest
