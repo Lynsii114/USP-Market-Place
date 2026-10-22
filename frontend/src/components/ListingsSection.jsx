@@ -32,6 +32,7 @@ function ListingsSection({
   const currentPage = Math.min(page, pageCount);
   const start = (currentPage - 1) * pageSize;
   const visibleListings = preview ? filteredListings : filteredListings.slice(start, start + pageSize);
+  const hasActiveFilters = Boolean(searchQuery || selectedCategory !== "All" || sortOption !== "newest" || minimumPrice || maximumPrice);
   const pageNumbers = [...new Set([1, currentPage - 1, currentPage, currentPage + 1, pageCount])]
     .filter((number) => number >= 1 && number <= pageCount).sort((a, b) => a - b);
   useEffect(() => { setPage(1); }, [searchQuery, selectedCategory, sortOption, minimumPrice, maximumPrice, preview]);
@@ -48,10 +49,17 @@ function ListingsSection({
         {preview && <button type="button" className="secondary-button" onClick={onViewAll}>View all listings</button>}
       </div>
 
-      {!preview && <div className="listing-filters">
-        <label>Search Items
-          <SearchInput value={searchQuery} label="Search items" placeholder="Item, category, seller or ID" onChange={onSearchChange} />
-        </label>
+      {!preview && <div className="listing-filters shop-listing-filters">
+        <div className="listing-search-row">
+          <label>Search Items
+            <SearchInput value={searchQuery} label="Search items" placeholder="Search listings…" onChange={onSearchChange} />
+          </label>
+          {hasActiveFilters && (
+            <button type="button" className="secondary-button" onClick={onClearFilters}>
+              Clear filters
+            </button>
+          )}
+        </div>
         <label>
           Category
           <select value={selectedCategory} onChange={(event) => onSelectCategory(event.target.value)}>
@@ -78,11 +86,6 @@ function ListingsSection({
 
         <PriceRangeFields {...{ minimumPrice, maximumPrice, priceError, onMinimumPriceChange, onMaximumPriceChange }} />
 
-        {(searchQuery || selectedCategory !== "All" || sortOption !== "newest" || minimumPrice || maximumPrice) && (
-          <button type="button" className="secondary-button" onClick={onClearFilters}>
-            Clear Filters
-          </button>
-        )}
       </div>}
 
       {!preview && !priceError && !isLoadingListings && (
