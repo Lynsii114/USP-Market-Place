@@ -1,6 +1,7 @@
 import logging
 import uuid
 
+from django.conf import settings
 from django.db import DatabaseError, connection
 from django.http import HttpResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -23,6 +24,8 @@ def run(action):
     except ApiError as exc:
         return handle_api_error(exc)
     except DatabaseError:
+        if settings.DATABASE_MODE == "railway":
+            logger.exception("Database error while handling marketplace API request")
         return api_response(
             {"detail": "Marketplace database is temporarily unavailable. Check the backend database configuration."},
             status=503,

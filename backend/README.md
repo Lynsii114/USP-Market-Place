@@ -190,6 +190,37 @@ Set a unique `SECRET_KEY` and your `ADMIN_PASSWORD` in `.env`, then log in using
 Local mode can create/upgrade tables on startup when `AUTO_ENSURE_SCHEMA=1`.
 Railway mode never performs this automatic schema work.
 
+## Messaging schema migrations
+
+`Conversation` uses a named composite unique constraint on `(item_id, buyer_id,
+seller_id)`. `Message` stores `conversation_id`, `sender_id`, `receiver_id`,
+`body`, `is_read`, and `created_at`. The API endpoints are
+`POST /api/items/<item_id>/conversation`, `GET /api/users/<user_id>/conversations`,
+`GET|POST /api/conversations/<conversation_id>`, and
+`GET /api/users/<user_id>/messages/unread`.
+
+The initial migration records the legacy marketplace model state and creates
+only tables that are absent; it leaves existing tables and rows in place. The
+messaging repair migration adds missing messaging columns only when the
+affected table is empty, and adds the unique index only if there are no
+duplicate conversation tuples. It stops with an error and preserves all rows
+when required values cannot be inferred safely or duplicates exist. Neither
+migration runs automatically on Railway startup.
+
+Before any production rollout, back up the Railway MySQL database and verify
+the schema against that backup. Review the pending operations without applying
+them by running this from `backend` with the production variables loaded in a
+Railway shell:
+
+```sh
+python manage.py migrate --plan
+```
+
+Only after the plan and backup are reviewed should migrations be applied
+explicitly. This change does not alter the local XAMPP or SQLite startup paths;
+they continue to use their existing `AUTO_ENSURE_SCHEMA` behavior and do not
+run these Django migrations automatically.
+
 ## Local showcase demo
 
 To use the local demo data instead of the MySQL database, start the backend from the repository root with `backend-demo.cmd`. This runs Django with `usp_backend.local_settings` and reads/writes only `backend/inventory-demo.db`. Start the frontend with `frontend.cmd` and open `http://localhost:5173/`.

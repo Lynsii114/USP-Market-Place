@@ -238,6 +238,48 @@ function Home() {
   }, [currentUser]);
 
   useEffect(() => {
+    if (!currentUser || activeAccountPage !== "messages") {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const refreshMessages = async () => {
+      try {
+        const response = await fetch(`${API_URL}/users/${currentUser.id}/conversations`, { cache: "no-store" });
+        const latest = await parseResponse(response, "Unable to refresh messages");
+        if (cancelled) return;
+
+        if (activeConversationId) {
+          const detailResponse = await fetch(
+            `${API_URL}/conversations/${activeConversationId}?user_id=${currentUser.id}`,
+            { cache: "no-store" }
+          );
+          const active = await parseResponse(detailResponse, "Unable to refresh conversation");
+          if (cancelled) return;
+          setConversations(latest.map((conversation) => conversation.id === active.id ? active : conversation));
+        } else {
+          setConversations(latest);
+        }
+
+        const unreadResponse = await fetch(`${API_URL}/users/${currentUser.id}/messages/unread`, { cache: "no-store" });
+        const unread = await parseResponse(unreadResponse, "Unable to refresh unread messages");
+        if (!cancelled) setUnreadMessageCount(unread.unread_count || 0);
+      } catch {
+        // Keep the current thread visible during transient connectivity errors.
+      }
+    };
+
+    refreshMessages();
+    const intervalId = window.setInterval(refreshMessages, 5000);
+    window.addEventListener("focus", refreshMessages);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshMessages);
+    };
+  }, [currentUser, activeAccountPage, activeConversationId]);
+
+  useEffect(() => {
     if (!toastMessage) {
       return undefined;
     }

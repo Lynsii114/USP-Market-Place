@@ -160,7 +160,12 @@ class Conversation(models.Model):
 
     class Meta:
         db_table = "conversations"
-        unique_together = ("item_id", "buyer_id", "seller_id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("item_id", "buyer_id", "seller_id"),
+                name="marketplace_conversation_triplet_uniq",
+            ),
+        ]
 
 
 class Message(models.Model):

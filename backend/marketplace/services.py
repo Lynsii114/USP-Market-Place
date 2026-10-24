@@ -1029,13 +1029,23 @@ def send_conversation_message(conversation_id, sender_id, body):
     )
     conversation.save(update_fields=["updated_at"])
     item = Item.objects.filter(id=conversation.item_id).first()
-    notify_user(
+    notification = (
         receiver_id,
         "New message",
         f"{sender.username} sent you a message about {item.name if item else 'a marketplace item'}.",
         "message",
         sender,
     )
+    if settings.DATABASE_MODE == "railway":
+        try:
+            with transaction.atomic():
+                notify_user(*notification)
+        except DatabaseError:
+            # A notification is secondary to delivery. Do not return a failed
+            # send after the message row has already been committed.
+            logger.exception("Message was saved but its notification could not be created")
+    else:
+        notify_user(*notification)
     return _conversation_payload(conversation, sender.id)
 
 
