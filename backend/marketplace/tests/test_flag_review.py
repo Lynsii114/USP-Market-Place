@@ -8,7 +8,7 @@ from marketplace.models import Item, User, UserNotification, UserReport
 from testing_images import TEST_PHOTO
 
 
-@override_settings(EMAIL_PROVIDER="smtp", EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend")
+@override_settings(EMAIL_PROVIDER="resend")
 class FlagReviewTests(TestCase):
     def setUp(self):
         email_patch = patch("marketplace.services.send_email")
@@ -132,7 +132,7 @@ class FlagReviewTests(TestCase):
         self.assertEqual(self.item.status, "available")
 
     def test_email_failure_is_reported_and_recorded(self):
-        self.send_email.side_effect = RuntimeError("SMTP unavailable")
+        self.send_email.side_effect = RuntimeError("Resend unavailable")
         self.submit()
         record = UserReport.objects.get()
         response = self.review(record)

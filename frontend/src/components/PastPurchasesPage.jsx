@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import OrderProgressTracker from "./OrderProgressTracker";
 
 function PastPurchasesPage({
   currentUser,
@@ -8,11 +9,17 @@ function PastPurchasesPage({
   onSubmitReview,
   onViewSeller,
   onCancelOrder,
+  onConfirmReceived,
+  orderNotificationTarget,
   isSubmitting,
 }) {
   const [reviewingPurchase, setReviewingPurchase] = useState(null);
   const [reviewForm, setReviewForm] = useState({ rating: "5", review: "" });
   const orderHistory = purchases;
+  useEffect(() => {
+    if (orderNotificationTarget == null) return;
+    window.setTimeout(() => document.getElementById(`buyer-order-${orderNotificationTarget}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 100);
+  }, [orderNotificationTarget, purchases]);
   const orderHistoryTotal = orderHistory.reduce((total, purchase) => total + Number(purchase.total_amount || purchase.price), 0);
   const deliveryMethodLabel = (method) => (method === "delivery" ? "Delivery" : "Self Pickup");
   const orderStageLabel = (purchase) => {
@@ -65,7 +72,7 @@ function PastPurchasesPage({
               {orderHistory.length ? (
                 <div className="purchase-report-list">
                   {orderHistory.map((purchase) => (
-                    <div className="purchase-report-item" key={purchase.id}>
+                    <div className="purchase-report-item" id={`buyer-order-${purchase.id}`} key={purchase.id}>
                       <div>
                         <strong>{purchase.item_name}</strong>
                         <small>
@@ -96,9 +103,29 @@ function PastPurchasesPage({
                       </div>
                       <time dateTime={purchase.purchased_at}>{formatPurchaseDate(purchase.purchased_at)}</time>
                       <div className="purchase-order-progress">
+                        {!['cancelled', 'canceled'].includes(purchase.order_stage || purchase.status) && (
+                          <OrderProgressTracker
+                            stage={purchase.order_stage}
+                            paymentMethod={purchase.payment_method}
+                            paymentStatus={purchase.payment_status}
+                          />
+                        )}
                         <div className="purchase-order-actions">
+                          {purchase.order_stage === "ready_for_collection" && purchase.payment_method === "cash" && purchase.payment_status === "pending" && (
+                            <span className="review-submitted-label">The seller must confirm cash received before you can complete this order.</span>
+                          )}
+                          {purchase.order_stage === "ready_for_collection" && (purchase.payment_method !== "cash" || purchase.payment_status === "paid") && (
+                            <button
+                              type="button"
+                              className="auth-submit"
+                              onClick={() => onConfirmReceived?.(purchase)}
+                              disabled={isSubmitting}
+                            >
+                              Confirm Item Received
+                            </button>
+                          )}
                           {!["cancelled", "canceled"].includes(purchase.order_stage || purchase.status) &&
-                            purchase.payment_status !== "pending" &&
+                            purchase.order_stage === "completed" &&
                             !purchase.has_review && (
                             <button
                               type="button"

@@ -6,6 +6,8 @@ function AccountPage({
   currentUser,
   myListings,
   purchaseHistory,
+  reviewsGiven = [],
+  reviewsReceived = [],
   sellerOrders = [],
   activeSalesView = "active",
   conversations = [],
@@ -19,6 +21,7 @@ function AccountPage({
 }) {
   const [salesFilter, setSalesFilter] = useState("active");
   const [salesPage, setSalesPage] = useState(1);
+  const [reviewView, setReviewView] = useState("received");
   const soldListings = myListings.filter((listing) => sellerListingStatus(listing) === "sold");
   const activeListings = myListings.filter((listing) => ["available", "reserved"].includes(sellerListingStatus(listing)));
   const salesHistory = sellerOrders;
@@ -72,6 +75,14 @@ function AccountPage({
       rows: [
         ["Account Type", "USP Student"],
         ["Purchase Records", `${purchaseHistory.length} saved`],
+      ],
+    },
+    reviews: {
+      kicker: "My Activity",
+      title: "My Reviews",
+      rows: [
+        ["Reviews About My Products & Service", reviewsReceived.length],
+        ["Reviews I Gave", reviewsGiven.length],
       ],
     },
   };
@@ -308,6 +319,41 @@ function AccountPage({
               ))}
               <button type="button" className="secondary-button" disabled={currentSalesPage === salesPageCount} onClick={() => changeSalesPage(currentSalesPage + 1)}>Next</button>
             </nav>
+          )}
+        </div>
+      )}
+
+      {page === "reviews" && (
+        <div className="sales-list-panel">
+          <div className="inventory-status-filters" role="group" aria-label="Choose review type">
+            <button type="button" className={reviewView === "received" ? "active" : ""} aria-pressed={reviewView === "received"} onClick={() => setReviewView("received")}>
+              About My Products &amp; Service ({reviewsReceived.length})
+            </button>
+            <button type="button" className={reviewView === "given" ? "active" : ""} aria-pressed={reviewView === "given"} onClick={() => setReviewView("given")}>
+              Reviews I Gave ({reviewsGiven.length})
+            </button>
+          </div>
+          <h3>{reviewView === "received" ? "Customer reviews about your products and service" : "Reviews you’ve given to other sellers"}</h3>
+          {(reviewView === "received" ? reviewsReceived : reviewsGiven).length ? (
+            <div className="seller-review-list">
+              {(reviewView === "received" ? reviewsReceived : reviewsGiven).map((review) => (
+                <article className="seller-review-item" key={review.id}>
+                  <div className="seller-review-heading">
+                    <strong>{review.item_name}</strong>
+                    <span aria-label={`${review.rating} out of 5 stars`}>{"★".repeat(review.rating)}{"☆".repeat(5 - review.rating)}</span>
+                  </div>
+                  <p>{review.review}</p>
+                  <small>
+                    {reviewView === "received" ? `From customer: ${review.reviewer_username}` : `For seller: ${review.seller_username}`}
+                    {` · ${new Date(review.created_at).toLocaleDateString()}`}
+                  </small>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="empty-state">
+              {reviewView === "received" ? "Customers haven’t reviewed your products or service yet." : "You haven’t submitted any reviews yet."}
+            </p>
           )}
         </div>
       )}

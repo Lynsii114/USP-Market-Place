@@ -1,4 +1,7 @@
 backend/.env
+.env
+.env.*
+!.env.example
 .local-backups/
 backend/*.db
 backend/**/__pycache__/
@@ -26,3 +29,4 @@ dist/
 # Local database recovery artifacts
 usp_marketplace_recovered_*.sql
 xampp_*_backup_*/
+.vercel

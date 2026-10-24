@@ -401,6 +401,35 @@ function AdminDashboard({
   }, [isAdmin]);
 
   useEffect(() => {
+    if (!isAdmin) return undefined;
+    const refreshNotifications = () => {
+      if (!document.hidden) loadNotifications().catch(() => {});
+    };
+    const intervalId = window.setInterval(refreshNotifications, 30000);
+    window.addEventListener("focus", refreshNotifications);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshNotifications);
+    };
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+    const refreshVisibleAdminData = () => {
+      if (document.hidden) return;
+      if (activeTab === "Listings") loadListings().catch(() => {});
+      if (activeTab === "Orders") loadOrders().catch(() => {});
+      if (activeTab === "Dashboard") loadDashboard().catch(() => {});
+    };
+    const intervalId = window.setInterval(refreshVisibleAdminData, 30000);
+    window.addEventListener("focus", refreshVisibleAdminData);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshVisibleAdminData);
+    };
+  }, [isAdmin, activeTab]);
+
+  useEffect(() => {
     if (!isAdmin || prefetchStartedRef.current) {
       return;
     }
@@ -990,6 +1019,12 @@ function AdminDashboard({
             loadNotifications().catch(() => {});
             loadListings().catch(() => {});
             return result;
+          }}
+          onDelete={async (report) => {
+            const result = await fetchAdmin(`/admin/user-reports/${report.id}`, "Unable to delete flag report", { method: "DELETE" });
+            setUserReports((current) => current.filter((row) => row.id !== report.id));
+            loadNotifications().catch(() => {});
+            showToast(result.message || "Flag report deleted.");
           }}
         />}
 

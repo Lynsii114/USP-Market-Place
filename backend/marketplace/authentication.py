@@ -110,8 +110,9 @@ class ApiIdentityMiddleware(MiddlewareMixin):
                 actor_field = "admin_id"
 
             if name in {"list_buyer_purchases", "list_seller_orders", "user_conversations",
-                        "user_unread_messages", "user_notifications", "user_notification_detail"}:
-                for key in ("buyer_id", "seller_id", "user_id"):
+                        "user_unread_messages", "user_notifications", "user_notification_detail",
+                        "user_reviews_given"}:
+                for key in ("buyer_id", "seller_id", "user_id", "reviewer_id"):
                     if key in view_kwargs and view_kwargs[key] != user.id:
                         raise ApiError("You can only access your own account", 403)
 

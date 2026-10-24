@@ -160,12 +160,19 @@ class Conversation(models.Model):
 
     class Meta:
         db_table = "conversations"
-        unique_together = ("item_id", "buyer_id", "seller_id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("item_id", "buyer_id", "seller_id"),
+                name="marketplace_conversation_triplet_uniq",
+            ),
+        ]
 
 
 class Message(models.Model):
     conversation_id = models.IntegerField(db_index=True)
     sender_id = models.IntegerField(db_index=True)
+    # Present as a required legacy column in the deployed Railway MySQL table.
+    sender_username = models.CharField(max_length=64, default="", blank=True)
     receiver_id = models.IntegerField(db_index=True)
     body = models.CharField(max_length=1000)
     is_read = models.BooleanField(default=False)

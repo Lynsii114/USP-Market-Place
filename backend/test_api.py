@@ -1,7 +1,6 @@
 import os
 import random
 import re
-import smtplib
 import ssl
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
@@ -1161,48 +1160,22 @@ def test_signup_rejects_non_usp_email_when_testing_option_is_disabled():
 
 def test_signup_returns_email_delivery_error_and_allows_retry():
     payload = unique_student_payload()
-    with patch("marketplace.services.send_email", side_effect=ApiError("Failed to send verification email: SMTP authentication failed", 502)):
+    with patch("marketplace.services.send_email", side_effect=ApiError("Failed to send verification email: Resend rejected the message", 502)):
         response = client.post("/api/users/signup", payload, content_type="application/json")
 
     assert response.status_code == 502
-    assert response.json()["detail"] == "Failed to send verification email: SMTP authentication failed"
+    assert response.json()["detail"] == "Failed to send verification email: Resend rejected the message"
     assert not User.objects.filter(email=payload["email"]).exists()
     assert not PendingRegistration.objects.filter(email=payload["email"]).exists()
     assert not PENDING_REGISTRATIONS
 
 
-@override_settings(EMAIL_PROVIDER="auto", EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend", EMAIL_HOST="", RESEND_API_KEY="")
-def test_send_email_requires_smtp_provider():
+@override_settings(RESEND_API_KEY="")
+def test_send_email_requires_resend_credentials():
     with pytest.raises(ApiError) as exc_info:
         send_email("Subject", "Message", "S12345678@student.usp.ac.fj", "Failed to send verification email")
-
     assert exc_info.value.status == 500
-    assert "Email is not configured" in exc_info.value.detail
-
-
-@override_settings(
-    EMAIL_PROVIDER="smtp",
-    EMAIL_HOST="smtp.gmail.com",
-    EMAIL_HOST_USER="noreply@uspmarketplacecommunity.com",
-    EMAIL_HOST_PASSWORD="shortpass123",
-    DEFAULT_FROM_EMAIL="USP Marketplace <noreply@uspmarketplacecommunity.com>",
-)
-def test_gmail_smtp_requires_app_password_length():
-    with pytest.raises(ApiError) as exc_info:
-        send_email("Subject", "Message", "S12345678@student.usp.ac.fj", "Failed to send verification email")
-
-    assert exc_info.value.status == 500
-    assert "16-character Gmail App Password" in exc_info.value.detail
-
-
-@override_settings(EMAIL_HOST="smtp.gmail.com")
-def test_gmail_disconnect_error_explains_auth_setup():
-    detail = __import__("marketplace.services", fromlist=["describe_email_exception"]).describe_email_exception(
-        smtplib.SMTPServerDisconnected("Connection unexpectedly closed")
-    )
-
-    assert "Gmail closed the SMTP authentication connection" in detail
-    assert "App Password" in detail
+    assert "RESEND_API_KEY" in exc_info.value.detail
 
 
 def test_tls_certificate_error_is_not_reported_as_invalid_email_header():
@@ -1210,7 +1183,7 @@ def test_tls_certificate_error_is_not_reported_as_invalid_email_header():
         ssl.SSLCertVerificationError("certificate verify failed")
     )
 
-    assert "SMTP TLS certificate verification failed" in detail
+    assert "Resend HTTPS certificate verification failed" in detail
     assert "invalid header" not in detail
 
 
@@ -1250,33 +1223,14 @@ def test_signup_rejects_invalid_student_email_format():
     assert response.json()["detail"] == "Enter a valid email address"
 
 
-@override_settings(ALLOW_NON_USP_EMAILS=True, EMAIL_PROVIDER="smtp", EMAIL_HOST="smtp.gmail.com", EMAIL_HOST_USER="test@example.com", EMAIL_HOST_PASSWORD="1234567890123456")
-def test_signup_returns_json_error_when_smtp_fails():
+@override_settings(ALLOW_NON_USP_EMAILS=True, RESEND_API_KEY="test-key", RESEND_FROM_EMAIL="sender@example.com")
+def test_signup_reports_resend_network_error_and_allows_retry():
+    from urllib.error import URLError
     payload = unique_student_payload()
-
-    with patch(
-        "marketplace.services.send_mail",
-        side_effect=smtplib.SMTPAuthenticationError(535, b"authentication failed"),
-    ):
+    with patch("marketplace.services.urlopen", side_effect=URLError("connection failed")):
         response = client.post("/api/users/signup", payload, content_type="application/json")
-
     assert response.status_code == 502
-    assert response.json()["detail"] == (
-        "Gmail rejected the SMTP login. Check EMAIL_HOST_USER and use a current "
-        "16-character Google App Password for EMAIL_HOST_PASSWORD."
-    )
-    assert not PendingRegistration.objects.filter(email=payload["email"]).exists()
-
-
-@override_settings(ALLOW_NON_USP_EMAILS=True, EMAIL_PROVIDER="smtp", EMAIL_HOST="smtp.gmail.com", EMAIL_HOST_USER="test@example.com", EMAIL_HOST_PASSWORD="1234567890123456")
-def test_signup_identifies_smtp_connection_failures_without_exposing_details():
-    payload = unique_student_payload()
-
-    with patch("marketplace.services.send_mail", side_effect=smtplib.SMTPServerDisconnected("closed")):
-        response = client.post("/api/users/signup", payload, content_type="application/json")
-
-    assert response.status_code == 502
-    assert response.json()["detail"] == "SMTP email delivery failed (SMTPServerDisconnected). Check the backend terminal for details."
+    assert "Unable to connect to Resend" in response.json()["detail"]
     assert not PendingRegistration.objects.filter(email=payload["email"]).exists()
 
 
@@ -1304,26 +1258,8 @@ def test_resend_provider_reports_missing_api_key():
     from marketplace.exceptions import ApiError
     from marketplace.services import send_email
 
-    with pytest.raises(ApiError, match="EMAIL_PROVIDER=resend requires RESEND_API_KEY"):
+    with pytest.raises(ApiError, match="RESEND_API_KEY"):
         send_email("Test", "Test message", "recipient@example.com")
-
-
-@override_settings(
-    EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend",
-    EMAIL_HOST="smtp.gmail.com",
-    EMAIL_PORT=465,
-    EMAIL_USE_TLS=False,
-    EMAIL_USE_SSL=True,
-)
-def test_gmail_implicit_ssl_configuration_is_supported():
-    from django.core.mail import get_connection
-
-    connection = get_connection()
-
-    assert connection.host == "smtp.gmail.com"
-    assert connection.port == 465
-    assert connection.use_tls is False
-    assert connection.use_ssl is True
 
 
 def test_unexpected_api_errors_return_json_and_log_traceback(caplog):

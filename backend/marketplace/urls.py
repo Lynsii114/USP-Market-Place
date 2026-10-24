@@ -19,6 +19,7 @@ urlpatterns = [
     path("users/<int:seller_id>/orders", views.list_seller_orders),
     path("users/<int:seller_id>/sales", views.list_seller_orders),
     path("users/<int:seller_id>/reviews", views.seller_reviews),
+    path("users/<int:reviewer_id>/reviews-given", views.user_reviews_given),
     path("users/<int:seller_id>/items", views.list_seller_items),
     path("users/<int:user_id>/conversations", views.user_conversations),
     path("users/<int:user_id>/messages/unread", views.user_unread_messages),

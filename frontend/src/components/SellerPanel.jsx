@@ -20,6 +20,7 @@ function SellerPanel({
   openListingMenuId,
   pendingPhoto,
   sellerOrders,
+  orderNotificationTarget,
   onClose,
   onDeleteListing,
   onEditListing,
@@ -43,6 +44,10 @@ function SellerPanel({
   const activeSellerOrders = sellerOrders.filter(
     (order) => !["completed", "cancelled", "canceled"].includes(order.order_stage || order.status)
   );
+  useEffect(() => {
+    if (orderNotificationTarget == null) return;
+    window.setTimeout(() => document.getElementById(`seller-order-${orderNotificationTarget}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 100);
+  }, [orderNotificationTarget, sellerOrders]);
   const deliveryMethodLabel = (method) => (method === "delivery" ? "Delivery" : "Self Pickup");
   const [reservationListing, setReservationListing] = useState(null);
   const [reservationBuyers, setReservationBuyers] = useState([]);
@@ -399,7 +404,7 @@ function SellerPanel({
                 {activeSellerOrders.length ? (
                   <div className="seller-order-list">
                     {activeSellerOrders.map((order) => (
-                      <div className="seller-order-card" key={order.id}>
+                      <div className="seller-order-card" id={`seller-order-${order.id}`} key={order.id}>
                         <div className="seller-order-header">
                           <div>
                             <strong>{order.item_name}</strong>
@@ -425,9 +430,31 @@ function SellerPanel({
                             The ordered units are reserved. Confirm cash only after you receive it at delivery or pickup, or release the reservation if the buyer cancels.
                           </p>
                         )}
-                        <OrderProgressTracker stage={order.order_stage} />
+                        <OrderProgressTracker
+                          stage={order.order_stage}
+                          paymentMethod={order.payment_method}
+                          paymentStatus={order.payment_status}
+                          onAdvance={
+                            order.payment_method === "cash" && order.payment_status === "pending"
+                              ? order.order_stage === "ready_for_collection"
+                                ? { stage: "cash_received", currentStage: "ready_for_collection", nextLabel: "Cash Received", run: () => onConfirmPaymentReceived(order) }
+                                : order.order_stage === "payment_confirmed" || order.order_stage === "order_placed"
+                                  ? { stage: "preparing_item", currentStage: "order_placed", nextLabel: "Preparing Item", run: () => onUpdateOrderStage(order, "preparing_item") }
+                                  : order.order_stage === "preparing_item"
+                                    ? { stage: "ready_for_collection", currentStage: "preparing_item", nextLabel: "On the Way", run: () => onUpdateOrderStage(order, "ready_for_collection") }
+                                    : null
+                              : order.payment_status === "paid" || order.payment_status === "approved"
+                                ? {
+                                    stage: order.order_stage === "payment_confirmed" ? "preparing_item" : order.order_stage === "preparing_item" ? "ready_for_collection" : null,
+                                    currentStage: order.order_stage === "payment_confirmed" ? "order_placed" : order.order_stage,
+                                    nextLabel: order.order_stage === "payment_confirmed" ? "Preparing Item" : "On the Way",
+                                    run: () => onUpdateOrderStage(order, order.order_stage === "payment_confirmed" ? "preparing_item" : "ready_for_collection"),
+                                  }
+                                : null
+                          }
+                        />
                         <div className="seller-order-actions">
-                          {order.payment_status === "pending" && (
+                          {order.payment_status === "pending" && order.order_stage === "ready_for_collection" && (
                             <button
                               type="button"
                               className="auth-submit"
@@ -442,7 +469,7 @@ function SellerPanel({
                             className="secondary-button"
                             onClick={() => onUpdateOrderStage(order, "preparing_item")}
                             disabled={
-                              order.payment_status === "pending" ||
+                              (order.payment_status === "pending" && order.payment_method !== "cash") ||
                               ["preparing_item", "ready_for_collection", "completed"].includes(order.order_stage)
                             }
                           >

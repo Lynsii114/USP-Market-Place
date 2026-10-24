@@ -18,4 +18,4 @@ COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 
 WORKDIR /app/backend
 EXPOSE 8000
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+CMD ["sh", "-c", "exec gunicorn usp_backend.wsgi:application --bind 0.0.0.0:${PORT:-8000}"]

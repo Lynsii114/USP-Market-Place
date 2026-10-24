@@ -99,6 +99,7 @@ TABLE_COLUMNS = {
     "messages": {
         "conversation_id": "INTEGER NOT NULL DEFAULT 0",
         "sender_id": "INTEGER NOT NULL DEFAULT 0",
+        "sender_username": "VARCHAR(64) NOT NULL DEFAULT ''",
         "receiver_id": "INTEGER NOT NULL DEFAULT 0",
         "body": "VARCHAR(1000) NOT NULL DEFAULT ''",
         "is_read": "BOOLEAN NOT NULL DEFAULT 0",

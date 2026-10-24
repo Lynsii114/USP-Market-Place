@@ -1,13 +1,13 @@
 import hashlib
 import base64
 import logging
-import smtplib
 from io import BytesIO
 import json
 import math
 import secrets
 import re
 import ssl
+import smtplib
 import pyotp
 import qrcode
 from threading import Thread
@@ -17,9 +17,9 @@ from urllib.request import Request, urlopen
 from collections import defaultdict
 from datetime import date, timedelta
 
-from django.core.mail import BadHeaderError, send_mail
 from django.contrib.auth.hashers import make_password, check_password
 from django.conf import settings
+from django.core.mail import send_mail as django_send_mail
 from django.db import DatabaseError, OperationalError, connection, transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -122,7 +122,7 @@ def notify_user(user_id, title, message, category="activity", actor=None):
 
 
 def notify_order_user(purchase, user_id, title, message, actor=None):
-    return notify_user(user_id, title, message, "order", actor)
+    return notify_user(user_id, title, f"Order #{purchase.id} · {message}", "order", actor)
 
 
 def serialize_admin_item(item):
@@ -187,6 +187,7 @@ def verification_email_message(code):
         "USP Marketplace received a request to register an account with this email address.\n\n"
         f"Your 6-digit verification code is: {code}\n\n"
         "This code expires in 10 minutes.\n\n"
+        f"Return to USP Marketplace to enter your code: {settings.FRONTEND_URL}\n\n"
         "If you did not request this code, you can ignore this email.\n\n"
         "USP Marketplace System"
     )
@@ -194,133 +195,86 @@ def verification_email_message(code):
 
 def describe_email_exception(exc):
     if isinstance(exc, ssl.SSLCertVerificationError):
-        return "SMTP TLS certificate verification failed. Install or configure a trusted CA certificate bundle and check system date/time."
-    if isinstance(exc, smtplib.SMTPAuthenticationError):
-        smtp_message = exc.smtp_error.decode("utf-8", errors="replace") if isinstance(exc.smtp_error, bytes) else str(exc.smtp_error)
-        return f"SMTP authentication failed ({exc.smtp_code}): {smtp_message}. Check EMAIL_HOST_USER and EMAIL_HOST_PASSWORD. Gmail requires a 16-character App Password with 2-Step Verification enabled."
-    if isinstance(exc, smtplib.SMTPConnectError):
-        return f"SMTP connection failed ({exc.smtp_code}): {exc.smtp_error}. Check EMAIL_HOST, EMAIL_PORT, and network/firewall access."
-    if isinstance(exc, smtplib.SMTPServerDisconnected):
-        if settings.EMAIL_HOST == "smtp.gmail.com":
-            return "Gmail closed the SMTP authentication connection. Check that EMAIL_HOST_USER is an active Gmail/Google Workspace mailbox, 2-Step Verification is enabled, the App Password was generated for that exact mailbox, and Workspace allows App Passwords/SMTP access."
-        return "SMTP server disconnected before accepting the message. Check TLS/SSL settings, host, and port."
-    if isinstance(exc, smtplib.SMTPRecipientsRefused):
-        return "SMTP provider refused the recipient address."
-    if isinstance(exc, smtplib.SMTPSenderRefused):
-        return f"SMTP provider refused DEFAULT_FROM_EMAIL: {exc.sender}. Make sure it matches or is allowed by the SMTP account."
-    if isinstance(exc, smtplib.SMTPException):
-        return f"SMTP error: {exc}"
-    if isinstance(exc, BadHeaderError):
-        return "Email subject or body contains an invalid header."
-    if isinstance(exc, TimeoutError):
-        return "SMTP connection timed out. Check host, port, TLS/SSL, and network access."
-    if isinstance(exc, OSError):
-        return f"Network error while contacting SMTP server: {exc}"
+        return "Resend HTTPS certificate verification failed. Check the trusted CA certificates and system date/time."
     return str(exc) or exc.__class__.__name__
 
 
-def require_smtp_settings(failure_prefix):
-    if not settings.EMAIL_HOST_USER:
-        raise ApiError(f"{failure_prefix}: EMAIL_HOST_USER is not configured", 500)
-    if not settings.EMAIL_HOST_PASSWORD:
-        raise ApiError(f"{failure_prefix}: EMAIL_HOST_PASSWORD is not configured", 500)
-    if settings.EMAIL_HOST == "smtp.gmail.com" and len(settings.EMAIL_HOST_PASSWORD) != 16:
-        raise ApiError(f"{failure_prefix}: EMAIL_HOST_PASSWORD must be a 16-character Gmail App Password for smtp.gmail.com", 500)
-    if not settings.DEFAULT_FROM_EMAIL:
-        raise ApiError(f"{failure_prefix}: DEFAULT_FROM_EMAIL is not configured", 500)
-    if settings.EMAIL_USE_TLS and settings.EMAIL_USE_SSL:
-        raise ApiError(f"{failure_prefix}: EMAIL_USE_TLS and EMAIL_USE_SSL cannot both be enabled", 500)
+def require_resend_settings(failure_prefix="Failed to send email"):
+    missing = [name for name in ("RESEND_API_KEY", "RESEND_FROM_EMAIL") if not getattr(settings, name, "").strip()]
+    if missing:
+        raise ApiError(f"{failure_prefix}: Set {', '.join(missing)} in the environment for Resend HTTPS delivery.", 500)
+
+
+def require_smtp_settings(failure_prefix="Failed to send email"):
+    missing = [
+        name
+        for name in ("EMAIL_HOST", "EMAIL_HOST_USER", "EMAIL_HOST_PASSWORD", "DEFAULT_FROM_EMAIL")
+        if not getattr(settings, name, "").strip()
+    ]
+    if missing:
+        raise ApiError(f"{failure_prefix}: Set {', '.join(missing)} for local SMTP delivery.", 500)
 
 
 def send_email(subject, message, recipient, failure_prefix="Failed to send email"):
-    use_smtp = settings.EMAIL_PROVIDER == "smtp" or (
-        settings.EMAIL_PROVIDER == "auto" and bool(settings.EMAIL_HOST)
-    )
-    if use_smtp:
-        if not settings.EMAIL_HOST:
-            raise ApiError(f"{failure_prefix}: EMAIL_PROVIDER=smtp requires EMAIL_HOST in backend/.env", 500)
+    if settings.EMAIL_PROVIDER == "smtp":
         require_smtp_settings(failure_prefix)
-        email_logger.info(
-            "[email-debug] SMTP connection stage: host=%s port=%s tls=%s ssl=%s user=%s from=%s recipient=%s",
-            settings.EMAIL_HOST,
-            settings.EMAIL_PORT,
-            settings.EMAIL_USE_TLS,
-            settings.EMAIL_USE_SSL,
-            settings.EMAIL_HOST_USER,
-            settings.DEFAULT_FROM_EMAIL,
-            recipient,
-        )
         try:
-            sent_count = send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [recipient], fail_silently=False)
-        except Exception as exc:
-            detail = describe_email_exception(exc)
-            email_logger.exception("[email-debug] SMTP/email sending failed for %s: %s", recipient, detail)
-            if isinstance(exc, smtplib.SMTPAuthenticationError) and settings.EMAIL_HOST == "smtp.gmail.com":
-                public_detail = "Gmail rejected the SMTP login. Check EMAIL_HOST_USER and use a current 16-character Google App Password for EMAIL_HOST_PASSWORD."
-            else:
-                public_detail = f"SMTP email delivery failed ({type(exc).__name__}). Check the backend terminal for details."
-            raise ApiError(public_detail, 502) from exc
-        if sent_count != 1:
-            detail = "SMTP backend did not report a sent message. Check provider logs and sender verification."
-            email_logger.error("[email-debug] SMTP/email sending failed for %s: %s", recipient, detail)
-            raise ApiError(f"{failure_prefix}: {detail}", 502)
-        email_logger.info("[email-debug] Email sent successfully to %s", recipient)
-        return
-
-    use_resend = settings.EMAIL_PROVIDER == "resend" or (
-        settings.EMAIL_PROVIDER == "auto" and bool(settings.RESEND_API_KEY)
-    )
-    if use_resend:
-        if not settings.RESEND_API_KEY:
-            raise ApiError("EMAIL_PROVIDER=resend requires RESEND_API_KEY in backend/.env", 500)
-        request = Request(
-            "https://api.resend.com/emails",
-            data=json.dumps({
-                "from": settings.RESEND_FROM_EMAIL,
-                "to": [recipient],
-                "subject": subject,
-                "text": message,
-            }).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {settings.RESEND_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        try:
-            email_logger.info("[email-debug] Resend API sending stage: from=%s recipient=%s", settings.RESEND_FROM_EMAIL, recipient)
-            with urlopen(request, timeout=15) as response:
-                if response.status not in range(200, 300):
-                    raise ApiError(f"{failure_prefix}: Email provider rejected the message", 502)
-        except HTTPError as exc:
-            raw_error = ""
-            try:
-                raw_error = exc.read().decode("utf-8")
-                error_body = json.loads(raw_error)
-                provider_error = error_body.get("message") or error_body.get("name")
-            except (ValueError, UnicodeDecodeError):
-                provider_error = raw_error.strip() or None
-            detail = provider_error or f"HTTP {exc.code} from email provider"
-            email_logger.exception("[email-debug] Resend/email sending failed for %s: %s", recipient, detail)
-            raise ApiError(f"{failure_prefix}: Resend error: {detail}", 502) from exc
-        except (URLError, TimeoutError) as exc:
-            email_logger.exception("[email-debug] Resend/email sending failed for %s", recipient)
-            raise ApiError(f"{failure_prefix}: Unable to connect to Resend. Check your network connection.", 502) from exc
-        email_logger.info("[email-debug] Email sent successfully to %s", recipient)
-        return
-
-    if settings.EMAIL_PROVIDER == "console" or settings.EMAIL_BACKEND == settings.CONSOLE_EMAIL_BACKEND:
-        try:
-            send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [recipient])
+            email_logger.info("[email-debug] Gmail SMTP sending stage: from=%s recipient=%s", settings.DEFAULT_FROM_EMAIL, recipient)
+            sent_count = django_send_mail(
+                subject,
+                message,
+                settings.DEFAULT_FROM_EMAIL,
+                [recipient],
+                fail_silently=False,
+            )
         except (smtplib.SMTPException, OSError) as exc:
+            email_logger.exception("[email-debug] Gmail SMTP sending failed for %s", recipient)
             raise ApiError(
-                f"{failure_prefix}: Unable to send email. Check the email settings in backend/.env.",
+                f"{failure_prefix}: Unable to send through Gmail SMTP. Check the local SMTP settings and app password.",
                 502,
             ) from exc
+        if sent_count != 1:
+            raise ApiError(f"{failure_prefix}: Gmail SMTP did not accept the message.", 502)
+        email_logger.info("[email-debug] Email accepted by Gmail SMTP for %s", recipient)
         return
 
-    email_logger.error("[email-debug] No SMTP provider configured for %s", recipient)
-    raise ApiError(f"{failure_prefix}: Email is not configured. Set EMAIL_PROVIDER=smtp with SMTP settings, EMAIL_PROVIDER=resend with RESEND_API_KEY, or EMAIL_PROVIDER=console for local testing.", 500)
+    require_resend_settings(failure_prefix)
+    request = Request(
+        "https://api.resend.com/emails",
+        data=json.dumps({
+            "from": settings.RESEND_FROM_EMAIL,
+            "to": [recipient],
+            "subject": subject,
+            "text": message,
+        }).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {settings.RESEND_API_KEY}",
+            "Content-Type": "application/json",
+            "User-Agent": "USPMarketplace/1.0",
+        },
+        method="POST",
+    )
+    try:
+        email_logger.info("[email-debug] Resend API sending stage: from=%s recipient=%s", settings.RESEND_FROM_EMAIL, recipient)
+        with urlopen(request, timeout=settings.EMAIL_TIMEOUT) as response:
+            if response.status not in range(200, 300):
+                raise ApiError(f"{failure_prefix}: Email provider rejected the message", 502)
+    except HTTPError as exc:
+        raw_error = ""
+        try:
+            raw_error = exc.read().decode("utf-8")
+            error_body = json.loads(raw_error)
+            provider_error = error_body.get("message") or error_body.get("name")
+        except (ValueError, UnicodeDecodeError):
+            provider_error = raw_error.strip() or None
+        detail = str(provider_error or f"HTTP {exc.code} from email provider").replace(settings.RESEND_API_KEY, "[redacted]")
+        email_logger.exception("[email-debug] Resend/email sending failed for %s: %s", recipient, detail)
+        raise ApiError(f"{failure_prefix}: Resend error: {detail}", 502) from exc
+    except (URLError, OSError) as exc:
+        email_logger.exception("[email-debug] Resend/email sending failed for %s", recipient)
+        raise ApiError(f"{failure_prefix}: Unable to connect to Resend. Check your network connection.", 502) from exc
+    email_logger.info("[email-debug] Email sent successfully to %s", recipient)
+    return
 
 
 def send_email_later(subject, message, recipient, failure_prefix="Failed to send email"):
@@ -577,7 +531,8 @@ def request_password_reset(data):
         )
         send_email(
             "Reset your USP Marketplace password",
-            f"Your USP Marketplace password reset code is {code}. It expires in 10 minutes.",
+            f"Your USP Marketplace password reset code is {code}. It expires in 10 minutes.\n\n"
+            f"Return to USP Marketplace to enter your code: {settings.FRONTEND_URL}",
             user.email,
         )
     return {"message": "If that email is registered, a password reset code has been sent."}
@@ -1068,19 +1023,30 @@ def send_conversation_message(conversation_id, sender_id, body):
     Message.objects.create(
         conversation_id=conversation.id,
         sender_id=sender.id,
+        sender_username=sender.username,
         receiver_id=receiver_id,
         body=message_body,
         is_read=False,
     )
     conversation.save(update_fields=["updated_at"])
     item = Item.objects.filter(id=conversation.item_id).first()
-    notify_user(
+    notification = (
         receiver_id,
         "New message",
         f"{sender.username} sent you a message about {item.name if item else 'a marketplace item'}.",
         "message",
         sender,
     )
+    if settings.DATABASE_MODE == "railway":
+        try:
+            with transaction.atomic():
+                notify_user(*notification)
+        except DatabaseError:
+            # A notification is secondary to delivery. Do not return a failed
+            # send after the message row has already been committed.
+            logger.exception("Message was saved but its notification could not be created")
+    else:
+        notify_user(*notification)
     return _conversation_payload(conversation, sender.id)
 
 
@@ -1583,7 +1549,7 @@ def purchase_item(
     notify_user(
         item.seller_id,
         "New order placed",
-        f"{buyer.username} placed an order for {item.name}.",
+        f"Order #{purchase.id} · {buyer.username} placed an order for {item.name}.",
         "sale",
         buyer,
     )
@@ -1593,7 +1559,23 @@ def purchase_item(
 def list_buyer_purchases(buyer_id):
     if not User.objects.filter(id=buyer_id).exists():
         raise ApiError("User not found", 404)
-    purchases = visible_purchases(include_test_records=True).filter(buyer_id=buyer_id).order_by("-id")
+    purchases = visible_purchases(include_test_records=True).filter(
+        buyer_id=buyer_id,
+    ).exclude(
+        order_stage__in=["cancelled", "canceled"],
+    ).exclude(
+        status__in=["cancelled", "canceled"],
+    ).exclude(
+        payment_status__in=["cancelled", "canceled"],
+    ).order_by("-id")
+    item_ids = {purchase.item_id for purchase in purchases}
+    seller_ids = {purchase.seller_id for purchase in purchases}
+    existing_item_ids = set(Item.objects.filter(id__in=item_ids).values_list("id", flat=True))
+    existing_seller_ids = set(User.objects.filter(id__in=seller_ids).values_list("id", flat=True))
+    purchases = [
+        purchase for purchase in purchases
+        if purchase.item_id in existing_item_ids and purchase.seller_id in existing_seller_ids
+    ]
     return [enrich_purchase_order(purchase) for purchase in purchases]
 
 
@@ -1626,13 +1608,14 @@ def update_seller_order_stage(purchase_id, seller_id, stage):
         raise ApiError("You can only update your own orders", 403)
     if purchase.order_stage in {"cancelled", "canceled"} or purchase.status in {"cancelled", "canceled"}:
         raise ApiError("Cancelled orders cannot be reopened", 409)
-    if purchase.payment_status not in {"paid", "approved"}:
+    pending_cash = purchase.payment_method == "cash" and purchase.payment_status == "pending"
+    if purchase.payment_status not in {"paid", "approved"} and not pending_cash:
         raise ApiError("Confirm payment receipt before preparing this order", 400)
     if purchase.order_stage in {"item_received", "completed"}:
         raise ApiError("This order has already been received by the buyer", 400)
     if stage == "ready_for_collection" and purchase.order_stage not in {"preparing_item", "ready_for_collection"}:
         raise ApiError("Mark the order as preparing before setting it ready for collection", 400)
-    if stage == "preparing_item" and purchase.order_stage not in {"payment_confirmed", "preparing_item"}:
+    if stage == "preparing_item" and purchase.order_stage not in {"payment_confirmed", "order_placed", "preparing_item"}:
         raise ApiError("Order progress cannot move backwards", 409)
 
     purchase.order_stage = stage
@@ -1666,7 +1649,8 @@ def confirm_payment_received(purchase_id, seller_id):
         if purchase.seller_id != seller.id:
             raise ApiError("You can only confirm payment for your own orders", 403)
         if purchase.payment_status != "pending" or purchase.order_stage != "order_placed":
-            raise ApiError("This order is not awaiting payment", 400)
+            if not (purchase.payment_method == "cash" and purchase.payment_status == "pending" and purchase.order_stage == "ready_for_collection"):
+                raise ApiError("Cash can be confirmed after the order is on the way", 400)
 
         item = Item.objects.select_for_update().filter(id=purchase.item_id).first()
         if not item or item.status in {"hidden", "removed"}:
@@ -1678,7 +1662,8 @@ def confirm_payment_received(purchase_id, seller_id):
 
         purchase.payment_status = "paid"
         purchase.payment_reference = f"SELLER-CONFIRMED-{purchase.id}"
-        purchase.order_stage = "payment_confirmed"
+        if purchase.order_stage == "order_placed":
+            purchase.order_stage = "payment_confirmed"
         purchase.status = "in_progress"
         purchase.save(update_fields=[
             "payment_status",
@@ -1762,6 +1747,8 @@ def confirm_order_received(purchase_id, buyer_id):
         raise ApiError("You can only confirm your own orders", 403)
     if purchase.order_stage not in {"ready_for_collection", "item_received", "completed"}:
         raise ApiError("This order is not ready for collection yet", 400)
+    if purchase.payment_method == "cash" and purchase.payment_status != "paid":
+        raise ApiError("The seller must confirm cash was received before you can confirm item receipt", 400)
 
     purchase.order_stage = "completed"
     purchase.status = "completed"
@@ -1842,11 +1829,6 @@ def account_action_reason(data):
 def send_account_action_email(subject, message, email, action_label="account action"):
     try:
         send_email(subject, message, email, "Failed to send account notification")
-        provider = settings.EMAIL_PROVIDER
-        resend = provider == "resend" or (provider == "auto" and not settings.EMAIL_HOST and bool(settings.RESEND_API_KEY))
-        console = not resend and (provider == "console" or settings.EMAIL_BACKEND == settings.CONSOLE_EMAIL_BACKEND)
-        if console:
-            return {"email_status": "console", "message": "Email was printed to the backend terminal only; it was not delivered to the student."}
         return {"email_status": "sent", "message": "Notification email accepted by the email provider. Inbox delivery is not guaranteed."}
     except Exception as exc:
         email_logger.warning("Account notification email failed: %s", describe_email_exception(exc))
@@ -1875,13 +1857,14 @@ def set_student_status(admin_id, student_id, status, data=None):
         student.save(update_fields=["status", "suspension_reason", "suspended_until", "updated_at"])
         if status == "suspended":
             title = "Account suspended"
-            details = f"Reason: {reason}\nDuration: {hours} hours. Suspension ends {deadline_text}. You can sign in again after that time using your password and authenticator."
+            details = f"Reason: {reason}\nDuration: {hours} hours. Suspension ends {deadline_text}. You can sign in again after that time using your password and authenticator. Your listings are hidden while your account is suspended and will become visible again when your account is reactivated."
             email_message = (
                 f"Dear {student.name.strip() or student.username},\n\n"
                 "We are writing to inform you that your USP Marketplace account has been temporarily suspended, effective immediately.\n\n"
                 f"Reason for suspension: {reason}\n\n"
                 f"Suspension duration: {hours} hours\n"
                 f"Access resumes: {deadline_text}\n\n"
+                "Your marketplace listings are hidden while your account is suspended. They will become visible again when your account is reactivated.\n\n"
                 "You will be unable to sign in or use your account during this period. "
                 "Once the suspension ends, you may sign in again using your usual sign-in details.\n\n"
                 "If you believe this decision was made in error or would like to request a review, "
@@ -1891,7 +1874,7 @@ def set_student_status(admin_id, student_id, status, data=None):
             )
         else:
             title = "Account reactivated"
-            details = f"Your suspension has been reconsidered and your account reactivated by an administrator. Reason: {reason}\nYou can now sign in using your password and authenticator."
+            details = f"Your suspension has been reconsidered and your account reactivated by an administrator. Reason: {reason}\nYou can now sign in using your password and authenticator. Your eligible listings are visible again."
             email_message = f"Hello {student.username},\n\n{details}\n\nIf you believe this action was a mistake, contact the USP Marketplace admin team."
             notify_user(student.id, title, details, "administration", admin)
     result = send_account_action_email(
@@ -2049,6 +2032,8 @@ def submit_rating_review(data):
             raise ApiError("Order not found", 404)
         if purchase.buyer_id != reviewer.id:
             raise ApiError("Only the buyer who purchased this item can review this order", 403)
+        if purchase.order_stage != "completed":
+            raise ApiError("You can review this order after it is completed", 400)
         if RatingReview.objects.filter(purchase_id=purchase.id, reviewer_id=reviewer.id).exists():
             raise ApiError("You have already reviewed this order", 400)
         item_id = purchase.item_id
@@ -2113,6 +2098,14 @@ def list_seller_reviews(seller_id):
     }
 
 
+def list_user_reviews(reviewer_id):
+    reviewer = require_active_user(reviewer_id)
+    return [
+        serialize_rating_review(review)
+        for review in RatingReview.objects.filter(reviewer_id=reviewer.id).order_by("-id")
+    ]
+
+
 def list_user_reports(admin_id):
     require_admin(admin_id)
     records = list(UserReport.objects.exclude(reporter_username__startswith="__test_").order_by("-id"))
@@ -2140,6 +2133,26 @@ def list_user_reports(admin_id):
         data["reporter"] = serialize_user(reporter, include_moderation=True) if reporter else None
         reports.append(data)
     return reports
+
+
+def delete_user_report(admin_id, report_id):
+    admin = require_admin(admin_id)
+    with transaction.atomic():
+        record = UserReport.objects.select_for_update().filter(id=report_id).first()
+        if not record:
+            raise ApiError("Flag report not found", 404)
+        if record.email_status == "pending":
+            raise ApiError("This report has an email action still processing. Refresh and try again.", 409)
+        target_label = record.target_label
+        reporter_username = record.reporter_username
+        record.delete()
+        notify_admin(
+            "Flag report deleted",
+            f"Report #{report_id} about {target_label} from {reporter_username} was deleted by an administrator.",
+            "report",
+            admin,
+        )
+    return {"message": f"Flag report #{report_id} was deleted."}
 
 
 def review_user_report(admin_id, report_id, data):

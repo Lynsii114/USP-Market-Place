@@ -75,6 +75,6 @@ These commands do not modify the regular MySQL database. Start the frontend with
 
 ## Email and payment demonstrations
 
-Email verification can use a configured email provider, which requires internet access. Set `EMAIL_PROVIDER=console` to print verification codes in the backend terminal for local demonstrations. Checkout simulates payments and never transfers real money.
+Local email uses configured Gmail SMTP, and Railway email uses Resend HTTPS. Both require internet access. Checkout simulates payments and never transfers real money.
 
 See `backend/README.md` for authentication, email, checkout, and inventory behaviour.

@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.http import HttpResponse
+from django.utils.cache import patch_vary_headers
 
 
 class JsonCorsMiddleware:
@@ -18,6 +19,7 @@ class JsonCorsMiddleware:
             response = self.get_response(request)
 
         origin = request.headers.get("Origin")
+        patch_vary_headers(response, ("Origin",))
         if self.is_origin_allowed(origin):
             response["Access-Control-Allow-Origin"] = origin
             response["Access-Control-Allow-Credentials"] = "true"
