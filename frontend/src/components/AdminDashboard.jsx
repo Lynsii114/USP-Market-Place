@@ -414,6 +414,22 @@ function AdminDashboard({
   }, [isAdmin]);
 
   useEffect(() => {
+    if (!isAdmin) return undefined;
+    const refreshVisibleAdminData = () => {
+      if (document.hidden) return;
+      if (activeTab === "Listings") loadListings().catch(() => {});
+      if (activeTab === "Orders") loadOrders().catch(() => {});
+      if (activeTab === "Dashboard") loadDashboard().catch(() => {});
+    };
+    const intervalId = window.setInterval(refreshVisibleAdminData, 30000);
+    window.addEventListener("focus", refreshVisibleAdminData);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshVisibleAdminData);
+    };
+  }, [isAdmin, activeTab]);
+
+  useEffect(() => {
     if (!isAdmin || prefetchStartedRef.current) {
       return;
     }

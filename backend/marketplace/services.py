@@ -122,7 +122,7 @@ def notify_user(user_id, title, message, category="activity", actor=None):
 
 
 def notify_order_user(purchase, user_id, title, message, actor=None):
-    return notify_user(user_id, title, message, "order", actor)
+    return notify_user(user_id, title, f"Order #{purchase.id} · {message}", "order", actor)
 
 
 def serialize_admin_item(item):
@@ -1549,7 +1549,7 @@ def purchase_item(
     notify_user(
         item.seller_id,
         "New order placed",
-        f"{buyer.username} placed an order for {item.name}.",
+        f"Order #{purchase.id} · {buyer.username} placed an order for {item.name}.",
         "sale",
         buyer,
     )
@@ -1559,7 +1559,23 @@ def purchase_item(
 def list_buyer_purchases(buyer_id):
     if not User.objects.filter(id=buyer_id).exists():
         raise ApiError("User not found", 404)
-    purchases = visible_purchases(include_test_records=True).filter(buyer_id=buyer_id).order_by("-id")
+    purchases = visible_purchases(include_test_records=True).filter(
+        buyer_id=buyer_id,
+    ).exclude(
+        order_stage__in=["cancelled", "canceled"],
+    ).exclude(
+        status__in=["cancelled", "canceled"],
+    ).exclude(
+        payment_status__in=["cancelled", "canceled"],
+    ).order_by("-id")
+    item_ids = {purchase.item_id for purchase in purchases}
+    seller_ids = {purchase.seller_id for purchase in purchases}
+    existing_item_ids = set(Item.objects.filter(id__in=item_ids).values_list("id", flat=True))
+    existing_seller_ids = set(User.objects.filter(id__in=seller_ids).values_list("id", flat=True))
+    purchases = [
+        purchase for purchase in purchases
+        if purchase.item_id in existing_item_ids and purchase.seller_id in existing_seller_ids
+    ]
     return [enrich_purchase_order(purchase) for purchase in purchases]
 
 
@@ -1592,13 +1608,14 @@ def update_seller_order_stage(purchase_id, seller_id, stage):
         raise ApiError("You can only update your own orders", 403)
     if purchase.order_stage in {"cancelled", "canceled"} or purchase.status in {"cancelled", "canceled"}:
         raise ApiError("Cancelled orders cannot be reopened", 409)
-    if purchase.payment_status not in {"paid", "approved"}:
+    pending_cash = purchase.payment_method == "cash" and purchase.payment_status == "pending"
+    if purchase.payment_status not in {"paid", "approved"} and not pending_cash:
         raise ApiError("Confirm payment receipt before preparing this order", 400)
     if purchase.order_stage in {"item_received", "completed"}:
         raise ApiError("This order has already been received by the buyer", 400)
     if stage == "ready_for_collection" and purchase.order_stage not in {"preparing_item", "ready_for_collection"}:
         raise ApiError("Mark the order as preparing before setting it ready for collection", 400)
-    if stage == "preparing_item" and purchase.order_stage not in {"payment_confirmed", "preparing_item"}:
+    if stage == "preparing_item" and purchase.order_stage not in {"payment_confirmed", "order_placed", "preparing_item"}:
         raise ApiError("Order progress cannot move backwards", 409)
 
     purchase.order_stage = stage
@@ -1632,7 +1649,8 @@ def confirm_payment_received(purchase_id, seller_id):
         if purchase.seller_id != seller.id:
             raise ApiError("You can only confirm payment for your own orders", 403)
         if purchase.payment_status != "pending" or purchase.order_stage != "order_placed":
-            raise ApiError("This order is not awaiting payment", 400)
+            if not (purchase.payment_method == "cash" and purchase.payment_status == "pending" and purchase.order_stage == "ready_for_collection"):
+                raise ApiError("Cash can be confirmed after the order is on the way", 400)
 
         item = Item.objects.select_for_update().filter(id=purchase.item_id).first()
         if not item or item.status in {"hidden", "removed"}:
@@ -1644,7 +1662,8 @@ def confirm_payment_received(purchase_id, seller_id):
 
         purchase.payment_status = "paid"
         purchase.payment_reference = f"SELLER-CONFIRMED-{purchase.id}"
-        purchase.order_stage = "payment_confirmed"
+        if purchase.order_stage == "order_placed":
+            purchase.order_stage = "payment_confirmed"
         purchase.status = "in_progress"
         purchase.save(update_fields=[
             "payment_status",
@@ -1728,6 +1747,8 @@ def confirm_order_received(purchase_id, buyer_id):
         raise ApiError("You can only confirm your own orders", 403)
     if purchase.order_stage not in {"ready_for_collection", "item_received", "completed"}:
         raise ApiError("This order is not ready for collection yet", 400)
+    if purchase.payment_method == "cash" and purchase.payment_status != "paid":
+        raise ApiError("The seller must confirm cash was received before you can confirm item receipt", 400)
 
     purchase.order_stage = "completed"
     purchase.status = "completed"
@@ -2011,6 +2032,8 @@ def submit_rating_review(data):
             raise ApiError("Order not found", 404)
         if purchase.buyer_id != reviewer.id:
             raise ApiError("Only the buyer who purchased this item can review this order", 403)
+        if purchase.order_stage != "completed":
+            raise ApiError("You can review this order after it is completed", 400)
         if RatingReview.objects.filter(purchase_id=purchase.id, reviewer_id=reviewer.id).exists():
             raise ApiError("You have already reviewed this order", 400)
         item_id = purchase.item_id
@@ -2073,6 +2096,14 @@ def list_seller_reviews(seller_id):
         "review_count": len(serialized_reviews),
         "reviews": serialized_reviews,
     }
+
+
+def list_user_reviews(reviewer_id):
+    reviewer = require_active_user(reviewer_id)
+    return [
+        serialize_rating_review(review)
+        for review in RatingReview.objects.filter(reviewer_id=reviewer.id).order_by("-id")
+    ]
 
 
 def list_user_reports(admin_id):

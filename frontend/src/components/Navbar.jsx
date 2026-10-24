@@ -177,6 +177,9 @@ function Navbar({
                   <span aria-hidden="true">▤</span>
                   My Purchases
                 </button>
+                <button type="button" onClick={() => onOpenAccountPage("reviews")}>
+                  My Reviews
+                </button>
               </div>
               <div className="activity-menu-group">
                 <strong>Selling</strong>

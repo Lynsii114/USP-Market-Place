@@ -230,6 +230,12 @@ def seller_reviews(request, seller_id):
     return run(lambda: (services.list_seller_reviews(seller_id), True))
 
 
+def user_reviews_given(request, reviewer_id):
+    if request.method != "GET":
+        return method_not_allowed()
+    return run(lambda: (services.list_user_reviews(reviewer_id), False))
+
+
 def list_seller_orders(request, seller_id):
     if request.method != "GET":
         return method_not_allowed()

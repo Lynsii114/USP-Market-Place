@@ -3753,7 +3753,7 @@
 
 .order-progress-tracker {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -3767,6 +3767,21 @@
   border-radius: 8px;
   background: #ffffff;
   text-align: center;
+}
+
+.order-progress-step.clickable {
+  width: 100%;
+  appearance: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.order-progress-step.clickable:hover,
+.order-progress-step.clickable:focus-visible {
+  border-color: var(--usp-blue);
+  outline: 2px solid color-mix(in srgb, var(--usp-blue) 28%, transparent);
+  outline-offset: 2px;
 }
 
 .order-progress-step span {

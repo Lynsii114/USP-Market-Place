@@ -36,6 +36,16 @@ import { priceRange, matchesPrice, availableStock } from "./utils/inventory.mjs"
 import { mergeCategoryOptions, canonicalCategoryName } from "./utils/categories.mjs";
 
 const PENDING_VERIFICATION_STORAGE_KEY = "usp-marketplace-pending-verification";
+const CART_STORAGE_KEY = "usp-marketplace-cart";
+
+function readSavedCart() {
+  try {
+    const savedCart = JSON.parse(window.localStorage.getItem(CART_STORAGE_KEY) || "[]");
+    return Array.isArray(savedCart) ? savedCart : [];
+  } catch {
+    return [];
+  }
+}
 
 function readPendingVerification() {
   try {
@@ -100,14 +110,17 @@ function Home() {
   const [showSellerPanel, setShowSellerPanel] = useState(false);
   const [showShopPage, setShowShopPage] = useState(false);
   const [activeCategoryPage, setActiveCategoryPage] = useState(null);
-  const [cartItems, setCartItems] = useState([]);
+  const [cartItems, setCartItems] = useState(readSavedCart);
   const [showCartPanel, setShowCartPanel] = useState(false);
   const [showPurchasesPage, setShowPurchasesPage] = useState(false);
   const [receipt, setReceipt] = useState(null);
   const [pendingReviewItems, setPendingReviewItems] = useState([]);
   const [checkoutReviewForm, setCheckoutReviewForm] = useState({ rating: "5", review: "" });
   const [purchaseHistory, setPurchaseHistory] = useState([]);
+  const [reviewsGiven, setReviewsGiven] = useState([]);
+  const [reviewsReceived, setReviewsReceived] = useState([]);
   const [sellerOrders, setSellerOrders] = useState([]);
+  const [orderNotificationTarget, setOrderNotificationTarget] = useState(null);
   const [isLoadingUserActivity, setIsLoadingUserActivity] = useState(false);
   const [activeLegalPage, setActiveLegalPage] = useState(null);
   const [showHelp, setShowHelp] = useState(() => window.location.pathname === "/help");
@@ -131,8 +144,21 @@ function Home() {
   }, []);
 
   useEffect(() => {
+    try {
+      window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cartItems));
+    } catch {
+      // Keep the in-memory cart usable if browser storage is unavailable.
+    }
+  }, [cartItems]);
+
+  useEffect(() => {
     const refreshListings = () => {
-      if (document.visibilityState === "visible") loadListings({ silent: true });
+      if (document.visibilityState !== "visible") return;
+      loadListings({ silent: true });
+      if (currentUser && showSellerPanel) {
+        loadSellerListings(currentUser.id);
+        loadSellerOrders(currentUser.id);
+      }
     };
     const intervalId = window.setInterval(refreshListings, 30000);
     window.addEventListener("focus", refreshListings);
@@ -140,7 +166,7 @@ function Home() {
       window.clearInterval(intervalId);
       window.removeEventListener("focus", refreshListings);
     };
-  }, [currentUser?.id]);
+  }, [currentUser?.id, showSellerPanel]);
 
   useEffect(() => {
     const applyRouteState = (state = window.history.state || {}) => {
@@ -419,6 +445,30 @@ function Home() {
       return data;
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to load purchase history", "error");
+      return [];
+    }
+  };
+
+  const loadReviewsGiven = async (reviewerId) => {
+    try {
+      const response = await fetch(`${API_URL}/users/${reviewerId}/reviews-given`);
+      const data = await parseResponse(response, "Unable to load your reviews");
+      setReviewsGiven(data);
+      return data;
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to load your reviews", "error");
+      return [];
+    }
+  };
+
+  const loadReviewsReceived = async (sellerId) => {
+    try {
+      const response = await fetch(`${API_URL}/users/${sellerId}/reviews`);
+      const data = await parseResponse(response, "Unable to load reviews about your products and service");
+      setReviewsReceived(data.reviews || []);
+      return data.reviews || [];
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to load reviews about your products and service", "error");
       return [];
     }
   };
@@ -887,7 +937,6 @@ function Home() {
     hideActivePages();
     setSelectedListing(null);
     setSelectedSeller(null);
-    setCartItems([]);
     pushViewState({ view: "home" });
     showToast(message || "Logged out successfully.", message ? "error" : "success");
   };
@@ -1194,18 +1243,20 @@ function Home() {
       return;
     }
 
-    if (
-      notification.category === "sale" ||
-      (notification.category === "order" && /new order|placed an order/i.test(`${notification.title || ""} ${notification.message || ""}`))
-    ) {
-      await loadSellerOrders(currentUser.id);
-      openAccountPage("sales", "history");
-      await loadUserNotifications(currentUser.id);
-      return;
-    }
-
-    if (notification.category === "order") {
-      openPurchasesPage();
+    if (notification.category === "sale" || notification.category === "order") {
+      const text = `${notification.title || ""} ${notification.message || ""}`.toLowerCase();
+      const sellerOrderList = await loadSellerOrders(currentUser.id);
+      const sellerTarget = sellerOrderList.find((order) => text.includes(String(order.item_name || "").toLowerCase()));
+      if (notification.category === "sale" || sellerTarget) {
+        const target = sellerTarget;
+        setOrderNotificationTarget(target ? { audience: "seller", id: target.id } : null);
+        openSellerTab("my-listings");
+      } else {
+        const purchases = await loadPurchaseHistory(currentUser.id);
+        const target = purchases.find((order) => text.includes(String(order.item_name || "").toLowerCase()));
+        setOrderNotificationTarget(target ? { audience: "buyer", id: target.id } : null);
+        openPurchasesPage();
+      }
       await loadUserNotifications(currentUser.id);
       return;
     }
@@ -1274,8 +1325,10 @@ function Home() {
       const response = await fetch(`${API_URL}/users/${sellerId}/sales`);
       const data = await parseResponse(response, "Unable to load seller orders");
       setSellerOrders(data);
+      return data;
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to load seller orders", "error");
+      return [];
     }
   };
 
@@ -1554,7 +1607,7 @@ function Home() {
     cash: "Cash",
   };
 
-  const checkoutCart = async (paymentMethod, checkoutSummary = {}, paymentDetails = {}, forceFailure = false) => {
+  const checkoutCart = async (paymentMethod, checkoutSummary = {}, paymentDetails = {}, forceFailure = false, checkoutId) => {
     if (blockAdminCustomerAction()) return;
     if (!currentUser) {
       showToast("Please login to purchase items.", "error");
@@ -1609,6 +1662,7 @@ function Home() {
         .filter(
           (purchase) =>
             checkout.payment.status !== "pending" &&
+            purchase.order_stage === "completed" &&
             purchasedIds.includes(purchase.item_id) &&
             !purchase.has_review
         )
@@ -1778,6 +1832,29 @@ function Home() {
       showToast("Order progress updated.");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Unable to update order progress", "error");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const confirmOrderReceived = async (order) => {
+    if (!currentUser) {
+      openAuth("login");
+      return;
+    }
+    if (!window.confirm(`Confirm that you received ${order.item_name}?`)) return;
+
+    setIsSubmitting(true);
+    try {
+      await fetch(`${API_URL}/orders/${order.id}/received`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ buyer_id: currentUser.id }),
+      }).then((response) => parseResponse(response, "Unable to confirm item received"));
+      await loadPurchaseHistory(currentUser.id);
+      showToast("Item receipt confirmed. Order completed.");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to confirm item received", "error");
     } finally {
       setIsSubmitting(false);
     }
@@ -2012,6 +2089,10 @@ function Home() {
       loadConversations(currentUser.id);
       loadUnreadMessageCount(currentUser.id);
     }
+    if (page === "reviews") {
+      loadReviewsGiven(currentUser.id);
+      loadReviewsReceived(currentUser.id);
+    }
     if (page === "notifications") {
       loadUserNotifications(currentUser.id);
     }
@@ -2216,6 +2297,8 @@ function Home() {
           onSubmitReview={submitRatingReview}
           onViewSeller={handleViewSellerListings}
           onCancelOrder={cancelOrder}
+          onConfirmReceived={confirmOrderReceived}
+          orderNotificationTarget={orderNotificationTarget?.audience === "buyer" ? orderNotificationTarget.id : null}
           isSubmitting={isSubmitting}
         />
       )}
@@ -2225,6 +2308,8 @@ function Home() {
         currentUser={currentUser}
         myListings={myListings}
         purchaseHistory={purchaseHistory}
+        reviewsGiven={reviewsGiven}
+        reviewsReceived={reviewsReceived}
         sellerOrders={sellerOrders}
         activeSalesView={activeSalesView}
         conversations={conversations}
@@ -2312,6 +2397,7 @@ function Home() {
           openListingMenuId={openListingMenuId}
           pendingPhoto={pendingPhoto}
           sellerOrders={sellerOrders}
+          orderNotificationTarget={orderNotificationTarget?.audience === "seller" ? orderNotificationTarget.id : null}
           onLoadReservationBuyers={loadReservationBuyers}
           onReserveListing={reserveListingForBuyer}
           onUpdateListingStatus={updateListingSellerStatus}
