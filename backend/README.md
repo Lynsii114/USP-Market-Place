@@ -194,7 +194,10 @@ Railway mode never performs this automatic schema work.
 
 `Conversation` uses a named composite unique constraint on `(item_id, buyer_id,
 seller_id)`. `Message` stores `conversation_id`, `sender_id`, `receiver_id`,
-`body`, `is_read`, and `created_at`. The API endpoints are
+`body`, `is_read`, and `created_at`. Railway's existing MySQL table also has a
+required legacy `sender_username` column, which sends now populate. Migration
+`0003` adopts that column if it already exists or adds it with a blank default
+if it does not, preserving existing message rows. The API endpoints are
 `POST /api/items/<item_id>/conversation`, `GET /api/users/<user_id>/conversations`,
 `GET|POST /api/conversations/<conversation_id>`, and
 `GET /api/users/<user_id>/messages/unread`.

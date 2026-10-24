@@ -1023,6 +1023,7 @@ def send_conversation_message(conversation_id, sender_id, body):
     Message.objects.create(
         conversation_id=conversation.id,
         sender_id=sender.id,
+        sender_username=sender.username,
         receiver_id=receiver_id,
         body=message_body,
         is_read=False,

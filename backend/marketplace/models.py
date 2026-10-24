@@ -171,6 +171,8 @@ class Conversation(models.Model):
 class Message(models.Model):
     conversation_id = models.IntegerField(db_index=True)
     sender_id = models.IntegerField(db_index=True)
+    # Present as a required legacy column in the deployed Railway MySQL table.
+    sender_username = models.CharField(max_length=64, default="", blank=True)
     receiver_id = models.IntegerField(db_index=True)
     body = models.CharField(max_length=1000)
     is_read = models.BooleanField(default=False)

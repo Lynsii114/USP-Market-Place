@@ -63,6 +63,7 @@ class MessagingTests(TransactionTestCase):
             Message.objects.filter(
                 conversation_id=conversation_id,
                 sender_id=self.buyer.id,
+                sender_username=self.buyer.username,
                 receiver_id=self.seller.id,
                 body="Is this still available?",
                 is_read=False,
@@ -114,7 +115,7 @@ class MessagingTests(TransactionTestCase):
         )
         self.assertEqual(
             {field.column for field in Message._meta.local_fields},
-            {"id", "conversation_id", "sender_id", "receiver_id", "body", "is_read", "created_at"},
+            {"id", "conversation_id", "sender_id", "sender_username", "receiver_id", "body", "is_read", "created_at"},
         )
 
     @override_settings(DATABASE_MODE="railway")
