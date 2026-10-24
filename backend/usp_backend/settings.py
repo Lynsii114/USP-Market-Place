@@ -100,14 +100,27 @@ if (
     or (DATABASE_MODE == "railway" and frontend_url.scheme != "https")
 ):
     raise ImproperlyConfigured("FRONTEND_URL must be an absolute frontend URL (HTTPS on Railway), without credentials, query, or fragment.")
-# Resend HTTPS is the only application email transport, locally and online.
-# Legacy EMAIL_PROVIDER, EMAIL_HOST_* and EMAIL_BACKEND environment values are ignored.
-EMAIL_PROVIDER = "resend"
+# Keep local demonstrations independent from production email credentials.
+# Local runs use Gmail SMTP; Railway uses Resend HTTPS exclusively.
+EMAIL_PROVIDER = "smtp" if DATABASE_MODE == "local" else "resend"
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
 RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "").strip()
 EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "20"))
-# Disable Django's implicit SMTP backend; all application email uses send_email().
-EMAIL_BACKEND = "django.core.mail.backends.dummy.EmailBackend"
+if DATABASE_MODE == "local":
+    EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com").strip()
+    EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+    EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "1").strip().lower() in {"1", "true", "yes", "on"}
+    EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "0").strip().lower() in {"1", "true", "yes", "on"}
+    EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "").strip()
+    # Google app passwords are commonly displayed with spaces between groups.
+    EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "").replace(" ", "").strip()
+    DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER).strip()
+    if EMAIL_USE_TLS and EMAIL_USE_SSL:
+        raise ImproperlyConfigured("Use either EMAIL_USE_TLS or EMAIL_USE_SSL, not both.")
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+else:
+    # No SMTP transport or credentials are read in Railway.
+    EMAIL_BACKEND = "django.core.mail.backends.dummy.EmailBackend"
 MICROSOFT_CLIENT_ID = os.getenv("MICROSOFT_CLIENT_ID", "")
 MICROSOFT_TENANT_ID = os.getenv("MICROSOFT_TENANT_ID", "")
 ALLOW_NON_USP_EMAILS = os.getenv("ALLOW_NON_USP_EMAILS", "1") == "1"

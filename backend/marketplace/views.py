@@ -482,6 +482,8 @@ def admin_rating_reviews(request):
 
 @csrf_exempt
 def admin_review_user_report(request, report_id):
+    if request.method == "DELETE":
+        return run(lambda: (services.delete_user_report(get_admin_id(request), report_id), True))
     if request.method != "POST":
         return method_not_allowed()
     return run(lambda: (services.review_user_report(get_admin_id(request), report_id, json_body(request)), True))

@@ -7,6 +7,7 @@ import math
 import secrets
 import re
 import ssl
+import smtplib
 import pyotp
 import qrcode
 from threading import Thread
@@ -18,6 +19,7 @@ from datetime import date, timedelta
 
 from django.contrib.auth.hashers import make_password, check_password
 from django.conf import settings
+from django.core.mail import send_mail as django_send_mail
 from django.db import DatabaseError, OperationalError, connection, transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -203,7 +205,39 @@ def require_resend_settings(failure_prefix="Failed to send email"):
         raise ApiError(f"{failure_prefix}: Set {', '.join(missing)} in the environment for Resend HTTPS delivery.", 500)
 
 
+def require_smtp_settings(failure_prefix="Failed to send email"):
+    missing = [
+        name
+        for name in ("EMAIL_HOST", "EMAIL_HOST_USER", "EMAIL_HOST_PASSWORD", "DEFAULT_FROM_EMAIL")
+        if not getattr(settings, name, "").strip()
+    ]
+    if missing:
+        raise ApiError(f"{failure_prefix}: Set {', '.join(missing)} for local SMTP delivery.", 500)
+
+
 def send_email(subject, message, recipient, failure_prefix="Failed to send email"):
+    if settings.EMAIL_PROVIDER == "smtp":
+        require_smtp_settings(failure_prefix)
+        try:
+            email_logger.info("[email-debug] Gmail SMTP sending stage: from=%s recipient=%s", settings.DEFAULT_FROM_EMAIL, recipient)
+            sent_count = django_send_mail(
+                subject,
+                message,
+                settings.DEFAULT_FROM_EMAIL,
+                [recipient],
+                fail_silently=False,
+            )
+        except (smtplib.SMTPException, OSError) as exc:
+            email_logger.exception("[email-debug] Gmail SMTP sending failed for %s", recipient)
+            raise ApiError(
+                f"{failure_prefix}: Unable to send through Gmail SMTP. Check the local SMTP settings and app password.",
+                502,
+            ) from exc
+        if sent_count != 1:
+            raise ApiError(f"{failure_prefix}: Gmail SMTP did not accept the message.", 502)
+        email_logger.info("[email-debug] Email accepted by Gmail SMTP for %s", recipient)
+        return
+
     require_resend_settings(failure_prefix)
     request = Request(
         "https://api.resend.com/emails",
@@ -1791,13 +1825,14 @@ def set_student_status(admin_id, student_id, status, data=None):
         student.save(update_fields=["status", "suspension_reason", "suspended_until", "updated_at"])
         if status == "suspended":
             title = "Account suspended"
-            details = f"Reason: {reason}\nDuration: {hours} hours. Suspension ends {deadline_text}. You can sign in again after that time using your password and authenticator."
+            details = f"Reason: {reason}\nDuration: {hours} hours. Suspension ends {deadline_text}. You can sign in again after that time using your password and authenticator. Your listings are hidden while your account is suspended and will become visible again when your account is reactivated."
             email_message = (
                 f"Dear {student.name.strip() or student.username},\n\n"
                 "We are writing to inform you that your USP Marketplace account has been temporarily suspended, effective immediately.\n\n"
                 f"Reason for suspension: {reason}\n\n"
                 f"Suspension duration: {hours} hours\n"
                 f"Access resumes: {deadline_text}\n\n"
+                "Your marketplace listings are hidden while your account is suspended. They will become visible again when your account is reactivated.\n\n"
                 "You will be unable to sign in or use your account during this period. "
                 "Once the suspension ends, you may sign in again using your usual sign-in details.\n\n"
                 "If you believe this decision was made in error or would like to request a review, "
@@ -1807,7 +1842,7 @@ def set_student_status(admin_id, student_id, status, data=None):
             )
         else:
             title = "Account reactivated"
-            details = f"Your suspension has been reconsidered and your account reactivated by an administrator. Reason: {reason}\nYou can now sign in using your password and authenticator."
+            details = f"Your suspension has been reconsidered and your account reactivated by an administrator. Reason: {reason}\nYou can now sign in using your password and authenticator. Your eligible listings are visible again."
             email_message = f"Hello {student.username},\n\n{details}\n\nIf you believe this action was a mistake, contact the USP Marketplace admin team."
             notify_user(student.id, title, details, "administration", admin)
     result = send_account_action_email(
@@ -2056,6 +2091,26 @@ def list_user_reports(admin_id):
         data["reporter"] = serialize_user(reporter, include_moderation=True) if reporter else None
         reports.append(data)
     return reports
+
+
+def delete_user_report(admin_id, report_id):
+    admin = require_admin(admin_id)
+    with transaction.atomic():
+        record = UserReport.objects.select_for_update().filter(id=report_id).first()
+        if not record:
+            raise ApiError("Flag report not found", 404)
+        if record.email_status == "pending":
+            raise ApiError("This report has an email action still processing. Refresh and try again.", 409)
+        target_label = record.target_label
+        reporter_username = record.reporter_username
+        record.delete()
+        notify_admin(
+            "Flag report deleted",
+            f"Report #{report_id} about {target_label} from {reporter_username} was deleted by an administrator.",
+            "report",
+            admin,
+        )
+    return {"message": f"Flag report #{report_id} was deleted."}
 
 
 def review_user_report(admin_id, report_id, data):

@@ -203,21 +203,29 @@ backend\venv\Scripts\python.exe backend\manage.py seed_report_demo --settings=us
 
 These commands are repeat-safe: rerunning them does not add duplicate generated listings or orders. The demo records remain separate from the regular local MySQL database.
 
-## Email delivery through Resend HTTPS
+## Email delivery
 
-Registration verification, password resets, and existing account notification
-emails reuse the same `send_email()` function and its existing HTTPS request to
-`https://api.resend.com/emails`. No Resend SDK or extra dependency is needed.
-Resend HTTPS is the only email transport for both localhost and Railway.
-SMTP and console delivery have been removed. Legacy `EMAIL_PROVIDER`,
-`EMAIL_HOST_*`, TLS/SSL, and `EMAIL_BACKEND` environment values are ignored.
-Missing Resend credentials fail clearly without switching providers or printing
-verification/reset codes to a terminal.
+Registration verification, password resets, and account notification emails use
+the same `send_email()` function. The transport is selected by deployment mode:
+local development uses Gmail SMTP; Railway uses the Resend HTTPS API at
+`https://api.resend.com/emails`. Railway never reads or falls back to the local
+SMTP credentials. Local mode does not require the Resend API key.
 
-Gunicorn starting successfully does not test email delivery. An SMTP error on
-Railway means it is still running an older build. Deploy the latest commit on
-`Railway-deployement-trial` and verify that the new deployment actually becomes
-active. Restarting the old build does not load updated source code.
+For local Gmail SMTP, set `EMAIL_HOST=smtp.gmail.com`, port `587`, TLS on, SSL
+off, the Google or Google Workspace account in `EMAIL_HOST_USER`, and its app
+password in `EMAIL_HOST_PASSWORD`. Gmail app passwords are often displayed in
+groups with spaces; settings removes those spaces before login. `DEFAULT_FROM_EMAIL`
+should match the authenticated Google account. If the sender uses a custom
+domain, the mailbox must be hosted by Google Workspace and allowed to send via
+SMTP. Never commit the app password or local `SECRET_KEY`.
+
+Railway uses `RESEND_API_KEY` and `RESEND_FROM_EMAIL`; the sender domain must be
+verified in Resend. Missing credentials fail clearly without falling back to
+another provider or printing verification/reset codes to a terminal.
+
+Gunicorn starting successfully does not test email delivery. A Resend error on
+Railway means production credentials or provider access need checking. Verify
+the active deployment and inspect its email logs after a delivery attempt.
 Railway Variables override `backend/.env`. Docker excludes `.env`, so configure
 production secrets directly in Railway.
 
@@ -225,9 +233,12 @@ Configure these values before starting locally or deploying:
 
 | Variable | Local `backend/.env` | Railway backend Variables |
 | --- | --- | --- |
-| `RESEND_API_KEY` | Private Resend sending API key | Private Resend sending API key |
-| `RESEND_FROM_EMAIL` | Sender on your verified domain | Sender on your verified domain |
-| `FRONTEND_URL` | `http://localhost:5173` | `https://usp-market-place.vercel.app` |
+| `EMAIL_HOST` / `EMAIL_PORT` | `smtp.gmail.com` / `587` | Not used |
+| `EMAIL_USE_TLS` / `EMAIL_USE_SSL` | `1` / `0` | Not used |
+| `EMAIL_HOST_USER` / `EMAIL_HOST_PASSWORD` | Google account and private app password | Not used |
+| `DEFAULT_FROM_EMAIL` | Sender matching the Google account | Not used |
+| `RESEND_API_KEY` / `RESEND_FROM_EMAIL` | Not used | Private Resend key and verified sender |
+| `FRONTEND_URL` | `http://localhost:5173` | `https://www.uspmarketplace.online` |
 
 Use a sender such as `USP Marketplace <no-reply@your-verified-domain.example>`,
 replacing the example domain with one verified in your Resend account. A Gmail
@@ -243,12 +254,11 @@ codes; clicking a link does not bypass verification or reset a password.
 Production frontend URLs must use HTTPS. No database or authentication settings
 need to change for this email-provider switch.
 
-Restart local Django after changing `.env`. Configure the same two Resend
-variables in Railway, then deploy the latest backend source. No Gmail password
-or provider selection is needed. Remove obsolete SMTP environment variables
-from your dashboard if they remain; the application no longer reads them.
-`--check-only` reports the effective HTTPS transport without displaying secrets
-or sending email.
+Restart local Django after changing `.env`. Keep the SMTP app password only in
+the ignored local environment file. Configure the Resend variables in Railway;
+those settings take effect after the service redeploys. `--check-only` reports
+the effective local SMTP or Railway Resend transport without displaying
+secrets or sending email.
 
 From `backend`, check configuration without sending mail or accessing a database:
 
@@ -265,18 +275,19 @@ python manage.py test_email_delivery --to your-address@example.com
 ```
 
 Run the same command **inside the Railway container** to test production's
-network and variables. `railway run` executes locally and is not a production
-network test. With CLI SSH access configured, use:
+network and variables through Resend. `railway run` executes locally and is not
+a production network test. With CLI SSH access configured, use:
 
 ```sh
 railway ssh --project disciplined-serenity --environment production --service USP-Market-Place -- python manage.py test_email_delivery --to your-address@example.com
 ```
 
-The test command sends directly through the shared email function. It does not
-register users, generate real verification/reset records, or access MySQL.
-`--check-only` checks presence, not API-key validity or domain verification.
-An API acceptance response is not proof of inbox delivery: inspect the recipient
-inbox and Resend delivery logs. No SMTP port access is needed on Railway.
+The command sends through the shared email function. It does not register users,
+generate real verification/reset records, or access MySQL. `--check-only` checks
+that settings are present; it does not validate SMTP/Resend authentication or
+sender authorization. Provider acceptance is not proof of inbox delivery:
+inspect the recipient inbox and provider delivery logs. Railway needs no SMTP
+port access.
 
 Registration is restricted to USP student email addresses in the `S<number>@student.usp.ac.fj` format (for example, `S12345678@student.usp.ac.fj`). Other email addresses are rejected in all environments.
 
@@ -287,8 +298,10 @@ control, receive the code there, and enter it in that same local flow. Repeat
 through the production frontend to test Railway. Local and production accounts
 remain in their existing separate databases; this email change does not copy
 accounts between them.
-Email delivery requires both the Resend API key and sender; missing configuration raises
-an email error instead of falling back to SMTP or printing a verification code.
+Local email delivery requires the SMTP host, account, app password, and sender.
+Railway email delivery requires the Resend API key and verified sender. Missing
+configuration raises an email error instead of switching providers or printing
+a verification code.
 
 Authenticator security:
 

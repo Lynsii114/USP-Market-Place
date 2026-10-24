@@ -124,39 +124,87 @@ function ReviewDialog({ report, onClose, onSave, onViewUser }) {
   );
 }
 
-export default function FlagReviewPanel({ reports, onSave, onViewUser, onRefresh }) {
+function DeleteFlagDialog({ report, onClose, onConfirm }) {
+  const dialogRef = useRef(null);
+  const busyRef = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    const previousFocus = document.activeElement;
+    dialog.showModal();
+    return () => { dialog.close(); if (previousFocus?.isConnected) previousFocus.focus(); };
+  }, []);
+
+  const confirm = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      await onConfirm(report);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to delete this flag report.");
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  };
+
+  return createPortal(
+    <dialog ref={dialogRef} className="flag-review-dialog" aria-labelledby="delete-flag-title" onCancel={(event) => { event.preventDefault(); if (!busyRef.current) onClose(); }}>
+      <div className="flag-review-heading">
+        <div><span className="section-kicker">Flag report #{report.id}</span><h3 id="delete-flag-title">Delete this flag report?</h3></div>
+        <button type="button" className="secondary-button" autoFocus disabled={busy} onClick={onClose}>Close</button>
+      </div>
+      <div className="flag-review-body">
+        <section className="flag-review-section">
+          <p>This removes the report from the admin Flags list and deletes its report record. The listing and any order history will not be changed.</p>
+          <p><strong>{report.listing_snapshot?.name || report.target_item?.name || report.target_label}</strong></p>
+        </section>
+        {error && <p role="alert" className="student-action-error">{error}</p>}
+        <div className="notification-dismiss-actions">
+          <button type="button" className="secondary-button" disabled={busy} onClick={onClose}>Cancel</button>
+          <button type="button" className="danger-outline-button" disabled={busy || report.email_status === "pending"} onClick={confirm}>{busy ? "Deleting…" : "Delete flag report"}</button>
+        </div>
+        {report.email_status === "pending" && <p className="flag-review-note">An email action is processing for this report. Wait for it to finish, refresh the list, then try again.</p>}
+      </div>
+    </dialog>, document.body
+  );
+}
+
+export default function FlagReviewPanel({ reports, onSave, onDelete, onViewUser, onRefresh }) {
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState("");
   const filtered = searchRecords(reports, query, (record) => [record.listing_snapshot?.name, record.target_item?.name, record.target_label, record.id, record.listing_id, record.reporter_username, record.seller?.username, record.reason, statuses[statusKey(record)]]).filter((record) => filter === "all" || statusKey(record) === filter);
 
   return <div className="admin-table-card flag-review-panel">
-    <div className="admin-section-toolbar"><div><p className="flag-review-note">Review the listing and report, then send a warning or delete the listing.</p></div><button type="button" className="secondary-button" disabled={refreshing} onClick={async () => { setRefreshing(true); setRefreshError(""); try { await onRefresh(); } catch (err) { setRefreshError(err.message || "Unable to refresh reports."); } finally { setRefreshing(false); } }}>{refreshing ? "Refreshing…" : "Refresh"}</button></div>
+    <div className="admin-section-toolbar"><div><p className="flag-review-note">Select a flag row to view its details and take action. Use Delete to remove a report from the flag list.</p></div><button type="button" className="secondary-button" disabled={refreshing} onClick={async () => { setRefreshing(true); setRefreshError(""); try { await onRefresh(); } catch (err) { setRefreshError(err.message || "Unable to refresh reports."); } finally { setRefreshing(false); } }}>{refreshing ? "Refreshing…" : "Refresh"}</button></div>
     <div className="flag-summary">{Object.entries(statuses).map(([key, label]) => <button type="button" key={key} aria-pressed={filter === key} onClick={() => { setFilter(filter === key ? "all" : key); }}><strong>{reports.filter((r) => statusKey(r) === key).length}</strong><span>{label}</span></button>)}</div>
     <div className="flag-filters"><label>Search reports<SearchInput value={query} onChange={(value) => { setQuery(value); }} label="Search flags" placeholder="Listing, ID, reporter, seller or reason" /></label><label>Status<select value={filter} onChange={(event) => { setFilter(event.target.value); }}><option value="all">All statuses</option>{Object.entries(statuses).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select></label></div>
     {refreshError && <p role="alert" className="student-action-error">{refreshError}</p>}
     <p className="flag-results-status" role="status">Showing all {filtered.length} matching {filtered.length === 1 ? "report" : "reports"}</p>
     <div className="flag-report-list">{filtered.length ? filtered.map((record) => {
       const listing = record.listing_snapshot?.id ? record.listing_snapshot : record.target_item;
-      return <article className="flag-report-card" key={record.id}>
-        <ListingPhoto photo={listing?.photo || record.target_item?.photo} name={listing?.name} />
-        <div className="flag-report-card-content">
-          <div className="flag-card-title"><strong>{listing?.name || record.target_label}</strong><span className={`status-pill ${statusKey(record)}`}>{statuses[statusKey(record)]}</span></div>
-          <p className="flag-review-note">Report #{record.id}{record.listing_id ? ` | Listing #${record.listing_id}` : ""}</p>
-          <dl className="flag-card-accounts">
-            <dt>Seller</dt><dd>{record.seller ? <button type="button" className="profile-name-button" onClick={() => onViewUser(record.seller)}>{record.seller.username}</button> : listing?.seller_username || "Unavailable"}</dd>
-            <dt>Reporter</dt><dd>{record.reporter ? <button type="button" className="profile-name-button" onClick={() => onViewUser(record.reporter)}>{record.reporter.username}</button> : record.reporter_username}</dd>
-          </dl>
-          <p className="flag-reason-preview">{record.reason}</p>
-          <p className="flag-review-note">{date(record.created_at)}</p>
-          {record.email_status && <p className={record.email_status === "failed" ? "student-action-error" : "flag-review-note"}>Email: {record.email_status === "sent" ? "accepted by provider" : record.email_status === "console" ? "local preview only" : record.email_status}</p>}
-        </div>
-        <button type="button" className="secondary-button flag-details-button" aria-label={`View details for report ${record.id}: ${listing?.name || record.target_label}`} onClick={() => setSelected(record)}>View report details <span aria-hidden="true">&rarr;</span></button>
+      return <article className="flag-report-row" key={record.id}>
+        <button type="button" className="flag-report-row-main" aria-label={`View details for report ${record.id}: ${listing?.name || record.target_label}`} onClick={() => setSelected(record)}>
+          <span className="flag-row-listing"><strong>{listing?.name || record.target_label}</strong><small>Report #{record.id}{record.listing_id ? ` · Listing #${record.listing_id}` : ""} · {record.target_type === "user" ? "Seller concern" : "Listing concern"}</small></span>
+          <span className="flag-row-account"><small>Seller</small><strong>{record.seller?.username || listing?.seller_username || "Unavailable"}</strong></span>
+          <span className="flag-row-account"><small>Reporter</small><strong>{record.reporter?.username || record.reporter_username}</strong></span>
+          <span className="flag-row-reason" title={record.reason}>{record.reason}</span>
+          <span className="flag-row-status"><span className={`status-pill ${statusKey(record)}`}>{statuses[statusKey(record)]}</span><small>{date(record.created_at)}</small></span>
+        </button>
+        <button type="button" className="danger-outline-button flag-row-delete" aria-label={`Delete flag report ${record.id}`} onClick={() => setDeleteTarget(record)}>Delete</button>
       </article>;
     }) : <p className="empty-state">{reports.length ? "No reports match these filters." : "No flagged listings or sellers yet."}</p>}</div>
 
     {selected && <ReviewDialog report={selected} onClose={() => setSelected(null)} onSave={onSave} onViewUser={onViewUser} />}
+    {deleteTarget && <DeleteFlagDialog report={deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={onDelete} />}
   </div>;
 }

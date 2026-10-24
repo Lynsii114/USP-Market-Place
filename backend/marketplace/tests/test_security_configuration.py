@@ -52,24 +52,42 @@ class SecurityConfigurationTests(unittest.TestCase):
         settings = self.load_settings({"SECRET_KEY": secrets.token_urlsafe(64)})
         self.assertFalse(settings["DEBUG"])
 
-    def test_resend_and_local_frontend_defaults(self):
+    def test_local_smtp_and_local_frontend_defaults(self):
         settings = self.load_settings({"SECRET_KEY": secrets.token_urlsafe(64)})
-        self.assertEqual(settings["EMAIL_PROVIDER"], "resend")
+        self.assertEqual(settings["EMAIL_PROVIDER"], "smtp")
+        self.assertEqual(settings["EMAIL_BACKEND"], "django.core.mail.backends.smtp.EmailBackend")
+        self.assertEqual(settings["EMAIL_HOST"], "smtp.gmail.com")
+        self.assertEqual(settings["EMAIL_PORT"], 587)
+        self.assertTrue(settings["EMAIL_USE_TLS"])
+        self.assertFalse(settings["EMAIL_USE_SSL"])
         self.assertEqual(settings["FRONTEND_URL"], "http://localhost:5173")
         self.assertEqual(settings["RESEND_FROM_EMAIL"], "")
 
-    def test_legacy_email_configuration_is_ignored_locally_and_on_railway(self):
-        for base in ({"SECRET_KEY": secrets.token_urlsafe(64)}, self.railway_environment()):
-            for provider in ("smtp", "auto", "console", "resend", "typo"):
-                with self.subTest(mode=base.get("DATABASE_MODE", "local"), provider=provider):
-                    settings = self.load_settings(dict(base, EMAIL_PROVIDER=provider,
-                        EMAIL_HOST="smtp.gmail.com", EMAIL_PORT="invalid-unused-port",
-                        EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend",
-                        EMAIL_USE_TLS="1", EMAIL_USE_SSL="1"))
-                    self.assertEqual(settings["EMAIL_PROVIDER"], "resend")
-                    self.assertEqual(settings["EMAIL_BACKEND"], "django.core.mail.backends.dummy.EmailBackend")
-                    self.assertNotIn("EMAIL_HOST", settings)
-                    self.assertNotIn("EMAIL_HOST_PASSWORD", settings)
+    def test_local_smtp_environment_and_railway_resend_are_isolated(self):
+        local = self.load_settings({
+            "SECRET_KEY": secrets.token_urlsafe(64),
+            "EMAIL_HOST": "smtp.gmail.com",
+            "EMAIL_PORT": "587",
+            "EMAIL_USE_TLS": "1",
+            "EMAIL_USE_SSL": "0",
+            "EMAIL_HOST_USER": "local@example.com",
+            "EMAIL_HOST_PASSWORD": "abcd efgh ijkl mnop",
+            "DEFAULT_FROM_EMAIL": "Marketplace <local@example.com>",
+        })
+        self.assertEqual(local["EMAIL_PROVIDER"], "smtp")
+        self.assertEqual(local["EMAIL_HOST_PASSWORD"], "abcdefghijklmnop")
+        self.assertEqual(local["DEFAULT_FROM_EMAIL"], "Marketplace <local@example.com>")
+
+        for provider in ("smtp", "auto", "console", "resend", "typo"):
+            with self.subTest(provider=provider):
+                settings = self.load_settings(dict(self.railway_environment(), EMAIL_PROVIDER=provider,
+                    EMAIL_HOST="smtp.gmail.com", EMAIL_PORT="invalid-unused-port",
+                    EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend",
+                    EMAIL_USE_TLS="1", EMAIL_USE_SSL="1", EMAIL_HOST_PASSWORD="ignored"))
+                self.assertEqual(settings["EMAIL_PROVIDER"], "resend")
+                self.assertEqual(settings["EMAIL_BACKEND"], "django.core.mail.backends.dummy.EmailBackend")
+                self.assertNotIn("EMAIL_HOST", settings)
+                self.assertNotIn("EMAIL_HOST_PASSWORD", settings)
 
     def test_frontend_url_validation_and_railway_override(self):
         environment = self.railway_environment()
